@@ -17,9 +17,11 @@ function Viewer() {
   const frame = useRef<ViewerFrame | undefined>(undefined);
   const composing = useRef(false);
   const heldKeys = useRef(new Map<string, Omit<Extract<ControlCommand, { type: 'key' }>, 'type' | 'event' | 'tabId' | 'generation'>>());
+  const heldPointer = useRef<Extract<ControlCommand, { type: 'pointer' }> | undefined>(undefined);
   const drawing = useRef(false);
   const pending = useRef<ViewerFrame | undefined>(undefined);
   const disposed = useRef(false);
+  const lastClick = useRef({ time: 0, x: 0, y: 0, button: -1, count: 0 });
 
   function send(command: ControlCommand) {
     if (!port.current || !stateRef.current || stateRef.current.status !== 'connected' || stateRef.current.paused || !stateRef.current.controlEnabled) return;
@@ -34,6 +36,10 @@ function Viewer() {
     const t = target();
     if (t) for (const key of heldKeys.current.values()) send({ type: 'key', event: 'up', ...t, ...key });
     heldKeys.current.clear();
+  }
+  function releasePointer() {
+    const pointer = heldPointer.current; heldPointer.current = undefined;
+    if (pointer) send({ ...pointer, event: 'up', buttons: 0 });
   }
   async function draw(next: ViewerFrame) {
     pending.current = next;
@@ -64,7 +70,7 @@ function Viewer() {
     connection.onMessage.addListener((message: { type?: string; state?: AppState; frame?: ViewerFrame; error?: string }) => {
       if (message.type === 'state' && message.state) {
         const next = message.state;
-        if (stateRef.current?.generation !== next.generation || stateRef.current?.activeTabId !== next.activeTabId) { releaseKeys(); frame.current = undefined; setHasFrame(false); }
+        if (stateRef.current?.generation !== next.generation || stateRef.current?.activeTabId !== next.activeTabId) { releaseKeys(); releasePointer(); frame.current = undefined; setHasFrame(false); }
         stateRef.current = next;
         setState(next);
       }
@@ -73,28 +79,40 @@ function Viewer() {
     });
     connection.onDisconnect.addListener(() => { if (!disposed.current) { port.current = null; setError('Se perdió la conexión con la extensión. Abre GhostPair para iniciar otra sesión.'); } });
     void request('ui.status').then(s => { if (!disposed.current) { stateRef.current = s; setState(s); } }).catch(e => setError(e.message));
-    return () => { releaseKeys(); disposed.current = true; connection.disconnect(); port.current = null; };
+    const releaseInput = () => { releaseKeys(); releasePointer(); };
+    window.addEventListener('blur', releaseInput);
+    window.addEventListener('pagehide', releaseInput);
+    return () => { releaseInput(); window.removeEventListener('blur', releaseInput); window.removeEventListener('pagehide', releaseInput); disposed.current = true; connection.disconnect(); port.current = null; };
   }, []);
   useEffect(() => { setAddress(state?.tabs.find(t => t.id === state.activeTabId)?.url ?? ''); }, [state?.activeTabId, state?.tabs.find(t => t.id === state.activeTabId)?.url]);
 
   const interactive = Boolean(state?.status === 'connected' && state.controlEnabled && !state.paused && hasFrame);
   const modifiers = (event: { altKey: boolean; ctrlKey: boolean; metaKey: boolean; shiftKey: boolean }) => Number(event.altKey) | Number(event.ctrlKey) << 1 | Number(event.metaKey) << 2 | Number(event.shiftKey) << 3;
-  function coordinates(event: { clientX: number; clientY: number }) {
+  function coordinates(event: { clientX: number; clientY: number }, clamp = false) {
     const t = target(); const f = frame.current?.meta; const bounds = canvas.current?.getBoundingClientRect();
     if (!t || !f || !bounds?.width || !interactive) return;
     // Input coordinates are viewport CSS pixels; never include the browser toolbar.
-    const x = (event.clientX - bounds.left) / bounds.width * f.width / f.pageScaleFactor;
-    const y = ((event.clientY - bounds.top) / bounds.height * f.height / f.pageScaleFactor) - f.offsetTop;
+    let x = (event.clientX - bounds.left) / bounds.width * f.viewportWidth;
+    let y = (event.clientY - bounds.top) / bounds.height * f.viewportHeight - f.offsetTop;
+    if (clamp) { x = Math.max(0, Math.min(f.viewportWidth, x)); y = Math.max(0, Math.min(f.viewportHeight, y)); }
     if (x < 0 || y < 0 || x > f.viewportWidth || y > f.viewportHeight) return;
     return { ...t, x, y };
   }
   function text(value: string) { const t = target(); if (t && value && new TextEncoder().encode(value).length <= MAX_CLIPBOARD_BYTES) send({ type: 'text', ...t, text: value }); }
   function pointer(event: React.PointerEvent<HTMLCanvasElement>, kind: 'move' | 'down' | 'up') {
-    const point = coordinates(event); if (!point) return;
+    const point = coordinates(event, kind !== 'down' && Boolean(heldPointer.current)); if (!point) return;
     event.preventDefault();
     if (kind === 'down') { keyboard.current?.focus({ preventScroll: true }); event.currentTarget.setPointerCapture(event.pointerId); }
-    const button = event.button === 1 ? 'middle' : event.button === 2 ? 'right' : 'left';
-    send({ type: 'pointer', ...point, event: kind, button, buttons: event.buttons & 7, clickCount: Math.min(3, Math.max(1, event.detail)), modifiers: modifiers(event) });
+    if (kind === 'down') {
+      const previous = lastClick.current;
+      const consecutive = performance.now() - previous.time < 500 && previous.button === event.button && Math.hypot(point.x - previous.x, point.y - previous.y) < 5;
+      lastClick.current = { time: performance.now(), x: point.x, y: point.y, button: event.button, count: consecutive ? previous.count % 3 + 1 : 1 };
+    }
+    const button = kind === 'move' && heldPointer.current ? heldPointer.current.button : event.button === 1 ? 'middle' : event.button === 2 ? 'right' : 'left';
+    const command: Extract<ControlCommand, { type: 'pointer' }> = { type: 'pointer', ...point, event: kind, button, buttons: event.buttons & 7, clickCount: kind === 'move' ? 0 : lastClick.current.count || 1, modifiers: modifiers(event) };
+    if (kind === 'up') heldPointer.current = undefined;
+    else if (kind === 'down' || heldPointer.current) heldPointer.current = command;
+    send(command);
     if (kind === 'up' && event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
   }
   function key(event: React.KeyboardEvent<HTMLTextAreaElement>, kind: 'down' | 'up') {
@@ -111,7 +129,7 @@ function Viewer() {
   return <main className="viewer"><header className="viewer-header"><Brand compact/><div className="viewer-session">{state && <Status state={state}/>}<span className="muted">{state?.connection?.latencyMs !== undefined ? `${Math.round(state.connection.latencyMs)} ms` : 'P2P directo'}</span></div><button className="danger small" onClick={() => { void request('ui.stop').catch(e => setError(e.message)); }}>Desconectar</button></header>
     <div className="remote-tabs" role="tablist" aria-label="Pestañas compartidas">{state?.tabs.map(tab => <div className={`remote-tab ${tab.active ? 'active' : ''}`} key={tab.id}><button role="tab" aria-selected={tab.active} title={tab.url} disabled={!state.controlEnabled || state.paused} onClick={() => send({ type: 'tab.activate', tabId: tab.id })}><span>{tab.supported ? '▤' : '⊘'}</span>{tab.title || 'Sin título'}</button><button aria-label={`Cerrar ${tab.title}`} disabled={!state.controlEnabled || state.paused} onClick={() => send({ type: 'tab.close', tabId: tab.id })}>×</button></div>)}<button className="new-tab" title="Abrir pestaña" aria-label="Abrir pestaña" disabled={!state?.controlEnabled || state.paused || state.status !== 'connected'} onClick={() => { const url = window.prompt('Dirección de la nueva pestaña', 'https://example.com'); if (url) send({ type: 'tab.create', url: url.includes('://') ? url : `https://${url}` }); }}>+</button></div>
     <form className="navigation" onSubmit={e => { e.preventDefault(); const t = target(); if (t) send({ type: 'navigate', ...t, url: address.includes('://') ? address : `https://${address}` }); }}><button type="button" aria-label="Atrás" disabled={!interactive} onClick={() => { const t = target(); if (t) send({ type: 'history', ...t, direction: 'back' }); }}>←</button><button type="button" aria-label="Adelante" disabled={!interactive} onClick={() => { const t = target(); if (t) send({ type: 'history', ...t, direction: 'forward' }); }}>→</button><button type="button" aria-label="Recargar" disabled={!interactive} onClick={() => { const t = target(); if (t) send({ type: 'reload', ...t }); }}>↻</button><input aria-label="Dirección de la página remota" value={address} onChange={e => setAddress(e.target.value)} placeholder="Dirección de la página compartida" disabled={!interactive}/><button type="submit" disabled={!interactive}>Ir ↗</button></form>
-    <section className="remote-stage" aria-label="Página remota"><canvas ref={canvas} className={!hasFrame ? 'invisible' : ''} aria-label="Vista de la página compartida" onPointerDown={e => pointer(e, 'down')} onPointerMove={e => pointer(e, 'move')} onPointerUp={e => pointer(e, 'up')} onContextMenu={e => e.preventDefault()} onWheel={e => { const point = coordinates(e); if (point) send({ type: 'wheel', ...point, deltaX: Math.max(-10000, Math.min(10000, e.deltaX)), deltaY: Math.max(-10000, Math.min(10000, e.deltaY)), modifiers: modifiers(e) }); }}/>
+    <section className="remote-stage" aria-label="Página remota"><canvas ref={canvas} className={!hasFrame ? 'invisible' : ''} aria-label="Vista de la página compartida" onPointerDown={e => pointer(e, 'down')} onPointerMove={e => pointer(e, 'move')} onPointerUp={e => pointer(e, 'up')} onPointerCancel={releasePointer} onLostPointerCapture={releasePointer} onContextMenu={e => e.preventDefault()} onWheel={e => { const point = coordinates(e); if (point) send({ type: 'wheel', ...point, deltaX: Math.max(-10000, Math.min(10000, e.deltaX)), deltaY: Math.max(-10000, Math.min(10000, e.deltaY)), modifiers: modifiers(e) }); }}/>
       <textarea ref={keyboard} className="keyboard-input" aria-label="Entrada de teclado remoto" autoCapitalize="off" autoComplete="off" spellCheck={false} disabled={!interactive} onFocus={() => setFocused(true)} onBlur={() => { releaseKeys(); setFocused(false); }} onKeyDown={e => key(e, 'down')} onKeyUp={e => key(e, 'up')} onCompositionStart={() => { composing.current = true; }} onCompositionEnd={e => { composing.current = false; text(e.data); e.currentTarget.value = ''; }} onInput={e => { if (!composing.current) { text(e.currentTarget.value); e.currentTarget.value = ''; } }} onPaste={e => { e.preventDefault(); text(e.clipboardData.getData('text/plain')); }}/>
       {(!hasFrame || state?.paused || state?.status !== 'connected') && <div className="stage-overlay"><div className="empty-symbol">◎</div><h1>{state?.paused ? 'La sesión está en pausa.' : selected && !selected.supported ? 'Esta página no se comparte.' : state?.status === 'idle' || state?.status === 'error' ? 'La sesión ha terminado.' : 'Preparando tu espacio.'}</h1><p>{state?.paused ? 'El anfitrión puede reanudarla desde GhostPair.' : selected && !selected.supported ? 'Selecciona una página web de la ventana autorizada.' : state?.status === 'idle' || state?.status === 'error' ? 'Abre el menú de GhostPair para volver a conectarte.' : 'La imagen aparecerá cuando los equipos estén conectados.'}</p></div>}
     </section><footer className="viewer-footer"><span><i className={`connection-dot ${focused ? 'live' : ''}`}/>{focused ? 'Teclado remoto activo · Esc para liberar' : state?.controlEnabled ? 'Haz clic en la página para interactuar' : 'Solo visualización'}</span><span>{state?.clipboardEnabled && state.remoteClipboardEnabled ? 'Portapapeles sincronizado' : 'Portapapeles sin sincronizar'}</span></footer>
