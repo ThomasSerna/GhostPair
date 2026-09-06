@@ -1,0 +1,45 @@
+import { useEffect, useState } from 'react';
+import type { AppState } from '@ghostpair/protocol';
+
+export const statusLabels: Record<AppState['status'], string> = {
+  idle: 'Sin conexión', starting: 'Preparando sesión', waiting: 'Esperando visitante', connecting: 'Conectando equipos', connected: 'Sesión conectada', paused: 'Sesión pausada', error: 'No se pudo conectar',
+};
+
+export async function request(type: string, payload: Record<string, unknown> = {}): Promise<AppState> {
+  const reply = await chrome.runtime.sendMessage({ target: 'background', type, ...payload });
+  if (!reply?.ok) throw new Error(reply?.error ?? 'No se pudo completar la operación.');
+  return reply.state;
+}
+
+export function useSession() {
+  const [state, setState] = useState<AppState>();
+  const [error, setError] = useState('');
+  useEffect(() => {
+    let alive = true;
+    const refresh = () => { void request('ui.status').then(s => { if (alive) setState(s); }).catch(e => { if (alive) setError(String(e.message)); }); };
+    refresh();
+    const listener = (message: { type?: string; state?: AppState }) => {
+      if (message.type === 'state' && message.state) setState(message.state);
+    };
+    chrome.runtime.onMessage.addListener(listener);
+    const timer = window.setInterval(refresh, 1500);
+    return () => { alive = false; clearInterval(timer); chrome.runtime.onMessage.removeListener(listener); };
+  }, []);
+  return { state, setState, error, setError };
+}
+
+export function Brand({ compact = false }: { compact?: boolean }) {
+  return <div className={`brand ${compact ? 'compact' : ''}`}><svg viewBox="0 0 40 40" aria-hidden="true"><rect x="1" y="1" width="38" height="38" rx="12" fill="#123638"/><path d="M16 12h-2a7 7 0 0 0 0 14h7a7 7 0 0 0 0-14h-2M24 28h2a7 7 0 0 0 0-14h-7a7 7 0 0 0 0 14h2" fill="none" stroke="#9be7bf" strokeWidth="2.4" strokeLinecap="round"/></svg><span>GhostPair</span>{!compact && <small>EN CONEXIÓN, CONTIGO</small>}</div>;
+}
+
+export function Status({ state }: { state: AppState }) {
+  return <span className={`status status-${state.status}`}><i/>{statusLabels[state.status]}</span>;
+}
+
+export function formatDeviceId(value?: string) { return value ? value.match(/.{1,4}/g)?.join(' ').toUpperCase() : 'Se genera al compartir'; }
+
+export async function requestSessionPermissions(signalingUrl: string, clipboard: boolean): Promise<void> {
+  const origin = new URL(signalingUrl).origin;
+  const granted = await chrome.permissions.request({ origins: [`${origin}/*`], ...(clipboard ? { permissions: ['clipboardRead', 'clipboardWrite'] } : {}) });
+  if (!granted) throw new Error('Necesitamos los permisos elegidos para iniciar la sesión.');
+}
