@@ -1,0 +1,15 @@
+{$SIGNAL_DOMAIN} {
+  header {
+    Strict-Transport-Security "max-age=31536000"
+    X-Content-Type-Options "nosniff"
+    Referrer-Policy "no-referrer"
+  }
+  handle /privacy {
+    root * /srv
+    rewrite * /privacy.html
+    file_server
+  }
+  handle {
+    reverse_proxy signaling:8787
+  }
+}

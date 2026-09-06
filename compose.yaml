@@ -1,0 +1,44 @@
+services:
+  signaling:
+    build: .
+    restart: unless-stopped
+    environment:
+      HOST: 0.0.0.0
+      PORT: 8787
+      DATABASE_PATH: /data/ghostpair.sqlite
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:?Set the Chrome and Edge extension origins}
+      TRUST_PROXY: "true"
+    volumes:
+      - identities:/data
+    networks: [backend]
+    mem_limit: 768m
+    security_opt: [no-new-privileges:true]
+  proxy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    environment:
+      SIGNAL_DOMAIN: ${SIGNAL_DOMAIN:?Set the public DNS name for signaling}
+    ports: ["80:80", "443:443"]
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./docs/privacy.html:/srv/privacy.html:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks: [backend]
+    depends_on:
+      signaling:
+        condition: service_healthy
+  stun:
+    image: coturn/coturn:4.6.3
+    restart: unless-stopped
+    command: ["-c", "/etc/coturn/turnserver.conf"]
+    ports: ["3478:3478/udp", "3478:3478/tcp"]
+    volumes:
+      - ./deploy/turnserver.conf:/etc/coturn/turnserver.conf:ro
+    security_opt: [no-new-privileges:true]
+volumes:
+  identities:
+  caddy_data:
+  caddy_config:
+networks:
+  backend:

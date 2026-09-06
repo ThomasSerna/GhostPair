@@ -1,0 +1,7 @@
+{
+  "manifest_version": 3,
+  "name": "GhostPair isolated API probe",
+  "version": "0.0.1",
+  "permissions": ["debugger", "tabs", "offscreen", "clipboardRead", "clipboardWrite"],
+  "background": { "service_worker": "worker.js" }
+}
