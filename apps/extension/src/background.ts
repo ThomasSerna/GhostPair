@@ -109,6 +109,13 @@ async function hasPermissions(clipboard: boolean) {
 async function action(message: Record<string, any>, sender: chrome.runtime.MessageSender): Promise<AppState> {
   switch (message.type) {
     case 'ui.status': return state;
+    case 'ui.settings.reset': {
+      if (!['idle', 'error'].includes(state.status)) throw new Error('End the session before changing settings.');
+      await chrome.storage.local.remove('settings');
+      const identities = (await chrome.storage.local.get('identities')).identities as Record<string, { deviceId: string }> | undefined;
+      state = idle(defaults, identities?.[defaults.signalingUrl]?.deviceId);
+      broadcast(); return state;
+    }
     case 'ui.settings.save': {
       if (!['idle', 'error'].includes(state.status)) throw new Error('Termina la sesión antes de cambiar la configuración.');
       const settings = SettingsSchema.parse(message.settings);

@@ -29,7 +29,7 @@ async function harness() {
   const browser = {
     runtime,
     storage: {
-      local: { setAccessLevel: vi.fn(async () => undefined), get: vi.fn(async () => stored), set: vi.fn(async (value: object) => Object.assign(stored, value)) },
+      local: { setAccessLevel: vi.fn(async () => undefined), get: vi.fn(async () => stored), set: vi.fn(async (value: object) => Object.assign(stored, value)), remove: vi.fn(async (key: string) => { delete stored[key]; }) },
       session: { get: vi.fn(async () => ({})), set: vi.fn(async () => undefined) },
     },
     action: { setBadgeText: vi.fn(), setBadgeBackgroundColor: vi.fn(), setTitle: vi.fn() },
@@ -50,6 +50,15 @@ async function harness() {
 afterEach(() => vi.unstubAllGlobals());
 
 describe('background session cancellation', () => {
+  it('preserves manual settings until build defaults are explicitly restored', async () => {
+    const h = await harness();
+    const defaults = (await h.send('ui.status')).state.settings;
+    const settings = { signalingUrl: 'https://signal.example.com', stunUrls: ['stun:example.com:3478'] };
+    expect((await h.send('ui.settings.save', { settings })).state.settings).toEqual(settings);
+    expect((await h.send('ui.status')).state.settings).toEqual(settings);
+    expect((await h.send('ui.settings.reset')).state.settings).toEqual(defaults);
+    expect(h.browser.storage.local.remove).toHaveBeenCalledWith('settings');
+  });
   it('does not start transport if Stop arrives during the permission check', async () => {
     const h = await harness(); const permission = deferred<boolean>();
     h.browser.permissions.contains.mockReturnValueOnce(permission.promise);

@@ -1,7 +1,9 @@
 import { configFromEnv } from './config.js';
 import { createServer } from './server.js';
+import { loadRootEnvironment } from './environment.js';
 
 try {
+  loadRootEnvironment();
   const server = createServer(configFromEnv());
   await server.listen();
   console.info(JSON.stringify({ event: 'signaling.started' }));
