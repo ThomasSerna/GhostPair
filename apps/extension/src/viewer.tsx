@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { FrameMetaSchema, MAX_CLIPBOARD_BYTES, type AppState, type ControlCommand, type ViewerFrame } from '@ghostpair/protocol';
 import { Brand, Status, request } from './ui';
+import { ConnectionPanel } from './connection-panel';
 import './styles.css';
 
 function Viewer() {
@@ -125,6 +126,8 @@ function Viewer() {
     if (event.key.length > 1 || (event.ctrlKey && !['v', 'c', 'x'].includes(event.key.toLowerCase())) || event.metaKey || event.altKey) event.preventDefault();
   }
   const selected = state?.tabs.find(t => t.id === state.activeTabId);
+
+  if (!state || state.role !== 'guest' || !['connected', 'paused'].includes(state.status)) return <main className="connection-page"><header className="viewer-header"><Brand compact/></header>{state ? <ConnectionPanel state={state} onState={setState} onError={setError}/> : <p>Loading GhostPair…</p>}{(error || state?.error || state?.notice) && <div className="viewer-alert" role="alert">{error || state?.error || state?.notice}</div>}</main>;
 
   return <main className="viewer"><header className="viewer-header"><Brand compact/><div className="viewer-session">{state && <Status state={state}/>}<span className="muted">{state?.connection?.latencyMs !== undefined ? `${Math.round(state.connection.latencyMs)} ms` : 'P2P directo'}</span></div><button className="danger small" onClick={() => { void request('ui.stop').catch(e => setError(e.message)); }}>Desconectar</button></header>
     <div className="remote-tabs" role="tablist" aria-label="Pestañas compartidas">{state?.tabs.map(tab => <div className={`remote-tab ${tab.active ? 'active' : ''}`} key={tab.id}><button role="tab" aria-selected={tab.active} title={tab.url} disabled={!state.controlEnabled || state.paused} onClick={() => send({ type: 'tab.activate', tabId: tab.id })}><span>{tab.supported ? '▤' : '⊘'}</span>{tab.title || 'Sin título'}</button><button aria-label={`Cerrar ${tab.title}`} disabled={!state.controlEnabled || state.paused} onClick={() => send({ type: 'tab.close', tabId: tab.id })}>×</button></div>)}<button className="new-tab" title="Abrir pestaña" aria-label="Abrir pestaña" disabled={!state?.controlEnabled || state.paused || state.status !== 'connected'} onClick={() => { const url = window.prompt('Dirección de la nueva pestaña', 'https://example.com'); if (url) send({ type: 'tab.create', url: url.includes('://') ? url : `https://${url}` }); }}>+</button></div>

@@ -34,8 +34,8 @@ async function harness() {
     },
     action: { setBadgeText: vi.fn(), setBadgeBackgroundColor: vi.fn(), setTitle: vi.fn() },
     permissions: { contains: vi.fn(async () => true), onRemoved: event() },
-    windows: { get: vi.fn(async () => ({ id: 7, type: 'normal', incognito: false })), onRemoved: event() },
-    tabs: { create: vi.fn() }, commands: { onCommand: event() }, debugger: { detach: vi.fn() },
+    windows: { get: vi.fn(async () => ({ id: 7, type: 'normal', incognito: false })), update: vi.fn(), onRemoved: event() },
+    tabs: { create: vi.fn(async () => ({ id: 9 })), query: vi.fn(async (): Promise<any[]> => []), update: vi.fn() }, commands: { onCommand: event() }, debugger: { detach: vi.fn() },
   };
   vi.stubGlobal('chrome', browser);
   await import('./background');
@@ -50,6 +50,17 @@ async function harness() {
 afterEach(() => vi.unstubAllGlobals());
 
 describe('background session cancellation', () => {
+  it('focuses an existing viewer and does not create viewers during guest startup', async () => {
+    const h = await harness();
+    await h.send('ui.viewer.open');
+    expect(h.browser.tabs.create).toHaveBeenCalledTimes(1);
+    h.browser.tabs.query.mockResolvedValue([{ id: 9, windowId: 7 }]);
+    await h.send('ui.viewer.open');
+    expect(h.browser.tabs.create).toHaveBeenCalledTimes(1);
+    expect(h.browser.tabs.update).toHaveBeenCalledWith(9, { active: true });
+    await h.send('ui.guest.start', { deviceId: 'a'.repeat(32), password: 'Eight-42' });
+    expect(h.browser.tabs.create).toHaveBeenCalledTimes(1);
+  });
   it('preserves manual settings until build defaults are explicitly restored', async () => {
     const h = await harness();
     const defaults = (await h.send('ui.status')).state.settings;

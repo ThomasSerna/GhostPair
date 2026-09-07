@@ -12,6 +12,18 @@ let terminating: Promise<void> | undefined;
 let mutation: Promise<unknown> = Promise.resolve();
 let sessionEpoch = 0;
 const viewers = new Set<chrome.runtime.Port>();
+let viewerTabId: number | undefined;
+
+async function openViewer() {
+  const url = chrome.runtime.getURL('viewer.html');
+  const existing = (await chrome.tabs.query({ url })).find(tab => tab.id === viewerTabId)
+    ?? (await chrome.tabs.query({ url }))[0];
+  if (existing?.id !== undefined) {
+    viewerTabId = existing.id;
+    await chrome.tabs.update(existing.id, { active: true });
+    await chrome.windows.update(existing.windowId, { focused: true });
+  } else viewerTabId = (await chrome.tabs.create({ url })).id;
+}
 
 function idle(settings: Settings, deviceId?: string): AppState {
   return { role: null, status: 'idle', deviceId, paused: false, controlEnabled: true, clipboardEnabled: false, remoteClipboardEnabled: false, tabs: [], generation: 0, settings };
@@ -109,6 +121,7 @@ async function hasPermissions(clipboard: boolean) {
 async function action(message: Record<string, any>, sender: chrome.runtime.MessageSender): Promise<AppState> {
   switch (message.type) {
     case 'ui.status': return state;
+    case 'ui.viewer.open': await openViewer(); return state;
     case 'ui.settings.reset': {
       if (!['idle', 'error'].includes(state.status)) throw new Error('End the session before changing settings.');
       await chrome.storage.local.remove('settings');
@@ -133,7 +146,7 @@ async function action(message: Record<string, any>, sender: chrome.runtime.Messa
       const current = () => startEpoch === sessionEpoch;
       if (!validateSignalingUrl(state.settings.signalingUrl)) throw new Error('Configura un servidor HTTPS válido.');
       const host = message.type === 'ui.host.start';
-      const password = host ? PasswordSchema.parse(message.password) : String(message.password ?? '');
+      const password = PasswordSchema.parse(message.password);
       if (!password || password.length > 256) throw new Error('Introduce la contraseña de la sesión.');
       const clipboard = message.clipboard === true;
       if (!await hasPermissions(clipboard)) throw new Error('Autoriza el servidor y los permisos elegidos desde el menú.');
@@ -158,7 +171,6 @@ async function action(message: Record<string, any>, sender: chrome.runtime.Messa
         const reply = await transport('session.start', { role: host ? 'host' : 'guest', settings: state.settings, deviceId, ownerToken: owner?.ownerToken, password, clipboard });
         if (!current()) return state;
         if (!reply?.ok) throw new Error(reply?.error ?? 'No se pudo iniciar la conexión.');
-        if (!host) await chrome.tabs.create({ url: chrome.runtime.getURL('viewer.html') });
       } catch (error) {
         if (!current()) return state;
         await stop();
