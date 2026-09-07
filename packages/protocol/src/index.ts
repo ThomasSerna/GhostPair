@@ -6,7 +6,8 @@ export const MAX_FRAME_BYTES = 2 * 1024 * 1024;
 export const MAX_SIGNAL_BYTES = 64 * 1024;
 
 const id = z.string().min(1).max(128);
-export const PasswordSchema = z.string().min(12, 'Usa al menos 12 caracteres.').max(256);
+export const MIN_PASSWORD_LENGTH = 8;
+export const PasswordSchema = z.string().min(MIN_PASSWORD_LENGTH, 'Use at least 8 characters.').max(256);
 export const IceCandidateSchema = z.object({
   candidate: z.string().max(8192).optional(),
   sdpMid: z.string().max(256).nullable().optional(),
@@ -20,7 +21,7 @@ export const SignalPayloadSchema = z.discriminatedUnion('type', [
 ]);
 export const ClientSignalMessageSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('host.open'), deviceId: id, ownerToken: z.string().min(1).max(256), password: PasswordSchema }).strict(),
-  z.object({ type: z.literal('guest.join'), deviceId: id, password: z.string().min(1).max(256) }).strict(),
+  z.object({ type: z.literal('guest.join'), deviceId: id, password: PasswordSchema }).strict(),
   z.object({ type: z.literal('signal'), sessionId: id, payload: SignalPayloadSchema }).strict(),
   z.object({ type: z.literal('host.close'), sessionId: id }).strict(),
   z.object({ type: z.literal('ping'), id: z.string().max(64) }).strict(),

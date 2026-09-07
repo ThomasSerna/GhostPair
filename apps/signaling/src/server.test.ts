@@ -133,6 +133,7 @@ describe('signaling security and lifecycle', () => {
   });
 
   it('authenticates both roles before forwarding signaling and permits only the host to end', async () => {
+    const password = 'Eight-42';
     const app = await start();
     const identity = await app.register();
     const host = await app.connect();

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ControlCommandSchema, ClipboardUpdateSchema, isRelaySignal, isSupportedUrl, validateSignalingUrl, type FrameMeta } from './index';
+import { PasswordSchema, ClientSignalMessageSchema, ControlCommandSchema, ClipboardUpdateSchema, isRelaySignal, isSupportedUrl, validateSignalingUrl, type FrameMeta } from './index';
 import { encodeFrame, FrameAssembler } from './frames';
 
 const meta: FrameMeta = { frameId: 1, tabId: 8, generation: 1, width: 1280, height: 720, viewportWidth: 1280, viewportHeight: 720, offsetTop: 0, pageScaleFactor: 1, timestamp: 123 };
@@ -41,6 +41,15 @@ describe('frame transport', () => {
 });
 
 describe('network boundaries', () => {
+  it('accepts passwords of 8 through 256 characters in both roles', () => {
+    for (const length of [7, 8, 12, 256, 257]) {
+      const password = 'x'.repeat(length);
+      const valid = length >= 8 && length <= 256;
+      expect(PasswordSchema.safeParse(password).success).toBe(valid);
+      expect(ClientSignalMessageSchema.safeParse({ type: 'host.open', deviceId: 'device', ownerToken: 'token', password }).success).toBe(valid);
+      expect(ClientSignalMessageSchema.safeParse({ type: 'guest.join', deviceId: 'device', password }).success).toBe(valid);
+    }
+  });
   it('accepts only specific control operations and finite coordinates', () => {
     expect(ControlCommandSchema.safeParse({ type: 'Runtime.evaluate', expression: 'alert(1)' }).success).toBe(false);
     expect(ControlCommandSchema.safeParse({ type: 'pointer', event: 'down', x: Infinity, y: 0, tabId: 1, generation: 1 }).success).toBe(false);
