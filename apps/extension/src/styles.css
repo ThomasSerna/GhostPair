@@ -4,3 +4,4 @@
 .navigation button{flex-shrink:0;white-space:nowrap}.navigation input{flex:1;min-width:0}
 .connection-page{min-height:100dvh}.connection-panel{max-width:470px;margin:45px auto;padding:25px}.connection-panel>.eyebrow{margin-top:28px}
 .notification-stack.floating{position:fixed;bottom:55px;left:50%;transform:translateX(-50%);z-index:5;width:min(600px,90vw)}.notification-stack .alert,.notification-stack .notice{display:flex;align-items:center;justify-content:space-between;gap:14px}.notification-stack button{font-size:20px;flex-shrink:0}
+.new-tab-dialog{width:min(430px,90vw);border:1px solid var(--line);border-radius:16px;padding:26px;background:var(--panel);color:var(--text)}.new-tab-dialog::backdrop{background:#0009}

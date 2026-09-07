@@ -124,6 +124,12 @@ async function action(message: Record<string, any>, sender: chrome.runtime.Messa
     case 'ui.status': return state;
     case 'ui.notification.dismiss': state = dismissNotification(state, String(message.id)); broadcast(); return state;
     case 'ui.viewer.open': await openViewer(); return state;
+    case 'ui.command': {
+      if (state.role !== 'guest' || state.status !== 'connected' || state.paused || !state.controlEnabled) throw new Error('Remote control is unavailable.');
+      const reply = await transport('session.command', { command: message.command, requestId: crypto.randomUUID() });
+      if (!reply?.ok) throw new Error(reply?.error ?? 'Could not complete the action.');
+      return state;
+    }
     case 'ui.settings.reset': {
       if (!['idle', 'error'].includes(state.status)) throw new Error('End the session before changing settings.');
       await chrome.storage.local.remove('settings');
@@ -247,10 +253,10 @@ async function fromTransport(message: Record<string, any>) {
     return;
   }
   if (message.type === 'transport.command' && state.role === 'host' && state.status === 'connected' && !state.paused) {
-    try { await capture.execute(message.command); }
-    catch (error) { await transport('session.notice', { message: error instanceof Error ? error.message : 'No se pudo aplicar la acción.' }); }
-    return;
+    try { await capture.execute(message.command); return { ok: true }; }
+    catch (error) { return { ok: false, error: error instanceof Error ? error.message : 'Could not apply the action.' }; }
   }
+  if (message.type === 'transport.command') return { ok: false, error: 'Remote control is unavailable.' };
   if (message.type === 'transport.profile' && state.role === 'host') await capture.profile(message.congested === true);
 }
 
@@ -261,7 +267,7 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
   if (!fromOffscreen && !fromUi) return;
   void (async () => {
     await ready;
-    if (fromOffscreen) { await fromTransport(message); return { ok: true, state }; }
+    if (fromOffscreen) { return await fromTransport(message) ?? { ok: true, state }; }
     if (message.type === 'ui.status') return { ok: true, state };
     if (message.type === 'ui.stop') { await stop(); return { ok: true, state }; }
     const pending = mutation.then(() => action(message, sender));

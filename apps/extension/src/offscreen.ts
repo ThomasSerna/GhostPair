@@ -14,7 +14,8 @@ type Snapshot = z.infer<typeof SnapshotSchema>;
 const PeerMessageSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('hello'), protocol: z.literal(PROTOCOL_VERSION), sessionId: z.string().max(128), role: z.enum(['host', 'guest']) }).strict(),
   z.object({ type: z.literal('snapshot'), snapshot: SnapshotSchema }).strict(),
-  z.object({ type: z.literal('command'), command: ControlCommandSchema }).strict(),
+  z.object({ type: z.literal('command'), command: ControlCommandSchema, requestId: z.string().max(64).optional() }).strict(),
+  z.object({ type: z.literal('command.result'), requestId: z.string().max(64), ok: z.boolean(), error: z.string().max(512).optional() }).strict(),
   z.object({ type: z.literal('clipboard.enabled'), enabled: z.boolean() }).strict(),
   z.object({ type: z.literal('notice'), message: z.string().max(512) }).strict(),
   z.object({ type: z.literal('stop'), reason: z.string().max(512) }).strict(),
@@ -98,6 +99,7 @@ let commandsPerSecond = 0;
 let commandWindow = 0;
 const assembler = new FrameAssembler();
 const clipboardAdapter = createDomClipboard(document);
+const pendingCommands = new Map<string, { resolve: (value: { ok: boolean; error?: string }) => void; timer: ReturnType<typeof setTimeout> }>();
 
 function notify(type: string, payload: object = {}) { void chrome.runtime.sendMessage({ target: 'background', type, ...payload }).catch(() => undefined); }
 function sendPeer(value: unknown) { return controlPipe?.send(value) ?? false; }
@@ -114,6 +116,8 @@ function syncClipboard() {
 function cleanup(reason = 'Sesión terminada.', inform = false, failed = false) {
   if (ending) return;
   ending = true; ++epoch;
+  for (const pending of pendingCommands.values()) { clearTimeout(pending.timer); pending.resolve({ ok: false, error: 'Session ended.' }); }
+  pendingCommands.clear();
   clipboardSync?.stop(); clipboardSync = undefined;
   if (connected) sendPeer({ type: 'stop', reason: reason.slice(0, 512) });
   if (role === 'host' && sessionId && socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: 'host.close', sessionId }));
@@ -191,7 +195,14 @@ async function receiveControl(value: unknown) {
       if (role !== 'host' || paused) return;
       if (Date.now() - commandWindow >= 1000) { commandWindow = Date.now(); commandsPerSecond = 0; }
       if (++commandsPerSecond > 250) return;
-      await chrome.runtime.sendMessage({ target: 'background', type: 'transport.command', command: message.command });
+      const reply = await chrome.runtime.sendMessage({ target: 'background', type: 'transport.command', command: message.command });
+      if (message.requestId) sendPeer({ type: 'command.result', requestId: message.requestId, ok: reply?.ok === true, ...(reply?.error ? { error: String(reply.error).slice(0, 512) } : {}) });
+      else if (!reply?.ok) notify('transport.notice', { message: reply?.error ?? 'Could not apply the action.' });
+      break;
+    }
+    case 'command.result': {
+      const pending = pendingCommands.get(message.requestId);
+      if (pending) { clearTimeout(pending.timer); pendingCommands.delete(message.requestId); pending.resolve(message); }
       break;
     }
     case 'clipboard.enabled': remoteClipboardEnabled = message.enabled; notify('transport.clipboard', { remoteEnabled: remoteClipboardEnabled }); syncClipboard(); break;
@@ -354,6 +365,15 @@ async function onMessage(message: Record<string, any>) {
     case 'session.command': {
       if (role !== 'guest' || !connected || paused || !latestSnapshot?.controlEnabled) break;
       const command = ControlCommandSchema.parse(message.command);
+      if (message.requestId) {
+        if (pendingCommands.size >= 32) return { ok: false, error: 'Too many pending actions.' };
+        return new Promise<{ ok: boolean; error?: string }>(resolve => {
+          const requestId = String(message.requestId);
+          const timer = setTimeout(() => { pendingCommands.delete(requestId); resolve({ ok: false, error: 'The host did not confirm the action. Check the tab list before trying again.' }); }, 10000);
+          pendingCommands.set(requestId, { resolve, timer });
+          if (!sendPeer({ type: 'command', command, requestId })) { clearTimeout(timer); pendingCommands.delete(requestId); resolve({ ok: false, error: 'The connection is congested.' }); }
+        });
+      }
       if (command.type === 'text' && command.text.length > 2048) {
         const chars = Array.from(command.text);
         for (let i = 0; i < chars.length; i += 2048) if (!sendPeer({ type: 'command', command: { ...command, text: chars.slice(i, i + 2048).join('') } })) { notify('transport.notice', { message: 'La conexión está congestionada. Parte del texto no se envió.' }); break; }

@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { FrameMetaSchema, MAX_CLIPBOARD_BYTES, type AppState, type ControlCommand, type ViewerFrame } from '@ghostpair/protocol';
 import { Brand, Status, Notifications, request } from './ui';
 import { ConnectionPanel } from './connection-panel';
+import { NewTabDialog } from './new-tab-dialog';
 import './styles.css';
 
 function Viewer() {
@@ -11,6 +12,9 @@ function Viewer() {
   const [address, setAddress] = useState('');
   const [hasFrame, setHasFrame] = useState(false);
   const [focused, setFocused] = useState(false);
+  const [newTabOpen, setNewTabOpen] = useState(false);
+  const newTabButton = useRef<HTMLButtonElement>(null);
+  const closeNewTab = () => { setNewTabOpen(false); newTabButton.current?.focus(); };
   const port = useRef<chrome.runtime.Port | null>(null);
   const stateRef = useRef<AppState | undefined>(undefined);
   const canvas = useRef<HTMLCanvasElement>(null);
@@ -88,6 +92,7 @@ function Viewer() {
   useEffect(() => { setAddress(state?.tabs.find(t => t.id === state.activeTabId)?.url ?? ''); }, [state?.activeTabId, state?.tabs.find(t => t.id === state.activeTabId)?.url]);
 
   const interactive = Boolean(state?.status === 'connected' && state.controlEnabled && !state.paused && hasFrame);
+  useEffect(() => { if (state?.status !== 'connected' || state.paused || !state.controlEnabled) setNewTabOpen(false); }, [state?.status, state?.paused, state?.controlEnabled]);
   const modifiers = (event: { altKey: boolean; ctrlKey: boolean; metaKey: boolean; shiftKey: boolean }) => Number(event.altKey) | Number(event.ctrlKey) << 1 | Number(event.metaKey) << 2 | Number(event.shiftKey) << 3;
   function coordinates(event: { clientX: number; clientY: number }, clamp = false) {
     const t = target(); const f = frame.current?.meta; const bounds = canvas.current?.getBoundingClientRect();
@@ -130,7 +135,7 @@ function Viewer() {
   if (!state || state.role !== 'guest' || !['connected', 'paused'].includes(state.status)) return <main className="connection-page"><header className="viewer-header"><Brand compact/></header>{state ? <ConnectionPanel state={state} onState={setState} onError={setError}/> : <p>Loading GhostPair…</p>}<Notifications state={state} error={error} onError={setError} floating/></main>;
 
   return <main className="viewer"><header className="viewer-header"><Brand compact/><div className="viewer-session">{state && <Status state={state}/>}<span className="muted">{state?.connection?.latencyMs !== undefined ? `${Math.round(state.connection.latencyMs)} ms` : 'P2P directo'}</span></div><button className="danger small" onClick={() => { void request('ui.stop').catch(e => setError(e.message)); }}>Desconectar</button></header>
-    <div className="remote-tabs" role="tablist" aria-label="Pestañas compartidas">{state?.tabs.map(tab => <div className={`remote-tab ${tab.active ? 'active' : ''}`} key={tab.id}><button role="tab" aria-selected={tab.active} title={tab.url} disabled={!state.controlEnabled || state.paused} onClick={() => send({ type: 'tab.activate', tabId: tab.id })}><span>{tab.supported ? '▤' : '⊘'}</span>{tab.title || 'Sin título'}</button><button aria-label={`Cerrar ${tab.title}`} disabled={!state.controlEnabled || state.paused} onClick={() => send({ type: 'tab.close', tabId: tab.id })}>×</button></div>)}<button className="new-tab" title="Abrir pestaña" aria-label="Abrir pestaña" disabled={!state?.controlEnabled || state.paused || state.status !== 'connected'} onClick={() => { const url = window.prompt('Dirección de la nueva pestaña', 'https://example.com'); if (url) send({ type: 'tab.create', url: url.includes('://') ? url : `https://${url}` }); }}>+</button></div>
+    <div className="remote-tabs" role="tablist" aria-label="Pestañas compartidas">{state?.tabs.map(tab => <div className={`remote-tab ${tab.active ? 'active' : ''}`} key={tab.id}><button role="tab" aria-selected={tab.active} title={tab.url} disabled={!state.controlEnabled || state.paused} onClick={() => send({ type: 'tab.activate', tabId: tab.id })}><span>{tab.supported ? '▤' : '⊘'}</span>{tab.title || 'Sin título'}</button><button aria-label={`Cerrar ${tab.title}`} disabled={!state.controlEnabled || state.paused} onClick={() => send({ type: 'tab.close', tabId: tab.id })}>×</button></div>)}<button ref={newTabButton} className="new-tab" title="Abrir pestaña" aria-label="Abrir pestaña" disabled={!state?.controlEnabled || state.paused || state.status !== 'connected'} onClick={() => setNewTabOpen(true)}>+</button></div>{newTabOpen && <NewTabDialog onClose={closeNewTab}/>}
     <form className="navigation" onSubmit={e => { e.preventDefault(); const t = target(); if (t) send({ type: 'navigate', ...t, url: address.includes('://') ? address : `https://${address}` }); }}><button type="button" aria-label="Atrás" disabled={!interactive} onClick={() => { const t = target(); if (t) send({ type: 'history', ...t, direction: 'back' }); }}>←</button><button type="button" aria-label="Adelante" disabled={!interactive} onClick={() => { const t = target(); if (t) send({ type: 'history', ...t, direction: 'forward' }); }}>→</button><button type="button" aria-label="Recargar" disabled={!interactive} onClick={() => { const t = target(); if (t) send({ type: 'reload', ...t }); }}>↻</button><input aria-label="Dirección de la página remota" value={address} onChange={e => setAddress(e.target.value)} placeholder="Dirección de la página compartida" disabled={!interactive}/><button type="submit" disabled={!interactive}>Ir ↗</button></form>
     <section className="remote-stage" aria-label="Página remota"><canvas ref={canvas} className={!hasFrame ? 'invisible' : ''} aria-label="Vista de la página compartida" onPointerDown={e => pointer(e, 'down')} onPointerMove={e => pointer(e, 'move')} onPointerUp={e => pointer(e, 'up')} onPointerCancel={releasePointer} onLostPointerCapture={releasePointer} onContextMenu={e => e.preventDefault()} onWheel={e => { const point = coordinates(e); if (point) send({ type: 'wheel', ...point, deltaX: Math.max(-10000, Math.min(10000, e.deltaX)), deltaY: Math.max(-10000, Math.min(10000, e.deltaY)), modifiers: modifiers(e) }); }}/>
       <textarea ref={keyboard} className="keyboard-input" aria-label="Entrada de teclado remoto" autoCapitalize="off" autoComplete="off" spellCheck={false} disabled={!interactive} onFocus={() => setFocused(true)} onBlur={() => { releaseKeys(); setFocused(false); }} onKeyDown={e => key(e, 'down')} onKeyUp={e => key(e, 'up')} onCompositionStart={() => { composing.current = true; }} onCompositionEnd={e => { composing.current = false; text(e.data); e.currentTarget.value = ''; }} onInput={e => { if (!composing.current) { text(e.currentTarget.value); e.currentTarget.value = ''; } }} onPaste={e => { e.preventDefault(); text(e.clipboardData.getData('text/plain')); }}/>
