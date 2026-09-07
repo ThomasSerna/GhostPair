@@ -1,5 +1,6 @@
 import { PasswordSchema, SettingsSchema, validateSignalingUrl, type AppState, type Settings } from '@ghostpair/protocol';
 import { BrowserCapture } from './core/capture';
+import { dismissNotification, patchState } from './core/notifications';
 
 const defaults: Settings = {
   signalingUrl: import.meta.env.VITE_SIGNALING_URL || 'http://127.0.0.1:8787',
@@ -53,7 +54,7 @@ function broadcast() {
   void chrome.action.setBadgeBackgroundColor({ color: state.paused ? '#d2b573' : '#26724c' });
   void chrome.action.setTitle({ title: sharing ? `GhostPair · ${state.paused ? 'Sesión pausada' : 'Compartiendo páginas'} · Abrir para detener` : 'GhostPair' });
 }
-function update(patch: Partial<AppState>) { state = { ...state, ...patch }; broadcast(); }
+function update(patch: Partial<AppState>) { state = patchState(state, patch); broadcast(); }
 function hostState() { if (state.role === 'host' && ['connected', 'paused'].includes(state.status)) void transport('session.state', { snapshot: sharedState() }).catch(() => undefined); }
 
 const capture = new BrowserCapture({
@@ -107,7 +108,7 @@ async function stop(reason?: string): Promise<void> {
       capture.stop(),
       hasOffscreen().then(exists => exists ? transport('session.stop', { reason }) : undefined),
     ]);
-    state = { ...idle(state.settings, previousDevice), ...(reason ? { notice: reason } : {}) };
+    state = patchState(idle(state.settings, previousDevice), reason ? { notice: reason } : {});
     broadcast();
   })().finally(() => { terminating = undefined; });
   return terminating;
@@ -121,6 +122,7 @@ async function hasPermissions(clipboard: boolean) {
 async function action(message: Record<string, any>, sender: chrome.runtime.MessageSender): Promise<AppState> {
   switch (message.type) {
     case 'ui.status': return state;
+    case 'ui.notification.dismiss': state = dismissNotification(state, String(message.id)); broadcast(); return state;
     case 'ui.viewer.open': await openViewer(); return state;
     case 'ui.settings.reset': {
       if (!['idle', 'error'].includes(state.status)) throw new Error('End the session before changing settings.');

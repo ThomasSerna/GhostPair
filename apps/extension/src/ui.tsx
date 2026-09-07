@@ -36,6 +36,15 @@ export function Status({ state }: { state: AppState }) {
   return <span className={`status status-${state.status}`}><i/>{statusLabels[state.status]}</span>;
 }
 
+export function Notifications({ state, error, onError, floating = false }: { state?: AppState; error: string; onError: (value: string) => void; floating?: boolean }) {
+  const notification = state?.notification;
+  if (!error && !notification) return null;
+  return <div className={floating ? 'notification-stack floating' : 'notification-stack'}>
+    {error && <div className="alert" role="alert">{error}<button aria-label="Dismiss error" onClick={() => onError('')}>×</button></div>}
+    {notification && <div className={notification.kind === 'error' ? 'alert' : 'notice'} role={notification.kind === 'error' ? 'alert' : 'status'}>{notification.message}<button aria-label="Dismiss notification" onClick={() => void request('ui.notification.dismiss', { id: notification.id }).catch(e => onError(e.message))}>×</button></div>}
+  </div>;
+}
+
 export function formatDeviceId(value?: string) { return value ? value.match(/.{1,4}/g)?.join(' ').toUpperCase() : 'Se genera al compartir'; }
 
 export async function requestSessionPermissions(signalingUrl: string, clipboard: boolean): Promise<void> {

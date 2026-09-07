@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { FrameMetaSchema, MAX_CLIPBOARD_BYTES, type AppState, type ControlCommand, type ViewerFrame } from '@ghostpair/protocol';
-import { Brand, Status, request } from './ui';
+import { Brand, Status, Notifications, request } from './ui';
 import { ConnectionPanel } from './connection-panel';
 import './styles.css';
 
@@ -127,7 +127,7 @@ function Viewer() {
   }
   const selected = state?.tabs.find(t => t.id === state.activeTabId);
 
-  if (!state || state.role !== 'guest' || !['connected', 'paused'].includes(state.status)) return <main className="connection-page"><header className="viewer-header"><Brand compact/></header>{state ? <ConnectionPanel state={state} onState={setState} onError={setError}/> : <p>Loading GhostPair…</p>}{(error || state?.error || state?.notice) && <div className="viewer-alert" role="alert">{error || state?.error || state?.notice}</div>}</main>;
+  if (!state || state.role !== 'guest' || !['connected', 'paused'].includes(state.status)) return <main className="connection-page"><header className="viewer-header"><Brand compact/></header>{state ? <ConnectionPanel state={state} onState={setState} onError={setError}/> : <p>Loading GhostPair…</p>}<Notifications state={state} error={error} onError={setError} floating/></main>;
 
   return <main className="viewer"><header className="viewer-header"><Brand compact/><div className="viewer-session">{state && <Status state={state}/>}<span className="muted">{state?.connection?.latencyMs !== undefined ? `${Math.round(state.connection.latencyMs)} ms` : 'P2P directo'}</span></div><button className="danger small" onClick={() => { void request('ui.stop').catch(e => setError(e.message)); }}>Desconectar</button></header>
     <div className="remote-tabs" role="tablist" aria-label="Pestañas compartidas">{state?.tabs.map(tab => <div className={`remote-tab ${tab.active ? 'active' : ''}`} key={tab.id}><button role="tab" aria-selected={tab.active} title={tab.url} disabled={!state.controlEnabled || state.paused} onClick={() => send({ type: 'tab.activate', tabId: tab.id })}><span>{tab.supported ? '▤' : '⊘'}</span>{tab.title || 'Sin título'}</button><button aria-label={`Cerrar ${tab.title}`} disabled={!state.controlEnabled || state.paused} onClick={() => send({ type: 'tab.close', tabId: tab.id })}>×</button></div>)}<button className="new-tab" title="Abrir pestaña" aria-label="Abrir pestaña" disabled={!state?.controlEnabled || state.paused || state.status !== 'connected'} onClick={() => { const url = window.prompt('Dirección de la nueva pestaña', 'https://example.com'); if (url) send({ type: 'tab.create', url: url.includes('://') ? url : `https://${url}` }); }}>+</button></div>
@@ -136,7 +136,7 @@ function Viewer() {
       <textarea ref={keyboard} className="keyboard-input" aria-label="Entrada de teclado remoto" autoCapitalize="off" autoComplete="off" spellCheck={false} disabled={!interactive} onFocus={() => setFocused(true)} onBlur={() => { releaseKeys(); setFocused(false); }} onKeyDown={e => key(e, 'down')} onKeyUp={e => key(e, 'up')} onCompositionStart={() => { composing.current = true; }} onCompositionEnd={e => { composing.current = false; text(e.data); e.currentTarget.value = ''; }} onInput={e => { if (!composing.current) { text(e.currentTarget.value); e.currentTarget.value = ''; } }} onPaste={e => { e.preventDefault(); text(e.clipboardData.getData('text/plain')); }}/>
       {(!hasFrame || state?.paused || state?.status !== 'connected') && <div className="stage-overlay"><div className="empty-symbol">◎</div><h1>{state?.paused ? 'La sesión está en pausa.' : selected && !selected.supported ? 'Esta página no se comparte.' : state?.status === 'idle' || state?.status === 'error' ? 'La sesión ha terminado.' : 'Preparando tu espacio.'}</h1><p>{state?.paused ? 'El anfitrión puede reanudarla desde GhostPair.' : selected && !selected.supported ? 'Selecciona una página web de la ventana autorizada.' : state?.status === 'idle' || state?.status === 'error' ? 'Abre el menú de GhostPair para volver a conectarte.' : 'La imagen aparecerá cuando los equipos estén conectados.'}</p></div>}
     </section><footer className="viewer-footer"><span><i className={`connection-dot ${focused ? 'live' : ''}`}/>{focused ? 'Teclado remoto activo · Esc para liberar' : state?.controlEnabled ? 'Haz clic en la página para interactuar' : 'Solo visualización'}</span><span>{state?.clipboardEnabled && state.remoteClipboardEnabled ? 'Portapapeles sincronizado' : 'Portapapeles sin sincronizar'}</span></footer>
-    {(error || state?.error || state?.notice) && <div role="alert" className="viewer-alert">{error || state?.error || state?.notice}<button aria-label="Cerrar aviso" onClick={() => setError('')}>×</button></div>}
+    <Notifications state={state} error={error} onError={setError} floating/>
   </main>;
 }
 

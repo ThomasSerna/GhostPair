@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { MIN_PASSWORD_LENGTH, PasswordSchema, SettingsSchema, validateSignalingUrl } from '@ghostpair/protocol';
-import { Brand, Status, formatDeviceId, request, requestSessionPermissions, useSession } from './ui';
+import { Brand, Status, Notifications, formatDeviceId, request, requestSessionPermissions, useSession } from './ui';
 import './styles.css';
 
 function Popup() {
@@ -59,7 +59,7 @@ function Popup() {
         <button className="primary" disabled={busy || !state} type="submit">{busy ? 'Preparando…' : mode === 'host' ? 'Iniciar sesión compartida →' : 'Conectar con el anfitrión →'}</button>
       </form>{state?.deviceId && mode === 'host' && <p className="saved-id">Tu dirección: <code>{formatDeviceId(state.deviceId)}</code></p>}
     </section>}
-    {(error || state?.error) && <div role="alert" className="alert">{error || state?.error}</div>}{state?.notice && <div role="status" className="notice">{state.notice}</div>}
+    <Notifications state={state} error={error} onError={setError}/>
     <footer><span className="connection-dot"/>Conexión directa · Sin retransmisión<span>v0.1</span></footer>
   </main>;
 }

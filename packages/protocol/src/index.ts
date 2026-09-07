@@ -51,6 +51,7 @@ export interface AppState {
   sessionId?: string;
   error?: string;
   notice?: string;
+  notification?: { id: string; kind: 'error' | 'notice'; message: string };
   paused: boolean;
   controlEnabled: boolean;
   clipboardEnabled: boolean;
