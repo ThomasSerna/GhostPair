@@ -1,16 +1,53 @@
 {
   "manifest_version": 3,
   "name": "GhostPair",
-  "version": "0.1.0",
-  "description": "Comparte y controla páginas con otra persona mediante una conexión P2P autorizada.",
+  "version": "0.2.0",
+  "description": "Share and control authorized browser tabs over a direct peer-to-peer connection.",
   "minimum_chrome_version": "125",
-  "permissions": ["debugger", "tabs", "storage", "offscreen"],
-  "optional_permissions": ["clipboardRead", "clipboardWrite"],
-  "optional_host_permissions": ["https://*/*", "http://localhost/*", "http://127.0.0.1/*"],
-  "background": { "service_worker": "background.js", "type": "module" },
-  "action": { "default_popup": "popup.html", "default_title": "GhostPair", "default_icon": { "16": "icons/16.png", "32": "icons/32.png" } },
-  "icons": { "16": "icons/16.png", "32": "icons/32.png", "48": "icons/48.png", "128": "icons/128.png" },
-  "commands": { "stop-session": { "suggested_key": { "default": "Ctrl+Shift+9" }, "description": "Detener la sesión de GhostPair" } },
+  "permissions": [
+    "tabCapture",
+    "activeTab",
+    "scripting",
+    "tabs",
+    "storage",
+    "offscreen"
+  ],
+  "optional_permissions": [
+    "clipboardRead",
+    "clipboardWrite"
+  ],
+  "optional_host_permissions": [
+    "https://*/*",
+    "http://*/*"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "GhostPair",
+    "default_icon": {
+      "16": "icons/16.png",
+      "32": "icons/32.png"
+    }
+  },
+  "icons": {
+    "16": "icons/16.png",
+    "32": "icons/32.png",
+    "48": "icons/48.png",
+    "128": "icons/128.png"
+  },
+  "commands": {
+    "stop-session": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+9"
+      },
+      "description": "Stop the GhostPair session"
+    }
+  },
   "incognito": "not_allowed",
-  "content_security_policy": { "extension_pages": "script-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'" }
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
+  }
 }

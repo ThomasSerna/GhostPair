@@ -7,7 +7,7 @@ export function NewTabDialog({ onClose }: { onClose: () => void }) {
   const [url, setUrl] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
-  useEffect(() => { dialog.current?.showModal(); return () => dialog.current?.close(); }, []);
+  useEffect(() => { const element = dialog.current; element?.showModal(); return () => element?.close(); }, []);
   async function open() {
     if (busy) return;
     const value = url.trim();

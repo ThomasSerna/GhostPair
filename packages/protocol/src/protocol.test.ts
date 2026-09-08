@@ -1,45 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { PasswordSchema, ClientSignalMessageSchema, ControlCommandSchema, ClipboardUpdateSchema, isRelaySignal, isSupportedUrl, validateSignalingUrl, type FrameMeta } from './index';
-import { encodeFrame, FrameAssembler } from './frames';
-
-const meta: FrameMeta = { frameId: 1, tabId: 8, generation: 1, width: 1280, height: 720, viewportWidth: 1280, viewportHeight: 720, offsetTop: 0, pageScaleFactor: 1, timestamp: 123 };
-
-describe('frame transport', () => {
-  it('reassembles out-of-order binary chunks without corrupting bytes', () => {
-    const bytes = Uint8Array.from({ length: 40000 }, (_, i) => i % 256);
-    const assembler = new FrameAssembler();
-    const chunks = encodeFrame(meta, bytes).reverse();
-    expect(assembler.push(chunks[0]!)).toBeUndefined();
-    expect(assembler.push(chunks[0]!)).toBeUndefined();
-    expect(assembler.push(chunks[1]!)).toBeUndefined();
-    expect(assembler.push(chunks[2]!)).toEqual({ meta, jpeg: bytes });
-    expect(assembler.push(chunks[2]!)).toBeUndefined();
-  });
-  it('discards old targets and late frames', () => {
-    const assembler = new FrameAssembler();
-    const data = new Uint8Array([1, 2, 3]);
-    expect(assembler.push(encodeFrame({ ...meta, generation: 2 }, data)[0]!)).toBeDefined();
-    expect(assembler.push(encodeFrame(meta, data)[0]!)).toBeUndefined();
-    expect(assembler.push(encodeFrame({ ...meta, generation: 2, frameId: 0 }, data)[0]!)).toBeUndefined();
-  });
-  it('expires incomplete frames without blocking a newer one', () => {
-    let now = 0;
-    const assembler = new FrameAssembler(() => now);
-    const chunks = encodeFrame(meta, new Uint8Array(40000));
-    assembler.push(chunks[0]!);
-    now = 1001;
-    assembler.push(chunks[1]!);
-    expect(assembler.push(chunks[2]!)).toBeUndefined();
-    expect(assembler.push(encodeFrame({ ...meta, frameId: 2 }, new Uint8Array([1]))[0]!)).toBeDefined();
-  });
-  it('rejects malformed and oversized packets', () => {
-    const assembler = new FrameAssembler();
-    expect(assembler.push(new ArrayBuffer(1))).toBeUndefined();
-    expect(assembler.push(new ArrayBuffer(100000))).toBeUndefined();
-    expect(() => encodeFrame(meta, new Uint8Array(3 * 1024 * 1024))).toThrow();
-  });
-});
-
+import { PasswordSchema, ClientSignalMessageSchema, ControlCommandSchema, ClipboardUpdateSchema, isRelaySignal, isSupportedUrl, validateSignalingUrl } from './index';
 describe('network boundaries', () => {
   it('accepts passwords of 8 through 256 characters in both roles', () => {
     for (const length of [7, 8, 12, 256, 257]) {

@@ -2,12 +2,12 @@ import { useEffect, useState } from 'react';
 import type { AppState } from '@ghostpair/protocol';
 
 export const statusLabels: Record<AppState['status'], string> = {
-  idle: 'Sin conexión', starting: 'Preparando sesión', waiting: 'Esperando visitante', connecting: 'Conectando equipos', connected: 'Sesión conectada', paused: 'Sesión pausada', error: 'No se pudo conectar',
+  idle: 'Disconnected', starting: 'Preparing session', waiting: 'Waiting for a visitor', connecting: 'Connecting devices', connected: 'Session connected', paused: 'Session paused', error: 'Connection failed',
 };
 
 export async function request(type: string, payload: Record<string, unknown> = {}): Promise<AppState> {
   const reply = await chrome.runtime.sendMessage({ target: 'background', type, ...payload });
-  if (!reply?.ok) throw new Error(reply?.error ?? 'No se pudo completar la operación.');
+  if (!reply?.ok) throw new Error(reply?.error ?? 'The operation could not be completed.');
   return reply.state;
 }
 
@@ -29,7 +29,7 @@ export function useSession() {
 }
 
 export function Brand({ compact = false }: { compact?: boolean }) {
-  return <div className={`brand ${compact ? 'compact' : ''}`}><svg viewBox="0 0 40 40" aria-hidden="true"><rect x="1" y="1" width="38" height="38" rx="12" fill="#123638"/><path d="M16 12h-2a7 7 0 0 0 0 14h7a7 7 0 0 0 0-14h-2M24 28h2a7 7 0 0 0 0-14h-7a7 7 0 0 0 0 14h2" fill="none" stroke="#9be7bf" strokeWidth="2.4" strokeLinecap="round"/></svg><span>GhostPair</span>{!compact && <small>EN CONEXIÓN, CONTIGO</small>}</div>;
+  return <div className={`brand ${compact ? 'compact' : ''}`}><svg viewBox="0 0 40 40" aria-hidden="true"><rect x="1" y="1" width="38" height="38" rx="12" fill="#123638"/><path d="M16 12h-2a7 7 0 0 0 0 14h7a7 7 0 0 0 0-14h-2M24 28h2a7 7 0 0 0 0-14h-7a7 7 0 0 0 0 14h2" fill="none" stroke="#9be7bf" strokeWidth="2.4" strokeLinecap="round"/></svg><span>GhostPair</span>{!compact && <small>CONNECTED, TOGETHER</small>}</div>;
 }
 
 export function Status({ state }: { state: AppState }) {
@@ -45,10 +45,11 @@ export function Notifications({ state, error, onError, floating = false }: { sta
   </div>;
 }
 
-export function formatDeviceId(value?: string) { return value ? value.match(/.{1,4}/g)?.join(' ').toUpperCase() : 'Se genera al compartir'; }
+export function formatDeviceId(value?: string) { return value ? value.match(/.{1,4}/g)?.join(' ').toUpperCase() : 'Generated when you share'; }
 
-export async function requestSessionPermissions(signalingUrl: string, clipboard: boolean): Promise<void> {
+export async function requestSessionPermissions(signalingUrl: string, clipboard: boolean, host = false): Promise<void> {
   const origin = new URL(signalingUrl).origin;
-  const granted = await chrome.permissions.request({ origins: [`${origin}/*`], ...(clipboard ? { permissions: ['clipboardRead', 'clipboardWrite'] } : {}) });
-  if (!granted) throw new Error('Necesitamos los permisos elegidos para iniciar la sesión.');
+  const origins = host ? ['http://*/*', 'https://*/*'] : [`${origin}/*`];
+  const granted = await chrome.permissions.request({ origins, ...(clipboard ? { permissions: ['clipboardRead', 'clipboardWrite'] } : {}) });
+  if (!granted) throw new Error('The selected permissions are required to start this session.');
 }

@@ -1,0 +1,8 @@
+{
+  "manifest_version": 3,
+  "name": "GhostPair tab capture probe",
+  "version": "0.0.1",
+  "permissions": ["activeTab", "tabCapture", "tabs", "offscreen"],
+  "background": { "service_worker": "worker.js" },
+  "action": { "default_title": "Capture this test tab" }
+}

@@ -2,18 +2,20 @@ import type { ControlCommand } from '@ghostpair/protocol';
 
 /** Self-contained: Chrome serializes this function into the page's ISOLATED world. */
 export function installDomControl(captureId: string, generation: number) {
-  type Context = { captureId: string; generation: number; dispose: () => void; release: () => void };
+  type Context = { captureId: string; generation: number; ready: boolean; geometry: string; dispose: () => void; release: () => void };
   const scope = globalThis as typeof globalThis & { __ghostpairControl?: Context };
   const geometry = () => ({ viewportWidth: innerWidth, viewportHeight: innerHeight, offsetLeft: visualViewport?.offsetLeft ?? 0, offsetTop: visualViewport?.offsetTop ?? 0, scale: visualViewport?.scale ?? 1 });
   if (scope.__ghostpairControl) {
     scope.__ghostpairControl.release();
     scope.__ghostpairControl.captureId = captureId;
     scope.__ghostpairControl.generation = generation;
+    scope.__ghostpairControl.ready = true;
+    scope.__ghostpairControl.geometry = JSON.stringify(geometry());
     return geometry();
   }
   let down: Element | null = null;
   const keys = new Map<string, KeyboardEventInit>();
-  const context: Context = { captureId, generation, dispose, release };
+  const context: Context = { captureId, generation, ready: true, geometry: JSON.stringify(geometry()), dispose, release };
   scope.__ghostpairControl = context;
 
   function targetAt(x: number, y: number): Element | null {
@@ -142,11 +144,15 @@ export function installDomControl(captureId: string, generation: number) {
     try {
       if (message.operation === 'dispose') { dispose(); respond({ ok: true }); return; }
       if (message.operation === 'release') { release(); respond({ ok: true }); return; }
-      if (message.generation !== context.generation) throw new Error('The shared page changed. Wait for the current view.');
+      if (!context.ready || message.generation !== context.generation) throw new Error('The shared page changed. Wait for the current view.');
       execute(message.command); respond({ ok: true });
     } catch (error) { respond({ ok: false, error: (error as Error).message }); }
   };
-  function changed() { release(); void chrome.runtime.sendMessage({ target: 'background', type: 'dom.geometry', captureId: context.captureId, generation: context.generation, geometry: geometry() }).catch(() => undefined); }
+  function changed() {
+    const current = geometry(); if (JSON.stringify(current) === context.geometry) return;
+    context.ready = false; release();
+    void chrome.runtime.sendMessage({ target: 'background', type: 'dom.geometry', captureId: context.captureId, generation: context.generation, geometry: current }).catch(() => undefined);
+  }
   function dispose() {
     release(); chrome.runtime.onMessage.removeListener(listener);
     window.removeEventListener('resize', changed); visualViewport?.removeEventListener('resize', changed); visualViewport?.removeEventListener('scroll', changed);

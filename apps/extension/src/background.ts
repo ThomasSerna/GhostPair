@@ -1,301 +1,242 @@
 import { PasswordSchema, SettingsSchema, validateSignalingUrl, type AppState, type Settings } from '@ghostpair/protocol';
-import { BrowserCapture } from './core/capture';
+import { TabCapture } from './core/tab-capture';
 import { dismissNotification, patchState } from './core/notifications';
 
-const defaults: Settings = {
-  signalingUrl: import.meta.env.VITE_SIGNALING_URL || 'http://127.0.0.1:8787',
-  stunUrls: (import.meta.env.VITE_STUN_URLS || 'stun:stun.l.google.com:19302').split(',').map((s: string) => s.trim()).filter(Boolean),
-};
+const defaults: Settings = SettingsSchema.parse({ signalingUrl: import.meta.env.VITE_SIGNALING_URL || 'http://127.0.0.1:8787', stunUrls: (import.meta.env.VITE_STUN_URLS || 'stun:stun.l.google.com:19302').split(',').map((s: string) => s.trim()).filter(Boolean) });
+if (!validateSignalingUrl(defaults.signalingUrl)) throw new Error('Invalid build signaling URL.');
 let state: AppState = idle(defaults);
 let authorizedWindowId: number | undefined;
 let creatingOffscreen: Promise<void> | undefined;
 let terminating: Promise<void> | undefined;
 let mutation: Promise<unknown> = Promise.resolve();
 let sessionEpoch = 0;
-const viewers = new Set<chrome.runtime.Port>();
 let viewerTabId: number | undefined;
-
+let ownerPort: chrome.runtime.Port | undefined;
+const viewers = new Set<chrome.runtime.Port>();
+const pending = new Map<string, { resolve: (reply: any) => void; timer: ReturnType<typeof setTimeout> }>();
+function idle(settings: Settings, deviceId?: string): AppState { return { role: null, status: 'idle', deviceId, paused: false, controlEnabled: true, clipboardEnabled: false, remoteClipboardEnabled: false, tabs: [], generation: 0, settings }; }
+const pageUrl = (url?: string) => url?.split(/[?#]/)[0];
+const isViewer = (sender: chrome.runtime.MessageSender) => pageUrl(sender.url) === chrome.runtime.getURL('viewer.html');
 async function openViewer() {
-  const url = chrome.runtime.getURL('viewer.html');
-  const existing = (await chrome.tabs.query({ url })).find(tab => tab.id === viewerTabId)
-    ?? (await chrome.tabs.query({ url }))[0];
-  if (existing?.id !== undefined) {
-    viewerTabId = existing.id;
-    await chrome.tabs.update(existing.id, { active: true });
-    await chrome.windows.update(existing.windowId, { focused: true });
-  } else viewerTabId = (await chrome.tabs.create({ url })).id;
+  const url = chrome.runtime.getURL('viewer.html'), tabs = await chrome.tabs.query({ url });
+  const existing = tabs.find(tab => tab.id === viewerTabId) ?? tabs[0];
+  if (existing?.id !== undefined) { viewerTabId = existing.id; await chrome.tabs.update(existing.id, { active: true }); await chrome.windows.update(existing.windowId, { focused: true }); }
+  else viewerTabId = (await chrome.tabs.create({ url })).id;
 }
-
-function idle(settings: Settings, deviceId?: string): AppState {
-  return { role: null, status: 'idle', deviceId, paused: false, controlEnabled: true, clipboardEnabled: false, remoteClipboardEnabled: false, tabs: [], generation: 0, settings };
-}
-
-async function hasOffscreen() {
-  return (await chrome.runtime.getContexts({ contextTypes: [chrome.runtime.ContextType.OFFSCREEN_DOCUMENT], documentUrls: [chrome.runtime.getURL('offscreen.html')] })).length > 0;
-}
+async function hasOffscreen() { return (await chrome.runtime.getContexts({ contextTypes: [chrome.runtime.ContextType.OFFSCREEN_DOCUMENT], documentUrls: [chrome.runtime.getURL('offscreen.html')] })).length > 0; }
 async function offscreen() {
   if (await hasOffscreen()) return;
-  creatingOffscreen ??= chrome.offscreen.createDocument({ url: 'offscreen.html', reasons: [chrome.offscreen.Reason.WEB_RTC, chrome.offscreen.Reason.CLIPBOARD], justification: 'Conexión P2P de la sesión autorizada y sincronización opcional de texto.' }).finally(() => { creatingOffscreen = undefined; });
+  creatingOffscreen ??= chrome.offscreen.createDocument({ url: 'offscreen.html', reasons: [chrome.offscreen.Reason.USER_MEDIA, chrome.offscreen.Reason.WEB_RTC, chrome.offscreen.Reason.CLIPBOARD], justification: 'Authorized tab capture, peer connection and optional clipboard synchronization.' }).finally(() => { creatingOffscreen = undefined; });
   await creatingOffscreen;
 }
-async function transport(type: string, payload: object = {}) {
-  return chrome.runtime.sendMessage({ target: 'offscreen', type, ...payload });
+const toOffscreen = (type: string, payload: object = {}) => chrome.runtime.sendMessage({ target: 'offscreen', type, ...payload });
+function toViewer(type: string, payload: object = {}): Promise<any> {
+  if (!ownerPort) return Promise.resolve({ ok: false, error: 'Open the connection page before joining.' });
+  if (pending.size >= 64) return Promise.resolve({ ok: false, error: 'Too many pending viewer operations.' });
+  return new Promise(resolve => {
+    const requestId = crypto.randomUUID();
+    const timer = setTimeout(() => { pending.delete(requestId); resolve({ ok: false, error: 'The viewer did not respond.' }); }, 12000);
+    pending.set(requestId, { resolve, timer });
+    try { ownerPort!.postMessage({ type: 'transport.request', requestId, message: { type, ...payload } }); }
+    catch { clearTimeout(timer); pending.delete(requestId); resolve({ ok: false, error: 'The viewer closed.' }); }
+  });
 }
-
-function sharedState() {
-  return { paused: state.paused, controlEnabled: state.controlEnabled, clipboardEnabled: state.clipboardEnabled, tabs: state.tabs, activeTabId: state.activeTabId, generation: state.generation };
-}
+function transport(type: string, payload: object = {}) { return state.role === 'guest' && type.startsWith('session.') ? toViewer(type, payload) : toOffscreen(type, payload); }
 function broadcast() {
   for (const port of viewers) { try { port.postMessage({ type: 'state', state }); } catch { viewers.delete(port); } }
   void chrome.runtime.sendMessage({ type: 'state', state }).catch(() => undefined);
   void chrome.storage.session.set({ appState: state });
   const sharing = state.role === 'host' && !['idle', 'error'].includes(state.status);
-  void chrome.action.setBadgeText({ text: sharing ? state.paused ? 'Ⅱ' : 'ON' : '' });
+  void chrome.action.setBadgeText({ text: sharing ? state.paused ? 'II' : 'ON' : '' });
   void chrome.action.setBadgeBackgroundColor({ color: state.paused ? '#d2b573' : '#26724c' });
-  void chrome.action.setTitle({ title: sharing ? `GhostPair · ${state.paused ? 'Sesión pausada' : 'Compartiendo páginas'} · Abrir para detener` : 'GhostPair' });
+  void chrome.action.setTitle({ title: sharing ? `GhostPair · ${state.paused ? 'Paused' : 'Sharing tabs'} · Open to stop` : 'GhostPair' });
 }
 function update(patch: Partial<AppState>) { state = patchState(state, patch); broadcast(); }
-function hostState() { if (state.role === 'host' && ['connected', 'paused'].includes(state.status)) void transport('session.state', { snapshot: sharedState() }).catch(() => undefined); }
-
-const capture = new BrowserCapture({
-  frame: frame => { if (state.role === 'host' && state.status === 'connected' && !state.paused) void transport('capture.frame', { frame }).catch(() => undefined); },
-  state: (tabs, activeTabId, generation) => { if (state.role === 'host') { update({ tabs, activeTabId, generation }); hostState(); } },
-  error: message => { update({ notice: message }); },
-  detached: () => { void stop('El navegador detuvo el control. Inicia otra sesión desde el menú.'); },
+function hostState() {
+  if (state.role !== 'host' || !['connected', 'paused'].includes(state.status)) return;
+  const { paused, controlEnabled, clipboardEnabled, tabs, activeTabId, generation, presentation } = state;
+  void transport('session.state', { snapshot: { paused, controlEnabled, clipboardEnabled, tabs, activeTabId, generation, presentation } }).catch(() => undefined);
+}
+const capture = new TabCapture({
+  state: (tabs, activeTabId, generation, presentation) => { if (state.role === 'host') { update({ tabs, activeTabId, generation, presentation }); hostState(); } },
+  error: message => update({ notice: message }), detached: () => { void stop('The browser stopped sharing. Start a new session.'); },
+  acquire: async (tabId, captureId, streamId) => { const reply = await toOffscreen('capture.add', { tabId, captureId, streamId }); if (!reply?.ok) throw new Error(reply?.error ?? 'Tab capture failed.'); },
+  release: async captureId => { if (await hasOffscreen()) await toOffscreen('capture.remove', { captureId }); },
 });
-
 const ready = (async () => {
   await chrome.storage.local.setAccessLevel({ accessLevel: 'TRUSTED_CONTEXTS' });
   const saved = await chrome.storage.local.get(['settings', 'identities']);
-  const settings = SettingsSchema.safeParse(saved.settings).success ? saved.settings as Settings : defaults;
+  const parsed = SettingsSchema.safeParse(saved.settings);
+  const settings = parsed.success && validateSignalingUrl(parsed.data.signalingUrl) ? parsed.data : defaults;
   const identity = (saved.identities as Record<string, { deviceId: string }> | undefined)?.[settings.signalingUrl];
-  const session = (await chrome.storage.session.get('appState')).appState as AppState | undefined;
-  if (session?.role === 'guest' && session.settings.signalingUrl === settings.signalingUrl && await hasOffscreen()) state = session;
-  else {
-    state = idle(settings, identity?.deviceId);
-    if (session?.role === 'host' && !['idle', 'error'].includes(session.status)) {
-      if (await hasOffscreen()) await transport('session.stop').catch(() => undefined);
-      if (session.activeTabId !== undefined) await chrome.debugger.detach({ tabId: session.activeTabId }).catch(() => undefined);
-      state.notice = 'El navegador reinició el control. Inicia una sesión nueva.';
-    }
+  const previous = (await chrome.storage.session.get('appState')).appState as AppState | undefined;
+  state = idle(settings, identity?.deviceId);
+  if (previous?.role && !['idle', 'error'].includes(previous.status)) {
+    if (await hasOffscreen()) await toOffscreen('session.stop').catch(() => undefined);
+    state = patchState(state, { notice: 'The extension restarted. Start a new session.' });
   }
   broadcast();
 })();
-
 async function identity() {
   const saved = await chrome.storage.local.get('identities');
   const identities = (saved.identities ?? {}) as Record<string, { deviceId: string; ownerToken: string }>;
   const key = state.settings.signalingUrl;
   if (identities[key]) return identities[key]!;
-  // Registration is in offscreen so its extension Origin is preserved by Fetch.
-  const result = await transport('identity.register', { settings: state.settings });
-  if (!result?.ok || !/^[0-9a-f]{32}$/.test(result.identity?.deviceId ?? '') || !/^[0-9a-f]{64}$/.test(result.identity?.ownerToken ?? '')) throw new Error(result?.error ?? 'No se pudo registrar la instalación.');
-  identities[key] = result.identity;
-  await chrome.storage.local.set({ identities });
+  const result = await toOffscreen('identity.register', { settings: state.settings });
+  if (!result?.ok || !/^[0-9a-f]{32}$/.test(result.identity?.deviceId ?? '') || !/^[0-9a-f]{64}$/.test(result.identity?.ownerToken ?? '')) throw new Error(result?.error ?? 'Could not register this installation.');
+  identities[key] = result.identity; await chrome.storage.local.set({ identities });
   return result.identity as { deviceId: string; ownerToken: string };
 }
-
 async function stop(reason?: string): Promise<void> {
   if (terminating) return terminating;
   ++sessionEpoch;
   const previousDevice = state.deviceId;
-  // Block incoming frames/commands before any asynchronous cleanup.
-  update({ status: 'idle', paused: true, controlEnabled: false, clipboardEnabled: false, remoteClipboardEnabled: false });
+  update({ status: 'idle', paused: true, controlEnabled: false, clipboardEnabled: false, remoteClipboardEnabled: false, presentation: undefined });
   authorizedWindowId = undefined;
   terminating = (async () => {
-    // Stop clipboard/transport immediately, independently of CDP cleanup latency.
-    await Promise.allSettled([
-      capture.stop(),
-      hasOffscreen().then(exists => exists ? transport('session.stop', { reason }) : undefined),
-    ]);
-    state = patchState(idle(state.settings, previousDevice), reason ? { notice: reason } : {});
-    broadcast();
+    const peerStop = state.role === 'guest' ? toViewer('session.stop', { reason }) : hasOffscreen().then(exists => exists ? toOffscreen('session.stop', { reason }) : undefined);
+    await Promise.allSettled([capture.stop(), peerStop]);
+    if (await hasOffscreen()) await toOffscreen('clipboard.stop').catch(() => undefined);
+    state = patchState(idle(state.settings, previousDevice), reason ? { notice: reason } : {}); broadcast();
   })().finally(() => { terminating = undefined; });
   return terminating;
 }
-
-async function hasPermissions(clipboard: boolean) {
-  const origin = new URL(state.settings.signalingUrl).origin;
-  return chrome.permissions.contains({ origins: [`${origin}/*`], ...(clipboard ? { permissions: ['clipboardRead', 'clipboardWrite'] } : {}) });
-}
-
+async function permissions(host: boolean, clipboard: boolean) { return chrome.permissions.contains({ origins: host ? ['http://*/*', 'https://*/*'] : [`${new URL(state.settings.signalingUrl).origin}/*`], ...(clipboard ? { permissions: ['clipboardRead', 'clipboardWrite'] } : {}) }); }
 async function action(message: Record<string, any>, sender: chrome.runtime.MessageSender): Promise<AppState> {
   switch (message.type) {
     case 'ui.status': return state;
     case 'ui.notification.dismiss': state = dismissNotification(state, String(message.id)); broadcast(); return state;
     case 'ui.viewer.open': await openViewer(); return state;
+    case 'ui.settings.reset': case 'ui.settings.save': {
+      if (!['idle', 'error'].includes(state.status)) throw new Error('End the session before changing settings.');
+      const settings = message.type === 'ui.settings.reset' ? defaults : SettingsSchema.parse(message.settings);
+      if (!validateSignalingUrl(settings.signalingUrl)) throw new Error('Use HTTPS for signaling, or HTTP on localhost.');
+      if (message.type === 'ui.settings.reset') await chrome.storage.local.remove('settings'); else await chrome.storage.local.set({ settings });
+      const identities = (await chrome.storage.local.get('identities')).identities as Record<string, { deviceId: string }> | undefined;
+      state = idle(settings, identities?.[settings.signalingUrl]?.deviceId); broadcast(); return state;
+    }
+    case 'ui.host.start': case 'ui.guest.start': {
+      if (terminating) await terminating;
+      if (!['idle', 'error'].includes(state.status)) throw new Error('A session is already active.');
+      const epoch = ++sessionEpoch, current = () => epoch === sessionEpoch;
+      const host = message.type === 'ui.host.start';
+      if (!host && (!isViewer(sender) || sender.tab?.id !== viewerTabId || !ownerPort)) throw new Error('Join from the connection page.');
+      const password = PasswordSchema.parse(message.password), clipboard = message.clipboard === true;
+      if (!await permissions(host, clipboard)) throw new Error('Grant the selected permissions before starting.');
+      if (!current()) return state;
+      update({ role: host ? 'host' : 'guest', status: 'starting', notification: undefined, error: undefined, notice: undefined, clipboardEnabled: clipboard, paused: false, controlEnabled: true, tabs: [], presentation: undefined });
+      try {
+        await offscreen(); if (!current()) return state;
+        if (host) {
+          const window = sender.tab ? await chrome.windows.get(sender.tab.windowId) : await chrome.windows.getLastFocused({ windowTypes: ['normal'] });
+          if (window.incognito || window.type !== 'normal' || window.id === undefined) throw new Error('Select a normal browser window.');
+          authorizedWindowId = window.id;
+          const active = (await chrome.tabs.query({ windowId: window.id, active: true }))[0];
+          if (active?.id === undefined) throw new Error('Select the page to share.');
+          if (!current()) return state;
+          await capture.start(window.id); if (!current()) return state;
+          await capture.authorize(active.id); if (!current()) return state;
+        }
+        const owner = host ? await identity() : undefined; if (!current()) return state;
+        const deviceId = host ? owner!.deviceId : String(message.deviceId ?? '').replace(/[\s-]/g, '').toLowerCase();
+        if (!/^[0-9a-f]{32}$/.test(deviceId)) throw new Error('Enter a 32-character GhostPair address.');
+        if (host) update({ deviceId });
+        else { const reply = await toOffscreen('clipboard.configure', { enabled: clipboard }); if (!reply?.ok) throw new Error(reply?.error); }
+        const reply = await transport('session.start', { role: host ? 'host' : 'guest', settings: state.settings, deviceId, ownerToken: owner?.ownerToken, password, clipboard });
+        if (!current()) return state;
+        if (!reply?.ok) throw new Error(reply?.error ?? 'Could not start the session.');
+      } catch (error) { if (!current()) return state; await stop(); update({ status: 'error', error: error instanceof Error ? error.message : 'Could not start the session.' }); }
+      return state;
+    }
+    case 'ui.host.authorize': {
+      if (state.role !== 'host' || authorizedWindowId === undefined) throw new Error('Start a host session first.');
+      if (!await permissions(true, false)) throw new Error('Grant site access before sharing.');
+      const tab = (await chrome.tabs.query({ active: true, windowId: authorizedWindowId }))[0];
+      if (tab?.id === undefined) throw new Error('Select a tab in the shared window.');
+      await capture.authorize(tab.id); return state;
+    }
+    case 'ui.host.release': if (state.role !== 'host') throw new Error('Only the host can release captures.'); await capture.release(Number(message.tabId)); return state;
     case 'ui.command': {
       if (state.role !== 'guest' || state.status !== 'connected' || state.paused || !state.controlEnabled) throw new Error('Remote control is unavailable.');
       const reply = await transport('session.command', { command: message.command, requestId: crypto.randomUUID() });
-      if (!reply?.ok) throw new Error(reply?.error ?? 'Could not complete the action.');
-      return state;
+      if (!reply?.ok) throw new Error(reply?.error ?? 'Could not complete the action.'); return state;
     }
-    case 'ui.settings.reset': {
-      if (!['idle', 'error'].includes(state.status)) throw new Error('End the session before changing settings.');
-      await chrome.storage.local.remove('settings');
-      const identities = (await chrome.storage.local.get('identities')).identities as Record<string, { deviceId: string }> | undefined;
-      state = idle(defaults, identities?.[defaults.signalingUrl]?.deviceId);
-      broadcast(); return state;
-    }
-    case 'ui.settings.save': {
-      if (!['idle', 'error'].includes(state.status)) throw new Error('Termina la sesión antes de cambiar la configuración.');
-      const settings = SettingsSchema.parse(message.settings);
-      if (!validateSignalingUrl(settings.signalingUrl)) throw new Error('Se requiere señalización HTTPS; HTTP solo se admite en loopback.');
-      await chrome.storage.local.set({ settings });
-      const identities = (await chrome.storage.local.get('identities')).identities as Record<string, { deviceId: string }> | undefined;
-      state = idle(settings, identities?.[settings.signalingUrl]?.deviceId);
-      broadcast(); return state;
-    }
-    case 'ui.host.start':
-    case 'ui.guest.start': {
-      if (terminating) await terminating;
-      if (!['idle', 'error'].includes(state.status)) throw new Error('Ya hay una sesión activa.');
-      const startEpoch = ++sessionEpoch;
-      const current = () => startEpoch === sessionEpoch;
-      if (!validateSignalingUrl(state.settings.signalingUrl)) throw new Error('Configura un servidor HTTPS válido.');
-      const host = message.type === 'ui.host.start';
-      const password = PasswordSchema.parse(message.password);
-      if (!password || password.length > 256) throw new Error('Introduce la contraseña de la sesión.');
-      const clipboard = message.clipboard === true;
-      if (!await hasPermissions(clipboard)) throw new Error('Autoriza el servidor y los permisos elegidos desde el menú.');
-      if (!current()) return state;
-      let windowId: number | undefined;
-      if (host) {
-        const window = sender.tab ? await chrome.windows.get(sender.tab.windowId) : await chrome.windows.getLastFocused({ windowTypes: ['normal'] });
-        if (window.incognito || window.type !== 'normal') throw new Error('Selecciona una ventana normal del navegador.');
-        windowId = window.id;
-      }
-      if (!current()) return state;
-      update({ role: host ? 'host' : 'guest', status: 'starting', error: undefined, notice: undefined, clipboardEnabled: clipboard, paused: false, controlEnabled: true, tabs: [], activeTabId: undefined, generation: 0 });
-      try {
-        await offscreen();
-        if (!current()) return state;
-        const owner = host ? await identity() : undefined;
-        if (!current()) return state;
-        const deviceId = host ? owner!.deviceId : String(message.deviceId ?? '').replace(/[\s-]/g, '').toLowerCase();
-        if (!/^[0-9a-f]{32}$/.test(deviceId)) throw new Error('La dirección debe contener 32 caracteres hexadecimales.');
-        authorizedWindowId = windowId;
-        if (host) update({ deviceId });
-        const reply = await transport('session.start', { role: host ? 'host' : 'guest', settings: state.settings, deviceId, ownerToken: owner?.ownerToken, password, clipboard });
-        if (!current()) return state;
-        if (!reply?.ok) throw new Error(reply?.error ?? 'No se pudo iniciar la conexión.');
-      } catch (error) {
-        if (!current()) return state;
-        await stop();
-        update({ status: 'error', error: error instanceof Error ? error.message : 'No se pudo iniciar la sesión.' });
-      }
-      return state;
-    }
-    case 'ui.stop': await stop(); return state;
     case 'ui.pause': {
-      if (state.role !== 'host' || !['connected', 'paused'].includes(state.status)) throw new Error('La sesión todavía no está conectada.');
-      const paused = message.paused === true;
-      update({ paused, status: paused ? 'paused' : 'connected' });
-      hostState();
-      await Promise.all([capture.setPaused(paused), transport('session.clipboard', { enabled: state.clipboardEnabled, paused })]);
-      return state;
+      if (state.role !== 'host' || !['connected', 'paused'].includes(state.status)) throw new Error('The session is not connected.');
+      const paused = message.paused === true; update({ paused, status: paused ? 'paused' : 'connected' });
+      await capture.setPaused(paused); hostState(); await transport('session.clipboard', { enabled: state.clipboardEnabled, paused }); return state;
     }
     case 'ui.control': {
-      if (state.role !== 'host') throw new Error('Solo el anfitrión puede cambiar el control.');
-      update({ controlEnabled: message.enabled === true });
-      await capture.setControl(state.controlEnabled); hostState(); return state;
+      if (state.role !== 'host') throw new Error('Only the host can change control.');
+      update({ controlEnabled: message.enabled === true }); await capture.setControl(state.controlEnabled); hostState(); return state;
     }
     case 'ui.clipboard': {
       const enabled = message.enabled === true;
-      if (enabled && !await chrome.permissions.contains({ permissions: ['clipboardRead', 'clipboardWrite'] })) throw new Error('Autoriza el portapapeles en este equipo.');
+      if (enabled && !await chrome.permissions.contains({ permissions: ['clipboardRead', 'clipboardWrite'] })) throw new Error('Grant clipboard access on this device.');
       update({ clipboardEnabled: enabled });
-      if (await hasOffscreen()) await transport('session.clipboard', { enabled, paused: state.paused });
-      hostState(); return state;
+      if (state.role === 'guest') await toOffscreen('clipboard.configure', { enabled });
+      if (state.role) await transport('session.clipboard', { enabled, paused: state.paused }); hostState(); return state;
     }
-    default: throw new Error('Operación desconocida.');
+    default: throw new Error('Unknown operation.');
   }
 }
-
 async function fromTransport(message: Record<string, any>) {
-  if (message.type === 'transport.status') {
-    if (!state.role || terminating) return;
-    const status = message.status as AppState['status'];
-    if (['waiting', 'connecting'].includes(status)) update({ status, sessionId: message.sessionId ?? state.sessionId });
-    return;
-  }
-  if (message.type === 'transport.connected') {
-    if (!state.role || terminating) return;
-    update({ status: 'connected', sessionId: message.sessionId, connection: { direct: true }, notice: undefined });
-    if (state.role === 'host' && authorizedWindowId !== undefined) {
-      try {
-        await capture.start(authorizedWindowId);
-        await capture.setControl(state.controlEnabled);
-        hostState();
-      } catch (error) {
-        const reason = error instanceof Error ? error.message : 'El navegador no permitió compartir esta página.';
-        await stop(reason); update({ status: 'error', error: reason });
-      }
+  if (message.type === 'transport.pulse' || !state.role || terminating) return;
+  switch (message.type) {
+    case 'transport.status': if (['waiting', 'connecting'].includes(message.status)) update({ status: message.status, sessionId: message.sessionId ?? state.sessionId }); break;
+    case 'transport.connected': update({ status: 'connected', sessionId: message.sessionId, connection: { direct: true } }); hostState(); break;
+    case 'transport.ended': await stop(String(message.reason || 'Session ended.')); if (message.failed) update({ status: 'error', error: String(message.reason || 'Connection failed.') }); break;
+    case 'transport.notice': update({ notice: String(message.message || '') }); break;
+    case 'transport.clipboard': update({ remoteClipboardEnabled: message.remoteEnabled === true, ...(message.disabled ? { clipboardEnabled: false } : {}) }); break;
+    case 'transport.stats': if (state.connection) update({ connection: { ...state.connection, latencyMs: message.latencyMs } }); break;
+    case 'transport.snapshot': if (state.role === 'guest') { const remote = message.snapshot; update({ tabs: remote.tabs, activeTabId: remote.activeTabId, generation: remote.generation, presentation: remote.presentation, paused: remote.paused, controlEnabled: remote.controlEnabled, remoteClipboardEnabled: remote.clipboardEnabled, status: remote.paused ? 'paused' : 'connected' }); } break;
+    case 'transport.command': {
+      if (state.role !== 'host' || state.status !== 'connected' || state.paused) return { ok: false, error: 'Remote control is unavailable.' };
+      try { await capture.execute(message.command); return { ok: true }; } catch (error) { return { ok: false, error: (error as Error).message }; }
     }
-    return;
   }
-  if (message.type === 'transport.ended') {
-    if (terminating) return;
-    const reason = String(message.reason || 'La sesión terminó.');
-    await stop(reason);
-    if (message.failed) update({ status: 'error', error: reason });
-    return;
-  }
-  if (message.type === 'transport.notice') { update({ notice: String(message.message || '') }); return; }
-  if (message.type === 'transport.clipboard') { update({ remoteClipboardEnabled: message.remoteEnabled === true, ...(message.disabled ? { clipboardEnabled: false } : {}) }); return; }
-  if (message.type === 'transport.stats') { if (state.connection) update({ connection: { ...state.connection, latencyMs: message.latencyMs } }); return; }
-  if (message.type === 'transport.snapshot' && state.role === 'guest') {
-    const remote = message.snapshot;
-    update({ tabs: remote.tabs, activeTabId: remote.activeTabId, generation: remote.generation, paused: remote.paused, controlEnabled: remote.controlEnabled, remoteClipboardEnabled: remote.clipboardEnabled, status: remote.paused ? 'paused' : 'connected' });
-    return;
-  }
-  if (message.type === 'transport.frame' && state.role === 'guest' && state.status === 'connected') {
-    for (const port of viewers) { try { port.postMessage({ type: 'frame', frame: message.frame }); } catch { viewers.delete(port); } }
-    return;
-  }
-  if (message.type === 'transport.command' && state.role === 'host' && state.status === 'connected' && !state.paused) {
-    try { await capture.execute(message.command); return { ok: true }; }
-    catch (error) { return { ok: false, error: error instanceof Error ? error.message : 'Could not apply the action.' }; }
-  }
-  if (message.type === 'transport.command') return { ok: false, error: 'Remote control is unavailable.' };
-  if (message.type === 'transport.profile' && state.role === 'host') await capture.profile(message.congested === true);
 }
-
 chrome.runtime.onMessage.addListener((message, sender, respond) => {
   if (sender.id !== chrome.runtime.id || message?.target !== 'background') return;
-  const fromOffscreen = sender.url === chrome.runtime.getURL('offscreen.html');
-  const fromUi = sender.url?.startsWith(chrome.runtime.getURL('popup.html')) || sender.url?.startsWith(chrome.runtime.getURL('viewer.html'));
-  if (!fromOffscreen && !fromUi) return;
+  const fromOffscreen = pageUrl(sender.url) === chrome.runtime.getURL('offscreen.html'), fromViewer = isViewer(sender), fromPopup = pageUrl(sender.url) === chrome.runtime.getURL('popup.html');
+  if (!fromOffscreen && !fromViewer && !fromPopup && message.type !== 'dom.geometry') return;
   void (async () => {
     await ready;
-    if (fromOffscreen) { return await fromTransport(message) ?? { ok: true, state }; }
+    if (message.type === 'dom.geometry') { capture.geometry(message, sender); return { ok: true }; }
+    if (fromOffscreen || fromViewer && sender.tab?.id === viewerTabId && message.type.startsWith('transport.')) return await fromTransport(message) ?? { ok: true, state };
     if (message.type === 'ui.status') return { ok: true, state };
     if (message.type === 'ui.stop') { await stop(); return { ok: true, state }; }
-    const pending = mutation.then(() => action(message, sender));
-    mutation = pending.catch(() => undefined);
-    return { ok: true, state: await pending };
-  })().then(respond).catch(error => respond({ ok: false, error: error instanceof Error ? error.message : 'Ocurrió un error.' }));
+    if (message.type === 'ui.clipboard.read' || message.type === 'ui.clipboard.write') {
+      if (!fromViewer || sender.tab?.id !== viewerTabId || state.role !== 'guest' || !state.clipboardEnabled || !state.remoteClipboardEnabled || state.paused || state.status !== 'connected') throw new Error('Clipboard sharing is disabled.');
+      return await toOffscreen(message.type === 'ui.clipboard.read' ? 'clipboard.read' : 'clipboard.write', { text: message.text });
+    }
+    const work = mutation.then(() => action(message, sender)); mutation = work.catch(() => undefined); return { ok: true, state: await work };
+  })().then(respond).catch(error => respond({ ok: false, error: error instanceof Error ? error.message : 'Could not complete the operation.' }));
   return true;
 });
-
 chrome.runtime.onConnect.addListener(port => {
-  if (port.name !== 'viewer' || port.sender?.id !== chrome.runtime.id || !port.sender.url?.startsWith(chrome.runtime.getURL('viewer.html'))) return;
-  viewers.add(port);
-  void ready.then(async () => {
-    port.postMessage({ type: 'state', state });
-    if (state.role === 'guest' && await hasOffscreen()) await transport('session.resendFrame');
-  }).catch(() => undefined);
-  port.onDisconnect.addListener(() => viewers.delete(port));
+  if (port.name !== 'viewer' || port.sender?.id !== chrome.runtime.id || !isViewer(port.sender) || port.sender.tab?.id === undefined) return;
+  const tabId = port.sender.tab.id;
+  if (ownerPort && viewerTabId !== tabId) { port.postMessage({ type: 'viewer.duplicate' }); void openViewer(); return; }
+  ownerPort = port; viewerTabId = tabId; viewers.add(port);
+  void ready.then(() => port.postMessage({ type: 'state', state })).catch(() => undefined);
+  port.onDisconnect.addListener(() => {
+    viewers.delete(port); if (ownerPort !== port) return; ownerPort = undefined;
+    for (const entry of pending.values()) { clearTimeout(entry.timer); entry.resolve({ ok: false, error: 'The viewer closed.' }); } pending.clear();
+    if (state.role === 'guest') void stop('The connection page closed. Start a new session.');
+  });
   port.onMessage.addListener(message => {
-    if (message?.type === 'control' && state.role === 'guest' && state.status === 'connected' && state.controlEnabled && !state.paused) void transport('session.command', { command: message.command }).catch(() => undefined);
+    if (port !== ownerPort) return;
+    if (message?.type === 'transport.reply') { const entry = pending.get(message.requestId); if (entry) { clearTimeout(entry.timer); pending.delete(message.requestId); entry.resolve(message.reply); } }
   });
 });
 chrome.commands.onCommand.addListener(command => { if (command === 'stop-session') void ready.then(() => stop()); });
 chrome.permissions.onRemoved.addListener(() => { void ready.then(async () => {
   if (!state.role) return;
-  if (!await hasPermissions(false)) { await stop('Se retiró el permiso del servidor.'); return; }
+  if (!await permissions(state.role === 'host', false)) { await stop('Required site access was removed.'); return; }
   if (state.clipboardEnabled && !await chrome.permissions.contains({ permissions: ['clipboardRead', 'clipboardWrite'] })) {
-    update({ clipboardEnabled: false, notice: 'Se retiró el permiso del portapapeles.' });
+    update({ clipboardEnabled: false, notice: 'Clipboard access was removed.' }); await toOffscreen('clipboard.configure', { enabled: false });
     await transport('session.clipboard', { enabled: false, paused: state.paused }); hostState();
   }
 }); });
-chrome.windows.onRemoved.addListener(windowId => { if (windowId === authorizedWindowId) void stop('Se cerró la ventana compartida.'); });
+chrome.windows.onRemoved.addListener(windowId => { if (windowId === authorizedWindowId) void stop('The shared window closed.'); });

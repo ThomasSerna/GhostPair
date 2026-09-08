@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { FrameMetaSchema, MAX_CLIPBOARD_BYTES, type AppState, type ControlCommand, type ViewerFrame } from '@ghostpair/protocol';
+import { MAX_CLIPBOARD_BYTES, type AppState, type ControlCommand, type Presentation } from '@ghostpair/protocol';
 import { Brand, Status, Notifications, request } from './ui';
 import { ConnectionPanel } from './connection-panel';
 import { NewTabDialog } from './new-tab-dialog';
+import { createPeerSession } from './core/peer-session';
 import './styles.css';
 
 function Viewer() {
@@ -14,28 +15,31 @@ function Viewer() {
   const [focused, setFocused] = useState(false);
   const [newTabOpen, setNewTabOpen] = useState(false);
   const newTabButton = useRef<HTMLButtonElement>(null);
-  const closeNewTab = () => { setNewTabOpen(false); newTabButton.current?.focus(); };
+  const closeNewTab = () => { setNewTabOpen(false); requestAnimationFrame(() => newTabButton.current?.focus()); };
   const port = useRef<chrome.runtime.Port | null>(null);
   const stateRef = useRef<AppState | undefined>(undefined);
-  const canvas = useRef<HTMLCanvasElement>(null);
+  const video = useRef<HTMLVideoElement>(null);
+  const stage = useRef<HTMLElement>(null);
+  const [area, setArea] = useState({ width: 800, height: 600 });
   const keyboard = useRef<HTMLTextAreaElement>(null);
-  const frame = useRef<ViewerFrame | undefined>(undefined);
+  const frame = useRef<Presentation | undefined>(undefined);
   const composing = useRef(false);
-  const heldKeys = useRef(new Map<string, Omit<Extract<ControlCommand, { type: 'key' }>, 'type' | 'event' | 'tabId' | 'generation'>>());
+  const heldKeys = useRef(new Map<string, Omit<Extract<ControlCommand, { type: 'key' }>, 'type' | 'event' | 'tabId' | 'generation' | 'captureId' | 'documentId'>>());
   const heldPointer = useRef<Extract<ControlCommand, { type: 'pointer' }> | undefined>(undefined);
-  const drawing = useRef(false);
-  const pending = useRef<ViewerFrame | undefined>(undefined);
+  const peer = useRef<ReturnType<typeof createPeerSession> | undefined>(undefined);
+  const [incoming, setIncoming] = useState<{ stream: MediaStream; meta: Presentation }>();
+  const [duplicate, setDuplicate] = useState(false);
   const disposed = useRef(false);
   const lastClick = useRef({ time: 0, x: 0, y: 0, button: -1, count: 0 });
 
   function send(command: ControlCommand) {
     if (!port.current || !stateRef.current || stateRef.current.status !== 'connected' || stateRef.current.paused || !stateRef.current.controlEnabled) return;
-    port.current.postMessage({ type: 'control', command });
+    void peer.current?.handle({ type: 'session.command', command }).catch(e => setError(e.message));
   }
   function target() {
-    const f = frame.current?.meta;
+    const f = frame.current;
     const s = stateRef.current;
-    return f && s && f.tabId === s.activeTabId && f.generation === s.generation ? { tabId: f.tabId, generation: f.generation } : undefined;
+    return f && s && f.tabId === s.activeTabId && f.generation === s.generation ? { tabId: f.tabId, generation: f.generation, captureId: f.captureId, documentId: f.documentId } : undefined;
   }
   function releaseKeys() {
     const t = target();
@@ -46,66 +50,90 @@ function Viewer() {
     const pointer = heldPointer.current; heldPointer.current = undefined;
     if (pointer) send({ ...pointer, event: 'up', buttons: 0 });
   }
-  async function draw(next: ViewerFrame) {
-    pending.current = next;
-    if (drawing.current) return;
-    drawing.current = true;
-    try {
-      while (pending.current && !disposed.current) {
-        const current = pending.current;
-        pending.current = undefined;
-        const img = new Image();
-        img.src = current.dataUrl;
-        try { await img.decode(); } catch { continue; }
-        const s = stateRef.current;
-        if (!canvas.current || !s || disposed.current || current.meta.generation !== s.generation || current.meta.tabId !== s.activeTabId) continue;
-        if (img.naturalWidth > 1920 || img.naturalHeight > 1920 || !img.naturalWidth || !img.naturalHeight) continue;
-        canvas.current.width = img.naturalWidth;
-        canvas.current.height = img.naturalHeight;
-        canvas.current.getContext('2d')!.drawImage(img, 0, 0);
-        frame.current = current;
-        setHasFrame(true);
-      }
-    } finally { drawing.current = false; }
+  function applyState(next: AppState) {
+    if (stateRef.current?.sessionId !== next.sessionId || stateRef.current?.generation !== next.generation || stateRef.current?.activeTabId !== next.activeTabId || next.status !== 'connected') {
+      releaseKeys(); releasePointer(); frame.current = undefined; setHasFrame(false);
+    }
+    if (stateRef.current?.controlEnabled && !next.controlEnabled) { releaseKeys(); releasePointer(); }
+    stateRef.current = next; setState(next);
   }
   useEffect(() => {
     disposed.current = false;
-    const connection = chrome.runtime.connect({ name: 'viewer' });
-    port.current = connection;
-    connection.onMessage.addListener((message: { type?: string; state?: AppState; frame?: ViewerFrame; error?: string }) => {
-      if (message.type === 'state' && message.state) {
-        const next = message.state;
-        if (stateRef.current?.generation !== next.generation || stateRef.current?.activeTabId !== next.activeTabId) { releaseKeys(); releasePointer(); frame.current = undefined; setHasFrame(false); }
-        stateRef.current = next;
-        setState(next);
-      }
-      if (message.type === 'frame' && message.frame && FrameMetaSchema.safeParse(message.frame.meta).success && /^data:image\/jpeg;base64,/.test(message.frame.dataUrl)) void draw(message.frame);
-      if (message.type === 'error') setError(message.error ?? 'No se pudo completar la acción.');
+    const dispatch = (message: Record<string, unknown>) => chrome.runtime.sendMessage({ target: 'background', ...message });
+    const clipboard = {
+      read: async () => { const reply = await dispatch({ type: 'ui.clipboard.read' }); if (!reply?.ok) throw new Error(reply?.error); return String(reply.text); },
+      write: async (text: string) => { const reply = await dispatch({ type: 'ui.clipboard.write', text }); if (!reply?.ok) throw new Error(reply?.error); },
+    };
+    peer.current = createPeerSession((type, payload = {}) => { void dispatch({ type, ...payload }).catch(() => undefined); }, dispatch, clipboard, {
+      stream: (stream, meta) => { frame.current = undefined; setHasFrame(false); setIncoming(stream && meta ? { stream, meta } : undefined); },
     });
-    connection.onDisconnect.addListener(() => { if (!disposed.current) { port.current = null; setError('Se perdió la conexión con la extensión. Abre GhostPair para iniciar otra sesión.'); } });
-    void request('ui.status').then(s => { if (!disposed.current) { stateRef.current = s; setState(s); } }).catch(e => setError(e.message));
+    let retry: ReturnType<typeof setTimeout> | undefined;
+    function connectPort() {
+      if (disposed.current) return;
+      const connection = chrome.runtime.connect({ name: 'viewer' }); port.current = connection;
+      connection.onMessage.addListener(message => {
+        if (message.type === 'state') applyState(message.state);
+        if (message.type === 'viewer.duplicate') { setDuplicate(true); peer.current?.stop(); }
+        if (message.type === 'transport.request') {
+          void peer.current!.handle(message.message).then(reply => connection.postMessage({ type: 'transport.reply', requestId: message.requestId, reply })).catch(error => {
+            try { connection.postMessage({ type: 'transport.reply', requestId: message.requestId, reply: { ok: false, error: error.message } }); } catch { /* viewer closed */ }
+          });
+        }
+      });
+      connection.onDisconnect.addListener(() => {
+        if (disposed.current) return;
+        port.current = null; peer.current?.stop('The viewer lost its extension connection.');
+        setError('The extension connection was interrupted. Start a new session.');
+        retry = setTimeout(connectPort, 500);
+      });
+      void request('ui.status').then(applyState).catch(e => setError(e.message));
+    }
+    connectPort();
+    const refresh = setInterval(() => { void request('ui.status').then(applyState).catch(() => undefined); }, 15000);
     const releaseInput = () => { releaseKeys(); releasePointer(); };
-    window.addEventListener('blur', releaseInput);
-    window.addEventListener('pagehide', releaseInput);
-    return () => { releaseInput(); window.removeEventListener('blur', releaseInput); window.removeEventListener('pagehide', releaseInput); disposed.current = true; connection.disconnect(); port.current = null; };
+    const leave = () => { releaseInput(); peer.current?.stop('The connection page closed.'); };
+    window.addEventListener('blur', releaseInput); window.addEventListener('pagehide', leave);
+    return () => { disposed.current = true; clearTimeout(retry); clearInterval(refresh); leave(); window.removeEventListener('blur', releaseInput); window.removeEventListener('pagehide', leave); port.current?.disconnect(); port.current = null; };
   }, []);
+  useEffect(() => {
+    const element = video.current;
+    if (!element) return;
+    element.srcObject = incoming?.stream ?? null;
+    if (!incoming || state?.status !== 'connected') return;
+    const { stream, meta } = incoming;
+    let canceled = false;
+    const callback = element.requestVideoFrameCallback(() => {
+      const current = stateRef.current;
+      if (canceled || element.srcObject !== stream || !current?.presentation || current.status !== 'connected' || current.generation !== meta.generation || current.presentation.captureId !== meta.captureId || current.presentation.documentId !== meta.documentId) return;
+      frame.current = meta; setHasFrame(true);
+    });
+    void element.play().catch(error => { if (!canceled) setError(`Could not play the shared video: ${error.message}`); });
+    return () => { canceled = true; element.cancelVideoFrameCallback(callback); };
+  }, [incoming, state?.status, state?.generation, state?.controlEnabled]);
   useEffect(() => { setAddress(state?.tabs.find(t => t.id === state.activeTabId)?.url ?? ''); }, [state?.activeTabId, state?.tabs.find(t => t.id === state.activeTabId)?.url]);
+  useEffect(() => {
+    if (!stage.current) return;
+    const observer = new ResizeObserver(entries => { const box = entries[0]?.contentRect; if (box) setArea({ width: box.width, height: box.height }); });
+    observer.observe(stage.current); return () => observer.disconnect();
+  }, [state?.status]);
+  const aspect = state?.presentation ? state.presentation.viewportWidth / state.presentation.viewportHeight : 16 / 9;
+  const videoWidth = Math.min(area.width, area.height * aspect);
 
   const interactive = Boolean(state?.status === 'connected' && state.controlEnabled && !state.paused && hasFrame);
   useEffect(() => { if (state?.status !== 'connected' || state.paused || !state.controlEnabled) setNewTabOpen(false); }, [state?.status, state?.paused, state?.controlEnabled]);
   const modifiers = (event: { altKey: boolean; ctrlKey: boolean; metaKey: boolean; shiftKey: boolean }) => Number(event.altKey) | Number(event.ctrlKey) << 1 | Number(event.metaKey) << 2 | Number(event.shiftKey) << 3;
   function coordinates(event: { clientX: number; clientY: number }, clamp = false) {
-    const t = target(); const f = frame.current?.meta; const bounds = canvas.current?.getBoundingClientRect();
+    const t = target(); const f = frame.current; const bounds = video.current?.getBoundingClientRect();
     if (!t || !f || !bounds?.width || !interactive) return;
     // Input coordinates are viewport CSS pixels; never include the browser toolbar.
-    let x = (event.clientX - bounds.left) / bounds.width * f.viewportWidth;
-    let y = (event.clientY - bounds.top) / bounds.height * f.viewportHeight - f.offsetTop;
+    let x = (event.clientX - bounds.left) / bounds.width * (f.viewportWidth / f.scale) + f.offsetLeft;
+    let y = (event.clientY - bounds.top) / bounds.height * (f.viewportHeight / f.scale) + f.offsetTop;
     if (clamp) { x = Math.max(0, Math.min(f.viewportWidth, x)); y = Math.max(0, Math.min(f.viewportHeight, y)); }
     if (x < 0 || y < 0 || x > f.viewportWidth || y > f.viewportHeight) return;
     return { ...t, x, y };
   }
   function text(value: string) { const t = target(); if (t && value && new TextEncoder().encode(value).length <= MAX_CLIPBOARD_BYTES) send({ type: 'text', ...t, text: value }); }
-  function pointer(event: React.PointerEvent<HTMLCanvasElement>, kind: 'move' | 'down' | 'up') {
+  function pointer(event: React.PointerEvent<HTMLVideoElement>, kind: 'move' | 'down' | 'up') {
     const point = coordinates(event, kind !== 'down' && Boolean(heldPointer.current)); if (!point) return;
     event.preventDefault();
     if (kind === 'down') { keyboard.current?.focus({ preventScroll: true }); event.currentTarget.setPointerCapture(event.pointerId); }
@@ -131,16 +159,17 @@ function Viewer() {
     if (event.key.length > 1 || (event.ctrlKey && !['v', 'c', 'x'].includes(event.key.toLowerCase())) || event.metaKey || event.altKey) event.preventDefault();
   }
   const selected = state?.tabs.find(t => t.id === state.activeTabId);
+  if (duplicate) return <main className="connection-page"><header className="viewer-header"><Brand compact/></header><section className="connection-panel"><h1>Your connection page is already open.</h1><button className="primary" onClick={() => void request('ui.viewer.open')}>Open connection page</button></section></main>;
 
-  if (!state || state.role !== 'guest' || !['connected', 'paused'].includes(state.status)) return <main className="connection-page"><header className="viewer-header"><Brand compact/></header>{state ? <ConnectionPanel state={state} onState={setState} onError={setError}/> : <p>Loading GhostPair…</p>}<Notifications state={state} error={error} onError={setError} floating/></main>;
+  if (!state || state.role !== 'guest' || !['connected', 'paused'].includes(state.status)) return <main className="connection-page"><header className="viewer-header"><Brand compact/></header>{state ? <ConnectionPanel state={state} onState={applyState} onError={setError}/> : <p>Loading GhostPair…</p>}<Notifications state={state} error={error} onError={setError} floating/></main>;
 
-  return <main className="viewer"><header className="viewer-header"><Brand compact/><div className="viewer-session">{state && <Status state={state}/>}<span className="muted">{state?.connection?.latencyMs !== undefined ? `${Math.round(state.connection.latencyMs)} ms` : 'P2P directo'}</span></div><button className="danger small" onClick={() => { void request('ui.stop').catch(e => setError(e.message)); }}>Desconectar</button></header>
-    <div className="remote-tabs" role="tablist" aria-label="Pestañas compartidas">{state?.tabs.map(tab => <div className={`remote-tab ${tab.active ? 'active' : ''}`} key={tab.id}><button role="tab" aria-selected={tab.active} title={tab.url} disabled={!state.controlEnabled || state.paused} onClick={() => send({ type: 'tab.activate', tabId: tab.id })}><span>{tab.supported ? '▤' : '⊘'}</span>{tab.title || 'Sin título'}</button><button aria-label={`Cerrar ${tab.title}`} disabled={!state.controlEnabled || state.paused} onClick={() => send({ type: 'tab.close', tabId: tab.id })}>×</button></div>)}<button ref={newTabButton} className="new-tab" title="Abrir pestaña" aria-label="Abrir pestaña" disabled={!state?.controlEnabled || state.paused || state.status !== 'connected'} onClick={() => setNewTabOpen(true)}>+</button></div>{newTabOpen && <NewTabDialog onClose={closeNewTab}/>}
-    <form className="navigation" onSubmit={e => { e.preventDefault(); const t = target(); if (t) send({ type: 'navigate', ...t, url: address.includes('://') ? address : `https://${address}` }); }}><button type="button" aria-label="Atrás" disabled={!interactive} onClick={() => { const t = target(); if (t) send({ type: 'history', ...t, direction: 'back' }); }}>←</button><button type="button" aria-label="Adelante" disabled={!interactive} onClick={() => { const t = target(); if (t) send({ type: 'history', ...t, direction: 'forward' }); }}>→</button><button type="button" aria-label="Recargar" disabled={!interactive} onClick={() => { const t = target(); if (t) send({ type: 'reload', ...t }); }}>↻</button><input aria-label="Dirección de la página remota" value={address} onChange={e => setAddress(e.target.value)} placeholder="Dirección de la página compartida" disabled={!interactive}/><button type="submit" disabled={!interactive}>Ir ↗</button></form>
-    <section className="remote-stage" aria-label="Página remota"><canvas ref={canvas} className={!hasFrame ? 'invisible' : ''} aria-label="Vista de la página compartida" onPointerDown={e => pointer(e, 'down')} onPointerMove={e => pointer(e, 'move')} onPointerUp={e => pointer(e, 'up')} onPointerCancel={releasePointer} onLostPointerCapture={releasePointer} onContextMenu={e => e.preventDefault()} onWheel={e => { const point = coordinates(e); if (point) send({ type: 'wheel', ...point, deltaX: Math.max(-10000, Math.min(10000, e.deltaX)), deltaY: Math.max(-10000, Math.min(10000, e.deltaY)), modifiers: modifiers(e) }); }}/>
-      <textarea ref={keyboard} className="keyboard-input" aria-label="Entrada de teclado remoto" autoCapitalize="off" autoComplete="off" spellCheck={false} disabled={!interactive} onFocus={() => setFocused(true)} onBlur={() => { releaseKeys(); setFocused(false); }} onKeyDown={e => key(e, 'down')} onKeyUp={e => key(e, 'up')} onCompositionStart={() => { composing.current = true; }} onCompositionEnd={e => { composing.current = false; text(e.data); e.currentTarget.value = ''; }} onInput={e => { if (!composing.current) { text(e.currentTarget.value); e.currentTarget.value = ''; } }} onPaste={e => { e.preventDefault(); text(e.clipboardData.getData('text/plain')); }}/>
-      {(!hasFrame || state?.paused || state?.status !== 'connected') && <div className="stage-overlay"><div className="empty-symbol">◎</div><h1>{state?.paused ? 'La sesión está en pausa.' : selected && !selected.supported ? 'Esta página no se comparte.' : state?.status === 'idle' || state?.status === 'error' ? 'La sesión ha terminado.' : 'Preparando tu espacio.'}</h1><p>{state?.paused ? 'El anfitrión puede reanudarla desde GhostPair.' : selected && !selected.supported ? 'Selecciona una página web de la ventana autorizada.' : state?.status === 'idle' || state?.status === 'error' ? 'Abre el menú de GhostPair para volver a conectarte.' : 'La imagen aparecerá cuando los equipos estén conectados.'}</p></div>}
-    </section><footer className="viewer-footer"><span><i className={`connection-dot ${focused ? 'live' : ''}`}/>{focused ? 'Teclado remoto activo · Esc para liberar' : state?.controlEnabled ? 'Haz clic en la página para interactuar' : 'Solo visualización'}</span><span>{state?.clipboardEnabled && state.remoteClipboardEnabled ? 'Portapapeles sincronizado' : 'Portapapeles sin sincronizar'}</span></footer>
+  return <main className="viewer"><header className="viewer-header"><Brand compact/><div className="viewer-session">{state && <Status state={state}/>}<span className="muted">{state?.connection?.latencyMs !== undefined ? `${Math.round(state.connection.latencyMs)} ms` : 'Direct P2P'}</span></div><button className="danger small" onClick={() => { void request('ui.stop').catch(e => setError(e.message)); }}>Disconnect</button></header>
+    <div className="remote-tabs" role="tablist" aria-label="Shared tabs">{state?.tabs.map(tab => <div className={`remote-tab ${tab.active ? 'active' : ''}`} key={tab.id}><button role="tab" aria-selected={tab.active} title={tab.url} disabled={!state.controlEnabled || state.paused} onClick={() => send({ type: 'tab.activate', tabId: tab.id })}><span>{tab.supported ? '▤' : '⊘'}</span>{tab.title || 'Untitled'}{!tab.authorized && <small> · {tab.supported ? 'Awaiting host approval' : 'Unavailable'}</small>}</button><button aria-label={`Close ${tab.title}`} disabled={!state.controlEnabled || state.paused} onClick={() => send({ type: 'tab.close', tabId: tab.id })}>×</button></div>)}<button ref={newTabButton} className="new-tab" title="Open tab" aria-label="Open tab" disabled={!state?.controlEnabled || state.paused || state.status !== 'connected'} onClick={() => setNewTabOpen(true)}>+</button></div>{newTabOpen && <NewTabDialog onClose={closeNewTab}/>}
+    <form className="navigation" onSubmit={e => { e.preventDefault(); const t = target(); if (t) send({ type: 'navigate', ...t, url: address.includes('://') ? address : `https://${address}` }); }}><button type="button" aria-label="Back" disabled={!interactive} onClick={() => { const t = target(); if (t) send({ type: 'history', ...t, direction: 'back' }); }}>←</button><button type="button" aria-label="Forward" disabled={!interactive} onClick={() => { const t = target(); if (t) send({ type: 'history', ...t, direction: 'forward' }); }}>→</button><button type="button" aria-label="Reload" disabled={!interactive} onClick={() => { const t = target(); if (t) send({ type: 'reload', ...t }); }}>↻</button><input aria-label="Remote page address" value={address} onChange={e => setAddress(e.target.value)} placeholder="Shared page address" disabled={!interactive}/><button type="submit" disabled={!interactive}>Go ↗</button></form>
+    <section ref={stage} className="remote-stage" aria-label="Remote page"><video ref={video} style={{ width: videoWidth, height: videoWidth / aspect, objectFit: 'cover' }} autoPlay muted playsInline data-generation={hasFrame ? frame.current?.generation : undefined} className={!hasFrame ? 'invisible' : ''} aria-label="Shared page video" onPointerDown={e => pointer(e, 'down')} onPointerMove={e => pointer(e, 'move')} onPointerUp={e => pointer(e, 'up')} onPointerCancel={releasePointer} onLostPointerCapture={releasePointer} onContextMenu={e => e.preventDefault()} onWheel={e => { const point = coordinates(e); if (point) send({ type: 'wheel', ...point, deltaX: Math.max(-10000, Math.min(10000, e.deltaX)), deltaY: Math.max(-10000, Math.min(10000, e.deltaY)), modifiers: modifiers(e) }); }}/>
+      <textarea ref={keyboard} className="keyboard-input" aria-label="Remote keyboard input" autoCapitalize="off" autoComplete="off" spellCheck={false} disabled={!interactive} onFocus={() => setFocused(true)} onBlur={() => { releaseKeys(); setFocused(false); }} onKeyDown={e => key(e, 'down')} onKeyUp={e => key(e, 'up')} onCompositionStart={() => { composing.current = true; }} onCompositionEnd={e => { composing.current = false; text(e.data); e.currentTarget.value = ''; }} onInput={e => { if (!composing.current) { text(e.currentTarget.value); e.currentTarget.value = ''; } }} onPaste={e => { e.preventDefault(); text(e.clipboardData.getData('text/plain')); }}/>
+      {(!hasFrame || state?.paused || state?.status !== 'connected') && <div className="stage-overlay"><div className="empty-symbol">◎</div><h1>{state?.paused ? 'The session is paused.' : selected && !selected.supported ? 'This page cannot be shared.' : state?.status === 'idle' || state?.status === 'error' ? 'The session ended.' : 'Preparing your shared view.'}</h1><p>{state?.paused ? 'The host can resume the session from GhostPair.' : selected && !selected.supported ? 'Select a supported page in the shared window.' : state?.status === 'idle' || state?.status === 'error' ? 'Use the connection form to join again.' : 'The host must authorize this tab before its video appears.'}</p></div>}
+    </section><footer className="viewer-footer"><span><i className={`connection-dot ${focused ? 'live' : ''}`}/>{focused ? 'Remote keyboard active · Esc to release' : state?.controlEnabled ? 'Click the page to interact' : 'View only'}</span><span>{state?.clipboardEnabled && state.remoteClipboardEnabled ? 'Clipboard synchronized' : 'Clipboard not synchronized'}</span></footer>
     <Notifications state={state} error={error} onError={setError} floating/>
   </main>;
 }

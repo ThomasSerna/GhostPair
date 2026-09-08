@@ -6,9 +6,7 @@ import './styles.css';
 
 function Popup() {
   const { state, setState, error, setError } = useSession();
-  const [mode, setMode] = useState<'host' | 'guest'>('host');
   const [password, setPassword] = useState('');
-  const [deviceId, setDeviceId] = useState('');
   const [clipboard, setClipboard] = useState(false);
   const [consent, setConsent] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -17,50 +15,133 @@ function Popup() {
   const [stun, setStun] = useState('');
   const [copied, setCopied] = useState(false);
 
-  useEffect(() => { if (state?.settings && !settingsOpen) { setUrl(state.settings.signalingUrl); setStun(state.settings.stunUrls.join('\n')); } }, [state?.settings, settingsOpen]);
+  useEffect(() => {
+    if (state?.settings && !settingsOpen) {
+      setUrl(state.settings.signalingUrl);
+      setStun(state.settings.stunUrls.join('\n'));
+    }
+  }, [state?.settings, settingsOpen]);
+
   const active = state && !['idle', 'error'].includes(state.status);
+  const connected = state && ['connected', 'paused'].includes(state.status);
+  const sharedTabs = state?.tabs.filter(tab => tab.authorized) ?? [];
+  const activeTab = state?.tabs.find(tab => tab.id === state.activeTabId);
+
   async function run(action: () => Promise<void>) {
-    setBusy(true); setError('');
-    try { await action(); } catch (e) { setError(e instanceof Error ? e.message : 'Ocurrió un error.'); } finally { setBusy(false); }
-  }
-  async function start() {
-    if (!state) return;
-    if (!consent) { setError('Confirma qué vas a compartir antes de continuar.'); return; }
-    if (mode === 'host') { const result = PasswordSchema.safeParse(password); if (!result.success) { setError(result.error.issues[0]!.message); return; } }
-    const permissions = requestSessionPermissions(state.settings.signalingUrl, clipboard);
-    await run(async () => {
-      await permissions;
-      setState(await request(mode === 'host' ? 'ui.host.start' : 'ui.guest.start', { password, clipboard, ...(mode === 'guest' ? { deviceId: deviceId.replace(/[\s-]/g, '').toLowerCase() } : {}) }));
-      setPassword('');
-    });
-  }
-  async function saveSettings() {
-    const signalingUrl = url.trim().replace(/\/$/, '');
-    const settings = SettingsSchema.safeParse({ signalingUrl, stunUrls: stun.split(/[\n,]/).map(x => x.trim()).filter(Boolean) });
-    if (!settings.success || !validateSignalingUrl(signalingUrl)) { setError('Usa HTTPS para el servidor y direcciones stun: válidas. HTTP solo se permite en localhost.'); return; }
-    const permissions = requestSessionPermissions(signalingUrl, false);
-    await run(async () => { await permissions; setState(await request('ui.settings.save', { settings: settings.data })); setSettingsOpen(false); });
+    setBusy(true);
+    setError('');
+    try { await action(); }
+    catch (e) { setError(e instanceof Error ? e.message : 'The operation could not be completed.'); }
+    finally { setBusy(false); }
   }
 
-  return <main className="popup"><header className="popup-header"><Brand/><button className="icon-button" aria-label={settingsOpen ? 'Cerrar configuración' : 'Abrir configuración'} title="Configuración" onClick={() => { setSettingsOpen(!settingsOpen); setError(''); }} disabled={Boolean(active)}>⚙</button></header>
-    {settingsOpen ? <section className="settings"><p className="eyebrow">CONEXIÓN</p><h1>Tu punto de encuentro.</h1><p className="muted">El servidor conecta los equipos. La imagen y el control viajan directamente entre ellos.</p><label>Servidor de señalización<input type="url" value={url} onChange={e => setUrl(e.target.value)} placeholder="https://conectar.tudominio.com"/></label><label>Servidores STUN<textarea rows={3} value={stun} onChange={e => setStun(e.target.value)} placeholder="stun:stun.tudominio.com:3478"/></label><p className="helper">Cambiar de servidor utiliza una identidad distinta para ese servidor.</p><button className="primary" disabled={busy} onClick={() => void saveSettings()}>Guardar configuración</button><button className="secondary" disabled={busy} onClick={() => void run(async () => { setState(await request("ui.settings.reset")); setSettingsOpen(false); })}>Use build defaults</button><details><summary>Identificador de esta extensión</summary><code className="extension-id">{chrome.runtime.id}</code><p className="helper">El administrador debe autorizar este identificador en el servidor.</p></details></section>
-    : active ? <section className="session-panel"><Status state={state}/><h1>{state.role === 'host' ? 'Un espacio para dos.' : 'Al otro lado, contigo.'}</h1><p className="muted">{state.role === 'host' ? 'Estás compartiendo las páginas de la ventana autorizada.' : 'Abre la vista remota para interactuar con la sesión.'}</p>{state.role === 'host' && <div className="address-card"><span className="eyebrow">TU DIRECCIÓN FIJA</span><code>{formatDeviceId(state.deviceId)}</code><button className="text-button" onClick={() => { void navigator.clipboard.writeText(state.deviceId ?? '').then(() => { setCopied(true); setTimeout(() => setCopied(false), 1800); }).catch(() => setError('Selecciona y copia la dirección manualmente.')); }}>{copied ? 'Copiada ✓' : 'Copiar dirección ↗'}</button></div>}
-      {state.role === 'guest' && <button className="primary" onClick={() => void request('ui.viewer.open')}>Abrir vista remota ↗</button>}
-      {state.role === 'host' && <><button className="secondary" disabled={busy} onClick={() => void run(async () => setState(await request('ui.pause', { paused: !state.paused })))}>{state.paused ? 'Reanudar sesión' : 'Pausar sesión'}</button><label className="check"><input type="checkbox" checked={state.controlEnabled} onChange={e => void run(async () => setState(await request('ui.control', { enabled: e.target.checked })))}/><span>Permitir control remoto</span></label></>}
-      <label className="check"><input type="checkbox" checked={state.clipboardEnabled} disabled={busy} onChange={e => { const enabled = e.target.checked; const permissions = enabled ? requestSessionPermissions(state.settings.signalingUrl, true) : Promise.resolve(); void run(async () => { await permissions; setState(await request('ui.clipboard', { enabled })); }); }}/><span>Sincronizar portapapeles de Windows<small>Texto de cualquier aplicación. Ambos deben activarlo.</small></span></label>
-      <button className="danger" onClick={() => void run(async () => setState(await request('ui.stop')))}>Terminar sesión</button><p className="shortcut">También puedes usar <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>9</kbd></p></section>
-    : <section><div className="intro"><p className="eyebrow">DOS EQUIPOS. UN MISMO ESPACIO.</p><h1>Naveguemos juntos.</h1><p className="muted">Comparte una página. Resuelve algo en equipo.</p></div><div className="mode-tabs" role="tablist" aria-label="Tipo de sesión"><button role="tab" aria-selected={mode === 'host'} onClick={() => { setMode('host'); setConsent(false); setError(''); }}>Compartir</button><button role="tab" aria-selected={mode === 'guest'} onClick={() => { void request('ui.viewer.open').catch(e => setError(e.message)); }}>Conectarse</button></div>
+  async function start() {
+    if (!state || busy) return;
+    if (!consent) { setError('Confirm what you want to share before continuing.'); return; }
+    const parsed = PasswordSchema.safeParse(password);
+    if (!parsed.success) { setError(parsed.error.issues[0]!.message); return; }
+    // Request optional permissions in the original user gesture.
+    const permissions = requestSessionPermissions(state.settings.signalingUrl, clipboard, true);
+    const sessionPassword = parsed.data;
+    setPassword('');
+    await run(async () => {
+      await permissions;
+      setState(await request('ui.host.start', { password: sessionPassword, clipboard }));
+    });
+  }
+
+  function shareCurrentTab() {
+    if (!state || busy) return;
+    const permissions = requestSessionPermissions(state.settings.signalingUrl, state.clipboardEnabled, true);
+    void run(async () => {
+      await permissions;
+      setState(await request('ui.host.authorize'));
+    });
+  }
+
+  async function saveSettings() {
+    const signalingUrl = url.trim().replace(/\/$/, '');
+    const settings = SettingsSchema.safeParse({ signalingUrl, stunUrls: stun.split(/[\n,]/).map(value => value.trim()).filter(Boolean) });
+    if (!settings.success || !validateSignalingUrl(signalingUrl)) {
+      setError('Use HTTPS for signaling and valid stun: addresses. HTTP is allowed only on localhost.');
+      return;
+    }
+    const permissions = requestSessionPermissions(signalingUrl, false);
+    await run(async () => {
+      await permissions;
+      setState(await request('ui.settings.save', { settings: settings.data }));
+      setSettingsOpen(false);
+    });
+  }
+
+  function openViewer() {
+    void run(async () => { await request('ui.viewer.open'); });
+  }
+
+  return <main className="popup">
+    <header className="popup-header">
+      <Brand/>
+      <button className="icon-button" aria-label={settingsOpen ? 'Close settings' : 'Open settings'} title="Settings" onClick={() => { setSettingsOpen(!settingsOpen); setError(''); }} disabled={Boolean(active) || busy}>⚙</button>
+    </header>
+    {settingsOpen ? <section className="settings">
+      <p className="eyebrow">CONNECTION</p>
+      <h1>Your meeting point.</h1>
+      <p className="muted">The signaling server connects your devices. Video and control travel directly between them.</p>
+      <label>Signaling server<input type="url" value={url} onChange={e => setUrl(e.target.value)} placeholder="https://connect.example.com" disabled={busy}/></label>
+      <label>STUN servers<textarea rows={3} value={stun} onChange={e => setStun(e.target.value)} placeholder="stun:stun.example.com:3478" disabled={busy}/></label>
+      <p className="helper">Each signaling server uses a separate device identity. Saved settings override the build defaults.</p>
+      <button className="primary" disabled={busy} onClick={() => void saveSettings()}>Save settings</button>
+      <button className="secondary" disabled={busy} onClick={() => void run(async () => { setState(await request('ui.settings.reset')); setSettingsOpen(false); })}>Use build defaults</button>
+      <details><summary>Extension identifier</summary><code className="extension-id">{chrome.runtime.id}</code><p className="helper">Your server administrator must allow this identifier.</p></details>
+    </section> : active ? <section className="session-panel">
+      <Status state={state}/>
+      <h1>{state.role === 'host' ? 'A space for two.' : 'Your remote session.'}</h1>
+      <p className="muted">{state.role === 'host' ? 'Share individual tabs in this window. Your visitor sees the active tab only when you have approved it.' : 'Open the viewer to manage your connection and interact with the host.'}</p>
+      {state.role === 'host' ? <>
+        <div className="address-card">
+          <span className="eyebrow">YOUR PERMANENT ADDRESS</span>
+          <code>{formatDeviceId(state.deviceId)}</code>
+          <button className="text-button" disabled={!state.deviceId} onClick={() => {
+            void navigator.clipboard.writeText(state.deviceId ?? '').then(() => {
+              setCopied(true);
+              setTimeout(() => setCopied(false), 1800);
+            }).catch(() => setError('Select and copy the address manually.'));
+          }}>{copied ? 'Copied ✓' : 'Copy address ↗'}</button>
+        </div>
+        <section className="shared-tabs" aria-label="Shared tabs">
+          <p className="eyebrow">SHARED TABS · {sharedTabs.length}/5</p>
+          {sharedTabs.length ? <ul>{sharedTabs.map(tab => <li key={tab.id}>
+            <div><strong title={tab.title}>{tab.title || 'Untitled tab'}</strong><span className="helper">{tab.active ? 'Active · ' : ''}{tab.captureState === 'ready' ? 'Shared' : tab.captureState === 'pending' ? 'Preparing capture' : 'Capture unavailable'}</span></div>
+            <button className="text-button" disabled={busy} aria-label={`Release ${tab.title || 'untitled tab'}`} onClick={() => void run(async () => setState(await request('ui.host.release', { tabId: tab.id })))}>Release</button>
+          </li>)}</ul> : <p className="helper">No tabs are shared. Open a web page and share it here.</p>}
+          {activeTab && !activeTab.authorized && <p className="helper">{activeTab.supported ? 'Current tab: Awaiting host approval.' : 'The current page cannot be shared.'}</p>}
+          <button className="secondary" disabled={busy || sharedTabs.length >= 5 || activeTab?.authorized === true || activeTab?.supported === false} onClick={shareCurrentTab}>Share current tab</button>
+          <p className="helper">To share another tab, open it and invoke GhostPair there. Release a tab to free one of the five slots.</p>
+        </section>
+        {connected && <button className="secondary" disabled={busy} onClick={() => void run(async () => setState(await request('ui.pause', { paused: !state.paused })))}>{state.paused ? 'Resume session' : 'Pause session'}</button>}
+        <label className="check"><input type="checkbox" checked={state.controlEnabled} disabled={busy} onChange={e => void run(async () => setState(await request('ui.control', { enabled: e.target.checked })))}/><span>Allow remote control</span></label>
+      </> : <button className="primary" disabled={busy} onClick={openViewer}>Open remote viewer ↗</button>}
+      <label className="check"><input type="checkbox" checked={state.clipboardEnabled} disabled={busy} onChange={e => {
+        const enabled = e.target.checked;
+        const permissions = enabled ? requestSessionPermissions(state.settings.signalingUrl, true) : Promise.resolve();
+        void run(async () => { await permissions; setState(await request('ui.clipboard', { enabled })); });
+      }}/><span>Sync system clipboard<small>Text copied in any application. Both participants must enable it.</small></span></label>
+      <button className="danger" disabled={busy} onClick={() => void run(async () => setState(await request('ui.stop')))}>{state.role === 'host' ? 'End session' : 'Disconnect'}</button>
+      <p className="shortcut">You can also use <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>9</kbd></p>
+    </section> : <section>
+      <div className="intro"><p className="eyebrow">TWO DEVICES. ONE SHARED SPACE.</p><h1>Browse together.</h1><p className="muted">Share a tab. Work through something together.</p></div>
+      <button className="secondary" disabled={busy || !state} onClick={openViewer}>Connect to a host ↗</button>
       <form onSubmit={e => { e.preventDefault(); void start(); }}>
-        {mode === 'guest' && <label>Dirección del anfitrión<input required autoComplete="off" value={deviceId} onChange={e => setDeviceId(e.target.value)} placeholder="Pega su dirección de GhostPair" maxLength={64}/></label>}
-        <label>{mode === 'host' ? 'Contraseña de esta sesión' : 'Contraseña'}<input required type="password" autoComplete="off" minLength={MIN_PASSWORD_LENGTH} maxLength={256} value={password} onChange={e => setPassword(e.target.value)} placeholder={mode === 'host' ? 'At least 8 characters' : 'La que te compartió el anfitrión'}/></label>
-        {mode === 'host' && <p className="helper">La dirección es permanente. La contraseña solo dura esta sesión.</p>}
-        <label className="check"><input type="checkbox" checked={clipboard} onChange={e => setClipboard(e.target.checked)}/><span>Sincronizar portapapeles<small>Comparte continuamente el texto copiado en Windows.</small></span></label>
-        <label className="check consent"><input required type="checkbox" checked={consent} onChange={e => setConsent(e.target.checked)}/><span>{mode === 'host' ? 'Autorizo compartir y controlar las páginas de esta ventana, incluidas las pestañas nuevas, con quien tenga mi dirección y contraseña.' : 'Acepto conectarme a la sesión autorizada. Si activo el portapapeles, compartiré el texto que copie en este equipo.'}</span></label>
-        <button className="primary" disabled={busy || !state} type="submit">{busy ? 'Preparando…' : mode === 'host' ? 'Iniciar sesión compartida →' : 'Conectar con el anfitrión →'}</button>
-      </form>{state?.deviceId && mode === 'host' && <p className="saved-id">Tu dirección: <code>{formatDeviceId(state.deviceId)}</code></p>}
+        <label>Session password<input required type="password" autoComplete="new-password" minLength={MIN_PASSWORD_LENGTH} maxLength={256} value={password} onChange={e => setPassword(e.target.value)} placeholder={`At least ${MIN_PASSWORD_LENGTH} characters`} disabled={busy}/></label>
+        <p className="helper">Your address is permanent. Your password lasts for this session only.</p>
+        <label className="check"><input type="checkbox" checked={clipboard} onChange={e => setClipboard(e.target.checked)} disabled={busy}/><span>Sync clipboard<small>Continuously share text copied in any application.</small></span></label>
+        <label className="check consent"><input required type="checkbox" checked={consent} onChange={e => setConsent(e.target.checked)} disabled={busy}/><span>I authorize sharing and control of this tab with the person who has my address and password, and tab management in this window. Each additional tab requires my approval before its content is shared.</span></label>
+        <button className="primary" disabled={busy || !state} type="submit">{busy ? 'Preparing…' : 'Share current tab →'}</button>
+      </form>
+      {state?.deviceId && <p className="saved-id">Your address: <code>{formatDeviceId(state.deviceId)}</code></p>}
     </section>}
     <Notifications state={state} error={error} onError={setError}/>
-    <footer><span className="connection-dot"/>Conexión directa · Sin retransmisión<span>v0.1</span></footer>
+    <footer><span className="connection-dot"/>Direct connection · No relay<span>v0.2</span></footer>
   </main>;
 }
 

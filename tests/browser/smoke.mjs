@@ -1,198 +1,161 @@
 import assert from 'node:assert/strict';
-import { createServer as createFixtureServer } from 'node:http';
+import { createServer as httpServer } from 'node:http';
 import { cp, mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { createServer } from '../../apps/signaling/dist/server.js';
-import { artifactRoot, closeBrowser, launchExtension, poll, resizePage, removeTestArtifact } from './helpers.mjs';
+import { launchExtension, closeBrowser, removeTestArtifact, poll, resizePage, artifactRoot } from './helpers.mjs';
 import { startStun } from './stun.mjs';
 
-const fixtureServer = createFixtureServer((request, response) => {
+const fixture = httpServer((request, response) => {
   response.setHeader('Content-Type', 'text/html; charset=utf-8');
-  response.end(`<!doctype html><html><head><meta charset="utf-8"><title>GhostPair ${request.url === '/new' ? 'new tab' : 'fixture'}</title>
-  <style>body{font:20px sans-serif;margin:40px;background:#f6f0df;color:#123638}input,button{display:block;font:inherit;padding:12px;margin-bottom:20px}#pixel{position:absolute;left:580px;top:280px;width:30px;height:30px;padding:0;background:#c44}#clock{color:#667}#scroll{height:1600px}</style></head>
-  <body><h1>GhostPair browser test</h1><button id="target" onclick="document.querySelector('#count').textContent=String(++window.clicks)">Click target</button><output id="count">0</output>
-  <input id="text" aria-label="Fixture text"><textarea id="multiline" aria-label="Fixture multiline"></textarea><button id="pixel" aria-label="Small target" onclick="document.querySelector('#count').textContent=String(++window.clicks)"></button><p id="clock"></p><div id="scroll"></div>
-  <script>window.clicks=0;window.releases=0;document.addEventListener('mouseup',()=>window.releases++);setInterval(()=>document.querySelector('#clock').textContent=String(Date.now()),100)</script></body></html>`);
+  response.end(`<!doctype html><html><head><meta charset="utf-8"><title>Fixture ${request.url}</title><style>body{font:20px sans-serif;margin:30px;background:#f6f0df;color:#123638}input,textarea,button{display:block;font:inherit;padding:10px;margin:10px 0}#nested{height:90px;width:250px;overflow:auto}#nested>div{height:700px}#space{height:1800px}</style></head><body><h1>GhostPair video fixture</h1><button id="target" onclick="count.textContent=String(++window.clicks)">Click target</button><output id="count">0</output><input id="text"><textarea id="multiline"></textarea><div id="nested"><div>Scroll area</div></div><p id="clock"></p><div id="space"></div><script>window.clicks=0;setInterval(()=>clock.textContent=String(Date.now()),100)</script></body></html>`);
 });
-
-async function call(page, type, fields = {}) {
-  const reply = await page.evaluate(async ({ type, fields }) => chrome.runtime.sendMessage({ target: 'background', type, ...fields }), { type, fields });
-  if (!reply?.ok) throw new Error(`${type}: ${reply?.error ?? 'No response'}`);
-  return reply.state;
-}
-
-async function state(page) { return call(page, 'ui.status'); }
-
-async function waitState(page, predicate, label, timeout = 20000) {
-  let latest;
-  try { return await poll(async () => { latest = await state(page); return predicate(latest) ? latest : null; }, label, timeout); }
-  catch (error) { throw new Error(`${error.message}; last state=${JSON.stringify(latest)}`); }
-}
-
-async function remoteClick(hostPage, viewer, selector) {
-  const host = await hostPage.evaluate((selector) => {
-    const box = document.querySelector(selector).getBoundingClientRect();
-    return { x: (box.x + box.width / 2) / innerWidth, y: (box.y + box.height / 2) / innerHeight };
-  }, selector);
-  const canvas = await viewer.locator('canvas').boundingBox();
-  assert.ok(canvas, 'remote image has a bounding box');
-  await viewer.mouse.click(canvas.x + host.x * canvas.width, canvas.y + host.y * canvas.height);
-}
-
+await new Promise(done => fixture.listen(0, done));
+const base = `http://127.0.0.1:${fixture.address().port}`;
 await mkdir(artifactRoot, { recursive: true });
 const extensionPath = await mkdtemp(resolve(artifactRoot, 'smoke-extension-'));
 await cp(resolve('dist/extension'), extensionPath, { recursive: true });
-const manifestPath = resolve(extensionPath, 'manifest.json');
-const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
-// Native optional-permission prompts cannot be approved headlessly. Production JS
-// stays byte-for-byte identical; this test copy grants only its loopback fixture.
-manifest.host_permissions = ['http://127.0.0.1/*'];
-await writeFile(manifestPath, JSON.stringify(manifest, null, 2));
-await new Promise((resolve) => fixtureServer.listen(0, '127.0.0.1', resolve));
-const fixtureUrl = `http://127.0.0.1:${fixtureServer.address().port}`;
-const matrix = process.argv.slice(2).length ? process.argv.slice(2) : ['chrome:chrome', 'edge:edge', 'chrome:edge'];
-const results = [];
-const stun = await startStun();
-
-try {
-  for (const pair of matrix) {
-    const [hostName, guestName] = pair.split(':');
-    const host = await launchExtension(hostName, extensionPath);
-    let guest;
-    let server;
-    const errors = [];
-    try {
-      guest = await launchExtension(guestName, extensionPath);
-      for (const browser of [host, guest]) {
-        browser.context.on('page', (page) => page.on('pageerror', (error) => errors.push(error.message)));
-      }
-      server = createServer({ databasePath: ':memory:', port: 0, allowedOrigins: [`chrome-extension://${host.id}`, `chrome-extension://${guest.id}`] });
-      const address = await server.listen(0);
-      const settings = { signalingUrl: `http://127.0.0.1:${address.port}`, stunUrls: [process.env.GHOSTPAIR_TEST_STUN ?? stun.url] };
-      const hostPopup = await host.context.newPage();
-      const guestPopup = await guest.context.newPage();
-      await hostPopup.goto(`chrome-extension://${host.id}/popup.html`);
-      await guestPopup.goto(`chrome-extension://${guest.id}/popup.html`);
-      await call(hostPopup, 'ui.settings.save', { settings });
-      await call(guestPopup, 'ui.settings.save', { settings });
-      const hostPage = await host.context.newPage();
-      await hostPage.goto(`${fixtureUrl}/`);
-      const hostTab = await host.worker.evaluate(async (url) => (await chrome.tabs.query({})).find((tab) => tab.url === url), `${fixtureUrl}/`);
-      assert.ok(hostTab?.id);
-      await host.worker.evaluate(async (tabId) => chrome.tabs.update(tabId, { active: true }), hostTab.id);
-      const password = 'Synthetic-session-42';
-      await call(hostPopup, 'ui.host.start', { password, clipboard: false });
-      const waiting = await waitState(hostPopup, (value) => value.status === 'waiting', 'host waiting');
-      assert.ok(waiting.deviceId);
-      let rejected = false;
-      try { await call(guestPopup, 'ui.guest.start', { deviceId: waiting.deviceId, password: 'Incorrect-password', clipboard: false }); }
-      catch { rejected = true; }
-      if (!rejected) {
-        await waitState(guestPopup, (value) => value.status === 'error', 'wrong password rejected');
-      }
-      assert.equal((await state(hostPopup)).status, 'waiting');
-      await call(guestPopup, 'ui.stop');
-      await call(guestPopup, 'ui.guest.start', { deviceId: waiting.deviceId, password, clipboard: false });
-      await waitState(hostPopup, (value) => value.status === 'connected', 'host P2P connected', 30000);
-      const connected = await waitState(guestPopup, (value) => value.status === 'connected', 'guest P2P connected', 30000);
-      assert.equal(connected.connection?.direct, true);
-      let viewer = guest.context.pages().find((page) => page.url() === `chrome-extension://${guest.id}/viewer.html`);
-      if (!viewer) { viewer = await guest.context.newPage(); await viewer.goto(`chrome-extension://${guest.id}/viewer.html`); }
-      await viewer.evaluate(() => {
-        const observer = chrome.runtime.connect({ name: 'viewer' });
-        globalThis.frameProbe = { generation: -1, count: 0 };
-        observer.onMessage.addListener(message => {
-          if (message.type === 'frame') {
-            const generation = message.frame.meta.generation;
-            const probe = globalThis.frameProbe;
-            globalThis.frameProbe = { generation, count: generation === probe.generation ? probe.count + 1 : 1, meta: message.frame.meta };
-          }
-        });
-        globalThis.frameObserver = observer;
-      });
-      await poll(() => viewer.locator('canvas').evaluate((canvas) => !canvas.classList.contains('invisible') && canvas.width > 300), 'decoded remote JPEG');
-      await poll(() => viewer.evaluate(() => globalThis.frameProbe.count >= 3), 'stable initial capture');
-      await remoteClick(hostPage, viewer, '#target');
-      await poll(async () => (await hostPage.locator('#count').textContent()) === '1', 'remote click');
-      const beforeDrag = await hostPage.evaluate(() => window.releases);
-      const canvasBounds = await viewer.locator('canvas').boundingBox();
-      await viewer.mouse.move(canvasBounds.x + canvasBounds.width / 2, canvasBounds.y + canvasBounds.height / 2);
-      await viewer.mouse.down();
-      await viewer.mouse.move(canvasBounds.x - 12, canvasBounds.y + canvasBounds.height / 2);
-      await viewer.mouse.up();
-      await poll(() => hostPage.evaluate(before => window.releases > before, beforeDrag), 'mouse released outside remote image');
-      await remoteClick(hostPage, viewer, '#text');
-      await viewer.keyboard.insertText('Remote á漢🙂');
-      await poll(async () => (await hostPage.locator('#text').inputValue()) === 'Remote á漢🙂', 'remote Unicode');
-      await remoteClick(hostPage, viewer, '#multiline');
-      await viewer.keyboard.type('Line one');
-      await viewer.keyboard.press('Enter');
-      await viewer.keyboard.type('Line two');
-      await poll(async () => (await hostPage.locator('#multiline').inputValue()) === 'Line one\nLine two', 'remote typing and Enter');
-
-      await resizePage(host, hostPage, 820, 600);
-      await host.worker.evaluate(async (tabId) => chrome.tabs.setZoom(tabId, 1.25), hostTab.id);
-      await poll(() => viewer.locator('canvas').evaluate((canvas) => canvas.width === 820 && canvas.height === 600 && !canvas.classList.contains('invisible')), 'resized remote image');
-      await remoteClick(hostPage, viewer, '#pixel');
-      await poll(async () => (await hostPage.locator('#count').textContent()) === '2', 'remote small target at 125% zoom');
-
-      await call(hostPopup, 'ui.pause', { paused: true });
-      await waitState(guestPopup, (value) => value.paused, 'pause propagated');
-      await call(hostPopup, 'ui.pause', { paused: false });
-      await waitState(guestPopup, (value) => value.status === 'connected' && !value.paused, 'resume propagated');
-      await poll(() => viewer.locator('canvas').evaluate((canvas) => !canvas.classList.contains('invisible')), 'image after resume');
-      await call(hostPopup, 'ui.control', { enabled: false });
-      await waitState(guestPopup, (value) => !value.controlEnabled, 'control withdrawn');
-      await call(hostPopup, 'ui.control', { enabled: true });
-      await waitState(guestPopup, (value) => value.controlEnabled, 'control restored');
-      viewer.once('dialog', (dialog) => dialog.accept(`${fixtureUrl}/new`));
-      await viewer.getByRole('button', { name: 'Abrir pestaña', exact: true }).click();
-      const newState = await waitState(guestPopup, (value) => value.tabs.some((tab) => tab.url === `${fixtureUrl}/new` && tab.active), 'remote-created tab');
-      const created = newState.tabs.find((tab) => tab.url === `${fixtureUrl}/new`);
-      const actualTab = await host.worker.evaluate(async (tabId) => chrome.tabs.get(tabId), created.id);
-      assert.equal(actualTab.windowId, hostTab.windowId, 'new tab stays inside authorized window');
-      await poll(() => viewer.getByRole('button', { name: 'Cerrar GhostPair new tab', exact: true }).count(), 'new tab title');
-      await viewer.getByRole('button', { name: 'Cerrar GhostPair new tab', exact: true }).click();
-      await waitState(guestPopup, (value) => !value.tabs.some((tab) => tab.id === created.id), 'remote tab closed');
-      await waitState(guestPopup, value => value.status === 'connected' && value.activeTabId === hostTab.id, 'capture returns to original tab');
-      await server.close();
-      await waitState(guestPopup, value => value.status === 'connected' && value.notice?.includes('servidor se desconectó'), 'P2P survives signaling shutdown');
-      await poll(() => viewer.locator('canvas').evaluate(canvas => !canvas.classList.contains('invisible')), 'image after tab close');
-      await poll(() => viewer.evaluate(() => globalThis.frameProbe.count >= 3), 'stable image after tab close');
-      await remoteClick(hostPage, viewer, '#pixel');
-      await poll(async () => (await hostPage.locator('#count').textContent()) === '3', 'remote click without signaling');
-      await viewer.screenshot({ path: resolve(artifactRoot, `viewer-${pair.replace(':', '-')}.png`) });
-      await call(hostPopup, 'ui.stop');
-      await waitState(guestPopup, (value) => ['idle', 'error'].includes(value.status), 'peer stopped');
-      assert.equal((await state(hostPopup)).status, 'idle');
-      // getTargets().attached also counts Playwright's own CDP attachment.
-      const extensionAttached = await host.worker.evaluate(async tabId => {
-        try { await chrome.debugger.sendCommand({ tabId }, 'Page.getLayoutMetrics'); return true; }
-        catch { return false; }
-      }, hostTab.id);
-      assert.equal(extensionAttached, false, 'extension debugger detached on stop');
-      assert.deepEqual(errors, [], 'no uncaught extension page errors');
-      const result = { pair, hostVersion: host.version, guestVersion: guest.version,
-        p2p: true, wrongPasswordRejected: true, capture: true, click: true, dragRelease: true, unicode: true, typingAndEnter: true, survivesSignalingShutdown: true,
-        resizeAndZoom: true, pauseResume: true, controlToggle: true, createCloseTab: true,
-        stop: true, clipboard: 'disabled; system clipboard never accessed', stunBindings: stun.bindings, server: server.stats };
-      results.push(result);
-      console.log(JSON.stringify(result));
-    } catch (error) {
-      console.error(`Smoke failed for ${pair}: ${error.stack}`);
-      for (const [name, instance] of [['host', host], ['guest', guest]]) if (instance) {
-        console.error(name, JSON.stringify(await instance.worker.evaluate(async () => ({ state: (await chrome.storage.session.get('appState')).appState }))));
-      }
-      throw error;
-    } finally {
-      await closeBrowser(host);
-      await closeBrowser(guest);
-      await server?.close();
-    }
-  }
-  await writeFile(resolve(artifactRoot, 'smoke-results.json'), JSON.stringify({ at: new Date().toISOString(), results }, null, 2));
-} finally {
-  await stun.close();
-  await new Promise((resolve) => fixtureServer.close(resolve));
-  await removeTestArtifact(extensionPath);
+const manifest = JSON.parse(await readFile(resolve(extensionPath, 'manifest.json'), 'utf8'));
+assert.ok(!manifest.permissions.includes('debugger'));
+// Test-only grants bypass permission dialogs, but do not bypass tab capture invocation.
+manifest.host_permissions = ['http://*/*', 'https://*/*'];
+await writeFile(resolve(extensionPath, 'manifest.json'), JSON.stringify(manifest));
+const results = [], stun = await startStun();
+async function call(page, type, fields = {}) {
+  const reply = await page.evaluate(({ type, fields }) => chrome.runtime.sendMessage({ target: 'background', type, ...fields }), { type, fields });
+  if (!reply?.ok) throw new Error(`${type}: ${reply?.error}`);
+  return reply.state;
 }
+const state = page => call(page, 'ui.status');
+async function waitState(page, check, label) { return poll(async () => { const current = await state(page); return check(current) ? current : false; }, label, 30000); }
+async function authorize(browser, page) {
+  await page.bringToFront();
+  const { targetInfos } = await browser.cdp.send('Target.getTargets', { filter: [{ type: 'tab', exclude: false }] });
+  await browser.cdp.send('Extensions.triggerAction', { id: browser.id, targetId: targetInfos.find(target => target.url === page.url()).targetId });
+}
+async function videoReady(viewer, expectedUrl) {
+  try { return await poll(() => viewer.evaluate(async expectedUrl => { const reply = await chrome.runtime.sendMessage({ target: 'background', type: 'ui.status' }); const state = reply.state; const video = document.querySelector('video'); return state.presentation && (!expectedUrl || state.tabs.find(t => t.id === state.activeTabId)?.url === expectedUrl) && video?.dataset.generation === String(state.generation) && video.readyState >= 2 && video.videoWidth > 0; }, expectedUrl), 'current native video', 30000); }
+  catch (error) { throw new Error(`${error.message}; state=${JSON.stringify(await state(viewer))}; page=${await viewer.locator('body').innerText()}`); }
+}
+async function point(host, viewer, selector) {
+  const xy = await host.locator(selector).evaluate(element => { const box = element.getBoundingClientRect(); return { x: (box.left + box.width / 2) / innerWidth, y: (box.top + box.height / 2) / innerHeight }; });
+  const box = await viewer.locator('video').boundingBox(); assert.ok(box); return { x: box.x + xy.x * box.width, y: box.y + xy.y * box.height };
+}
+async function click(host, viewer, selector) { await videoReady(viewer, host.url()); const xy = await point(host, viewer, selector); await viewer.mouse.click(xy.x, xy.y); }
+async function join(viewer, deviceId, password) {
+  await viewer.getByLabel('Host address', { exact: true }).fill(deviceId);
+  await viewer.getByLabel('Session password', { exact: true }).fill(password);
+  await viewer.getByRole('button', { name: 'Connect →', exact: true }).click();
+}
+try {
+  for (const pair of process.argv.slice(2).length ? process.argv.slice(2) : ['chrome:chrome', 'edge:edge', 'chrome:edge']) {
+    let host, guest, signal;
+    try {
+      const [hostName, guestName] = pair.split(':');
+      host = await launchExtension(hostName, extensionPath); guest = await launchExtension(guestName, extensionPath);
+      const errors = [];
+      for (const browser of [host, guest]) browser.context.on('page', page => page.on('pageerror', error => errors.push(error.message)));
+      signal = createServer({ databasePath: ':memory:', port: 0, allowedOrigins: [`chrome-extension://${host.id}`, `chrome-extension://${guest.id}`] });
+      const address = await signal.listen(0);
+      const settings = { signalingUrl: `http://127.0.0.1:${address.port}`, stunUrls: [stun.url] };
+      const hostUi = await host.context.newPage(); await hostUi.goto(`chrome-extension://${host.id}/popup.html`);
+      const viewer = await guest.context.newPage(); await viewer.goto(`chrome-extension://${guest.id}/viewer.html`);
+      await call(hostUi, 'ui.settings.save', { settings }); await call(viewer, 'ui.settings.save', { settings });
+      const page = await host.context.newPage(); await page.goto(`${base}/one`); await authorize(host, page);
+      const starting = await call(hostUi, 'ui.host.start', { password: 'Eight-42', clipboard: false });
+      assert.notEqual(starting.status, 'error', JSON.stringify(starting));
+      const waiting = await waitState(hostUi, s => s.status === 'waiting', 'host waiting');
+      assert.ok(waiting.presentation, JSON.stringify(waiting));
+      await join(viewer, waiting.deviceId, 'Wrong-42');
+      await waitState(viewer, s => s.status === 'error', 'wrong password rejected');
+      await viewer.getByRole('button', { name: 'Dismiss notification' }).click();
+      assert.equal((await state(viewer)).notification, undefined);
+      await join(viewer, waiting.deviceId, 'Eight-42');
+      await waitState(viewer, s => s.status === 'connected', 'direct session connected'); await videoReady(viewer);
+      await click(page, viewer, '#target'); await poll(() => page.evaluate(() => window.clicks === 1), 'remote click');
+      await click(page, viewer, '#text'); await viewer.keyboard.insertText('GhostPair á漢🙂'); await viewer.keyboard.press('Backspace');
+      await poll(() => page.locator('#text').inputValue().then(v => v === 'GhostPair á漢'), 'Unicode text and codepoint deletion');
+      await click(page, viewer, '#multiline'); await viewer.keyboard.insertText('First'); await viewer.keyboard.press('Enter'); await viewer.keyboard.insertText('Second');
+      await poll(() => page.locator('#multiline').inputValue().then(v => v === 'First\nSecond'), 'multiline editing');
+      const xy = await point(page, viewer, '#nested'); await viewer.mouse.move(xy.x, xy.y); await viewer.mouse.wheel(0, 180);
+      await poll(() => page.locator('#nested').evaluate(e => e.scrollTop > 0), 'nested scroll');
+      const original = (await state(hostUi)).presentation;
+      await host.worker.evaluate(tabId => chrome.tabs.setZoom(tabId, 1.25), original.tabId);
+      await waitState(viewer, s => s.generation > original.generation && s.presentation, 'zoom generation'); await videoReady(viewer);
+      await click(page, viewer, '#target'); await poll(() => page.evaluate(() => window.clicks === 2), 'zoom mapped click');
+      await call(hostUi, 'ui.pause', { paused: true }); await waitState(viewer, s => s.paused, 'pause');
+      await call(hostUi, 'ui.pause', { paused: false }); await videoReady(viewer);
+      await call(hostUi, 'ui.control', { enabled: false }); await waitState(viewer, s => !s.controlEnabled, 'control withdrawn');
+      assert.equal(await viewer.getByLabel('Remote keyboard input').isDisabled(), true);
+      await videoReady(viewer); // Withdrawing input must retain view-only video.
+      await call(hostUi, 'ui.control', { enabled: true }); await videoReady(viewer);
+      await viewer.getByRole('button', { name: 'Open tab', exact: true }).click();
+      await viewer.getByRole('dialog').getByLabel('Page address').waitFor();
+      assert.equal(await viewer.getByRole('dialog').getByLabel('Page address').evaluate(e => e === document.activeElement), true);
+      await viewer.keyboard.press('Escape');
+      assert.equal(await viewer.getByRole('dialog').count(), 0);
+      await poll(() => viewer.getByRole('button', { name: 'Open tab', exact: true }).evaluate(e => e === document.activeElement), 'dialog returns focus');
+      await viewer.getByRole('button', { name: 'Open tab', exact: true }).click();
+      const dialog = viewer.getByRole('dialog'); await dialog.getByLabel('Page address').fill('javascript:alert(1)'); await dialog.getByRole('button', { name: 'Open', exact: true }).click();
+      assert.equal(await dialog.getByRole('alert').count(), 1);
+      await dialog.getByLabel('Page address').fill(`${base}/two`); await dialog.getByRole('button', { name: 'Open', exact: true }).click(); await dialog.waitFor({ state: 'hidden' });
+      const pending = await waitState(viewer, s => s.tabs.some(t => t.url === `${base}/two` && !t.authorized), 'new tab waits for approval');
+      assert.equal(pending.presentation, undefined);
+      const second = await poll(() => host.context.pages().find(p => p.url() === `${base}/two`), 'new host page');
+      await authorize(host, second); await call(hostUi, 'ui.host.authorize'); await videoReady(viewer);
+      await click(second, viewer, '#target'); await poll(() => second.evaluate(() => window.clicks === 1), 'second authorized tab');
+      await call(viewer, 'ui.command', { command: { type: 'tab.activate', tabId: original.tabId } }); await videoReady(viewer, page.url());
+      await click(page, viewer, '#target'); await poll(() => page.evaluate(() => window.clicks === 3), 'return to first authorized tab');
+      const secondId = pending.tabs.find(t => t.url === `${base}/two`).id;
+      await call(viewer, 'ui.command', { command: { type: 'tab.activate', tabId: secondId } }); await videoReady(viewer, second.url());
+      await call(hostUi, 'ui.host.release', { tabId: original.tabId });
+      await poll(async () => !(await host.worker.evaluate(() => chrome.tabCapture.getCapturedTabs())).some(t => t.tabId === original.tabId && ['active', 'pending'].includes(t.status)), 'released inactive source');
+      await second.goto(`http://localhost:${fixture.address().port}/cross-origin`); await videoReady(viewer);
+      await click(second, viewer, '#target'); await poll(() => second.evaluate(() => window.clicks === 1), 'cross-origin control');
+      await resizePage(host, second, 850, 650); await videoReady(viewer);
+      await click(second, viewer, '#target'); await poll(() => second.evaluate(() => window.clicks === 2), 'resized video mapping');
+      const reconnect = async () => {
+        await viewer.getByLabel('Host address', { exact: true }).waitFor();
+        assert.equal(await viewer.getByLabel('Session password', { exact: true }).inputValue(), '');
+        await waitState(hostUi, s => s.status === 'idle', 'previous host ended');
+        await authorize(host, second);
+        await call(hostUi, 'ui.host.start', { password: 'Eight-42', clipboard: false });
+        const next = await waitState(hostUi, s => s.status === 'waiting', 'host restarted');
+        assert.equal(next.deviceId, waiting.deviceId, 'host identity survives new sessions');
+        assert.equal(await viewer.getByLabel('Host address', { exact: true }).inputValue(), waiting.deviceId);
+        await join(viewer, next.deviceId, 'Eight-42');
+        await waitState(viewer, s => s.status === 'connected', 'guest reconnected');
+        await videoReady(viewer, second.url());
+      };
+      await call(hostUi, 'ui.stop'); await reconnect();
+      await viewer.getByRole('button', { name: 'Disconnect', exact: true }).click(); await reconnect();
+      await viewer.reload(); await reconnect();
+      const duplicate = await guest.context.newPage(); await duplicate.goto(viewer.url());
+      await duplicate.getByText('Your connection page is already open.').waitFor();
+      await duplicate.close(); await call(viewer, 'ui.viewer.open');
+      assert.equal((await state(viewer)).status, 'connected');
+      assert.equal(guest.context.pages().filter(p => p.url() === viewer.url()).length, 1);
+      if (process.env.GHOSTPAIR_INSPECT === '1') {
+        await second.evaluate(() => { document.title = 'GhostPair capture verification HOST'; });
+        await second.bringToFront();
+        console.log(`VISIBLE INSPECTION READY: ${pair}`);
+        await new Promise(done => setTimeout(done, 60000));
+      }
+      const before = await viewer.locator('video').evaluate(v => v.getVideoPlaybackQuality().totalVideoFrames);
+      await new Promise(done => setTimeout(done, 3000));
+      const renderedFrames = await viewer.locator('video').evaluate(v => v.getVideoPlaybackQuality().totalVideoFrames) - before;
+      await signal.close(); signal = undefined;
+      await waitState(viewer, s => Boolean(s.notification), 'signaling disconnect notice');
+      await viewer.getByRole('button', { name: 'Dismiss notification' }).click();
+      await click(second, viewer, '#target'); await poll(() => second.evaluate(() => window.clicks === 3), 'P2P survives signaling loss');
+      await viewer.screenshot({ path: resolve(artifactRoot, `native-${pair.replace(':', '-')}.png`) });
+      await viewer.getByRole('button', { name: 'Disconnect', exact: true }).click();
+      await viewer.getByLabel('Host address', { exact: true }).waitFor(); await waitState(hostUi, s => s.status === 'idle', 'host ended');
+      await poll(async () => !(await host.worker.evaluate(() => chrome.tabCapture.getCapturedTabs())).some(t => ['active', 'pending'].includes(t.status)), 'capture tracks released');
+      assert.equal(guest.context.pages().filter(p => p.url() === `chrome-extension://${guest.id}/viewer.html`).length, 1);
+      assert.deepEqual(errors, []);
+      results.push({ pair, host: host.version, guest: guest.version, nativeVideo: true, renderedFramesInThreeSeconds: renderedFrames, passed: true }); console.log(JSON.stringify(results.at(-1)));
+    } finally { await signal?.close(); await closeBrowser(guest); await closeBrowser(host); }
+  }
+  await writeFile(resolve(artifactRoot, 'native-smoke-results.json'), JSON.stringify(results, null, 2));
+} finally { await stun.close(); await new Promise(done => fixture.close(done)); await removeTestArtifact(extensionPath); }

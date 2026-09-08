@@ -27,9 +27,8 @@ export async function launchExtension(name, extensionPath) {
   const profile = await mkdtemp(resolve(artifactRoot, `${name}-profile-`));
   const context = await chromium.launchPersistentContext(profile, {
     executablePath: browsers[name],
-    headless: true,
-    // Use the native page viewport. Playwright's initial metric emulation can
-    // disagree with Page.startScreencast after the debugger infobar is added.
+    headless: process.env.GHOSTPAIR_HEADED !== '1',
+    // Native viewport dimensions must agree with the captured tab's geometry.
     viewport: null,
     ignoreDefaultArgs: ['--disable-extensions'],
     // CDP's official test-only install API requires this in an isolated process.
@@ -67,11 +66,18 @@ export async function resizePage(browser, page, width, height) {
   const { targetInfos } = await browser.cdp.send('Target.getTargets');
   const target = targetInfos.find(target => target.type === 'page' && target.url === page.url());
   if (!target) throw new Error('Test page has no browser target');
-  const { windowId, bounds } = await browser.cdp.send('Browser.getWindowForTarget', { targetId: target.targetId });
-  const viewport = await page.evaluate(() => ({ width: innerWidth, height: innerHeight }));
-  await browser.cdp.send('Browser.setWindowBounds', { windowId, bounds: {
-    width: bounds.width + width - viewport.width,
-    height: bounds.height + height - viewport.height,
-  } });
-  await poll(() => page.evaluate(({ width, height }) => innerWidth === width && innerHeight === height, { width, height }), 'native window resized');
+  const { windowId } = await browser.cdp.send('Browser.getWindowForTarget', { targetId: target.targetId });
+  for (let attempt = 0; attempt < 6; attempt++) {
+    const { bounds } = await browser.cdp.send('Browser.getWindowBounds', { windowId });
+    const viewport = await page.evaluate(() => ({ width: innerWidth, height: innerHeight }));
+    if (Math.abs(width - viewport.width) <= 1 && Math.abs(height - viewport.height) <= 1) return;
+    await browser.cdp.send('Browser.setWindowBounds', { windowId, bounds: {
+      width: bounds.width + width - viewport.width,
+      height: bounds.height + height - viewport.height,
+    } });
+    // Visible Windows frames may settle in more than one layout pass.
+    await new Promise(done => setTimeout(done, 250));
+  }
+  const actual = await page.evaluate(() => ({ width: innerWidth, height: innerHeight }));
+  throw new Error(`Native viewport did not reach ${width}x${height}: ${JSON.stringify(actual)}`);
 }

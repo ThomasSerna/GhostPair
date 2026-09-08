@@ -1,18 +1,18 @@
 import { z } from 'zod';
-import { ControlCommandSchema, FrameMetaSchema, SettingsSchema, ServerSignalMessageSchema, isRelaySignal, validateSignalingUrl, PROTOCOL_VERSION, MAX_CLIPBOARD_BYTES, type ControlCommand, type Settings, type SignalPayload, type FrameMeta, type ViewerFrame } from '@ghostpair/protocol';
-import { encodeFrame, FrameAssembler } from '@ghostpair/protocol/frames';
+import { ControlCommandSchema, PresentationSchema, MediaSignalSchema, SettingsSchema, ServerSignalMessageSchema, isRelaySignal, validateSignalingUrl, PROTOCOL_VERSION, MAX_CLIPBOARD_BYTES, type ControlCommand, type Settings, type SignalPayload, type Presentation, type MediaSignal } from '@ghostpair/protocol';
+import { MediaSession } from './media-session';
 import { ClipboardSync, type ClipboardAdapter, type ClipboardUpdate } from './clipboard';
-import { jpegDimensions } from './capture';
+
 
 type Role = 'host' | 'guest';
-const SnapshotSchema = z.object({
-  paused: z.boolean(), controlEnabled: z.boolean(), clipboardEnabled: z.boolean(),
+export const SnapshotSchema = z.object({
+  presentation: PresentationSchema.optional(), paused: z.boolean(), controlEnabled: z.boolean(), clipboardEnabled: z.boolean(),
   activeTabId: z.number().int().nonnegative().optional(), generation: z.number().int().nonnegative(),
-  tabs: z.array(z.object({ id: z.number().int().nonnegative(), title: z.string().max(4096), url: z.string().max(8192), active: z.boolean(), supported: z.boolean() }).strict()).max(500),
+  tabs: z.array(z.object({ id: z.number().int().nonnegative(), title: z.string().max(4096), url: z.string().max(8192), active: z.boolean(), supported: z.boolean(), authorized: z.boolean().optional(), captureState: z.enum(['pending', 'ready', 'unavailable']).optional() }).strict()).max(500),
 }).strict();
 type Snapshot = z.infer<typeof SnapshotSchema>;
-const PeerMessageSchema = z.discriminatedUnion('type', [
-  z.object({ type: z.literal('hello'), protocol: z.literal(PROTOCOL_VERSION), sessionId: z.string().max(128), role: z.enum(['host', 'guest']) }).strict(),
+const PeerMessageSchema = z.discriminatedUnion('type', [...MediaSignalSchema.options,
+  z.object({ type: z.literal('hello'), protocol: z.number().int(), sessionId: z.string().max(128), role: z.enum(['host', 'guest']) }).strict(),
   z.object({ type: z.literal('snapshot'), snapshot: SnapshotSchema }).strict(),
   z.object({ type: z.literal('command'), command: ControlCommandSchema, requestId: z.string().max(64).optional() }).strict(),
   z.object({ type: z.literal('command.result'), requestId: z.string().max(64), ok: z.boolean(), error: z.string().max(512).optional() }).strict(),
@@ -70,13 +70,13 @@ class JsonChannel {
   }
 }
 
-export function createPeerSession(notify: (type: string, payload?: Record<string, any>) => void, dispatch: (message: Record<string, any>) => Promise<any>, clipboardAdapter: ClipboardAdapter) {
+export function createPeerSession(notify: (type: string, payload?: Record<string, any>) => void, dispatch: (message: Record<string, any>) => Promise<any>, clipboardAdapter: ClipboardAdapter, mediaHooks: { stream?: (stream: MediaStream | undefined, meta: Presentation | undefined) => void; source?: (captureId: string) => MediaStream | undefined } = {}) {
 let role: Role | undefined;
 let sessionId: string | undefined;
 let socket: WebSocket | undefined;
 let peer: RTCPeerConnection | undefined;
 let controlChannel: RTCDataChannel | undefined;
-let imageChannel: RTCDataChannel | undefined;
+let media: MediaSession | undefined; let mediaKey = ''; let pendingMedia: MediaSignal[] = [];
 let clipboardChannel: RTCDataChannel | undefined;
 let controlPipe: JsonChannel | undefined;
 let clipboardPipe: JsonChannel | undefined;
@@ -91,14 +91,15 @@ let ending = false;
 let epoch = 0;
 let timer: ReturnType<typeof setTimeout> | undefined;
 let health: ReturnType<typeof setInterval> | undefined;
+let pulse: ReturnType<typeof setInterval> | undefined;
 let negotiation: Promise<void> = Promise.resolve();
 let pendingIce: (RTCIceCandidateInit | null)[] = [];
 let latestSnapshot: Snapshot | undefined;
-let lastFrame: ViewerFrame | undefined;
-let lastProfile = 0;
+
+
 let commandsPerSecond = 0;
 let commandWindow = 0;
-const assembler = new FrameAssembler();
+
 
 const pendingCommands = new Map<string, { resolve: (value: { ok: boolean; error?: string }) => void; timer: ReturnType<typeof setTimeout> }>();
 
@@ -114,7 +115,7 @@ function syncClipboard() {
   else clipboardSync?.stop();
 }
 
-function cleanup(reason = 'Sesión terminada.', inform = false, failed = false) {
+function cleanup(reason = 'Session ended.', inform = false, failed = false) {
   if (ending) return;
   ending = true; ++epoch;
   for (const pending of pendingCommands.values()) { clearTimeout(pending.timer); pending.resolve({ ok: false, error: 'Session ended.' }); }
@@ -122,14 +123,14 @@ function cleanup(reason = 'Sesión terminada.', inform = false, failed = false) 
   clipboardSync?.stop(); clipboardSync = undefined;
   if (connected) sendPeer({ type: 'stop', reason: reason.slice(0, 512) });
   if (role === 'host' && sessionId && socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: 'host.close', sessionId }));
-  clearTimeout(timer); clearInterval(health); timer = undefined; health = undefined;
+  clearTimeout(timer); clearInterval(health); clearInterval(pulse); timer = undefined; health = undefined; pulse = undefined;
   controlPipe?.clear(); clipboardPipe?.clear(); controlPipe = undefined; clipboardPipe = undefined;
   const previous = peer; peer = undefined;
   previous?.close(); socket?.close(); socket = undefined;
-  controlChannel = undefined; imageChannel = undefined; clipboardChannel = undefined;
+  controlChannel = undefined; clipboardChannel = undefined; media?.stop(); media = undefined; mediaKey = ''; pendingMedia = [];
   connected = false; direct = false; greeted = false; role = undefined; sessionId = undefined;
   clipboardEnabled = false; remoteClipboardEnabled = false; paused = false;
-  lastFrame = undefined; latestSnapshot = undefined; pendingIce = []; assembler.clear();
+  latestSnapshot = undefined; pendingIce = [];
   ending = false;
   if (inform) notify('transport.ended', { reason, failed });
 }
@@ -138,24 +139,26 @@ function fail(reason: string) { cleanup(reason, true, true); }
 async function verifyDirect(pc: RTCPeerConnection, current: number) {
   for (let i = 0; i < 20 && peer === pc && epoch === current; i++) {
     const stats = await pc.getStats();
+    if (peer !== pc || epoch !== current) return;
     let selected: any;
     stats.forEach(report => { if (report.type === 'transport' && report.selectedCandidatePairId) selected = stats.get(report.selectedCandidatePairId); });
     if (!selected) stats.forEach(report => { if (report.type === 'candidate-pair' && report.state === 'succeeded' && report.nominated) selected = report; });
     if (selected) {
       const local = stats.get(selected.localCandidateId); const remote = stats.get(selected.remoteCandidateId);
-      if (local?.candidateType === 'relay' || remote?.candidateType === 'relay') { fail('La ruta usa una retransmisión que GhostPair no permite.'); return; }
+      if (local?.candidateType === 'relay' || remote?.candidateType === 'relay') { fail('Relayed connections are not allowed.'); return; }
       if (local?.candidateType && remote?.candidateType) { direct = true; await establish(); return; }
     }
     await new Promise(resolve => setTimeout(resolve, 100));
   }
-  if (peer === pc && epoch === current) fail('No se pudo verificar una ruta directa entre los equipos.');
+  if (peer === pc && epoch === current) fail('Could not verify a direct route between the devices.');
 }
 
 async function establish() {
   if (connected || !direct || !greeted || !sessionId || !role || controlChannel?.readyState !== 'open') return;
   connected = true; clearTimeout(timer);
+  const current = epoch;
   clipboardSync = new ClipboardSync(role, clipboardAdapter, update => {
-    if (!clipboardPipe?.send(update)) notify('transport.notice', { message: 'El portapapeles está congestionado. El último cambio no se transmitió.' });
+    if (!clipboardPipe?.send(update)) notify('transport.notice', { message: 'The clipboard channel is congested. The latest change was not sent.' });
   }, message => {
     if (!clipboardSync?.isActive) { clipboardEnabled = false; sendPeer({ type: 'clipboard.enabled', enabled: false }); notify('transport.clipboard', { remoteEnabled: remoteClipboardEnabled, disabled: true }); }
     notify('transport.notice', { message });
@@ -164,6 +167,9 @@ async function establish() {
   notify('transport.connected', { sessionId });
   syncClipboard();
   if (latestSnapshot && role === 'guest') notify('transport.snapshot', { snapshot: latestSnapshot });
+  const queued = pendingMedia; pendingMedia = [];
+  for (const message of queued) { if (epoch !== current) return; await media?.receive(message); }
+  if (epoch !== current) return;
   health = setInterval(() => { if (connected) sendPeer({ type: 'ping', time: Date.now() }); }, 3000);
 }
 
@@ -172,11 +178,13 @@ async function receiveControl(value: unknown) {
   if (!result.success) return;
   const message = result.data;
   if (message.type === 'hello') {
-    if (message.sessionId !== sessionId || message.role === role) { fail('La identidad de sesión no coincide.'); return; }
+    if (message.protocol !== PROTOCOL_VERSION) { fail('Incompatible GhostPair versions. Update both extensions.'); return; }
+    if (message.sessionId !== sessionId || message.role === role) { fail('The session identity does not match.'); return; }
     greeted = true; await establish(); return;
   }
   if (!greeted) return;
   if (!connected) {
+    if (message.type === 'media.reset' || message.type === 'media.signal') { if (pendingMedia.length < 100) pendingMedia.push(message); return; }
     // Data channels can open before getStats verifies the candidate pair.
     // Keep authenticated initial state so a static page does not need a second frame.
     if (message.type === 'snapshot' && role === 'guest') { latestSnapshot = message.snapshot; paused = latestSnapshot.paused; remoteClipboardEnabled = latestSnapshot.clipboardEnabled; }
@@ -185,20 +193,22 @@ async function receiveControl(value: unknown) {
     return;
   }
   switch (message.type) {
+    case 'media.reset': case 'media.signal': await media?.receive(message); break;
     case 'snapshot':
       if (role !== 'guest') return;
       latestSnapshot = message.snapshot; paused = latestSnapshot.paused; remoteClipboardEnabled = latestSnapshot.clipboardEnabled;
       notify('transport.snapshot', { snapshot: latestSnapshot });
       syncClipboard();
-      if (lastFrame?.meta.generation === latestSnapshot.generation && lastFrame.meta.tabId === latestSnapshot.activeTabId) notify('transport.frame', { frame: lastFrame });
       break;
     case 'command': {
       if (role !== 'host' || paused) return;
       if (Date.now() - commandWindow >= 1000) { commandWindow = Date.now(); commandsPerSecond = 0; }
       if (++commandsPerSecond > 250) return;
+      const current = epoch;
       const reply = await dispatch({ type: 'transport.command', command: message.command });
+      if (epoch !== current) return;
       if (message.requestId) sendPeer({ type: 'command.result', requestId: message.requestId, ok: reply?.ok === true, ...(reply?.error ? { error: String(reply.error).slice(0, 512) } : {}) });
-      else if (!reply?.ok) notify('transport.notice', { message: reply?.error ?? 'Could not apply the action.' });
+      else if (!reply?.ok) sendPeer({ type: 'notice', message: reply?.error ?? 'Could not apply the action.' });
       break;
     }
     case 'command.result': {
@@ -221,25 +231,12 @@ function attachChannel(channel: RTCDataChannel, current: number) {
     let controls: Promise<void> = Promise.resolve();
     let pendingControls = 0;
     controlPipe = new JsonChannel(channel, value => {
-      if (++pendingControls > 256) { fail('El participante envió demasiadas órdenes pendientes.'); return; }
+      if (connected && greeted && (value as any)?.type === 'media.reset') { void receiveControl(value); return; }
+      if (++pendingControls > 256) { fail('The participant sent too many pending commands.'); return; }
       controls = controls.then(() => epoch === current ? receiveControl(value) : undefined).catch(() => undefined).finally(() => { --pendingControls; });
     });
     channel.onopen = () => { if (epoch !== current) return; sendPeer({ type: 'hello', protocol: PROTOCOL_VERSION, sessionId, role }); };
-    channel.onclose = () => { if (epoch === current && !ending && role) cleanup('La otra persona se desconectó.', true); };
-  } else if (channel.label === 'frames') {
-    if (imageChannel) { channel.close(); return; }
-    imageChannel = channel; channel.binaryType = 'arraybuffer';
-    channel.onmessage = event => {
-      if (epoch !== current || role !== 'guest' || !connected || paused || !(event.data instanceof ArrayBuffer)) return;
-      const result = assembler.push(event.data); if (!result) return;
-      // Parse dimensions before allocating an image decoder; metadata alone is untrusted.
-      let binary = ''; for (let i = 0; i < result.jpeg.length; i += 8192) binary += String.fromCharCode(...result.jpeg.subarray(i, i + 8192));
-      const base64 = btoa(binary);
-      const size = jpegDimensions(base64);
-      if (!size || size.width !== result.meta.width || size.height !== result.meta.height) return;
-      lastFrame = { dataUrl: `data:image/jpeg;base64,${base64}`, meta: result.meta };
-      if (latestSnapshot?.generation === result.meta.generation && latestSnapshot.activeTabId === result.meta.tabId) notify('transport.frame', { frame: lastFrame });
-    };
+    channel.onclose = () => { if (epoch === current && !ending && role) cleanup('The other participant disconnected.', true); };
   } else if (channel.label === 'clipboard') {
     if (clipboardChannel) { channel.close(); return; }
     clipboardChannel = channel;
@@ -257,38 +254,46 @@ function attachChannel(channel: RTCDataChannel, current: number) {
 async function createPeer(settings: Settings, current: number) {
   const pc = new RTCPeerConnection({ iceServers: [{ urls: settings.stunUrls }], bundlePolicy: 'max-bundle', iceCandidatePoolSize: 0 });
   peer = pc; direct = false; greeted = false;
+  media = new MediaSession(role!, [{ urls: settings.stunUrls }], { send: message => { sendPeer(message); }, stream: (stream, meta) => mediaHooks.stream?.(stream, meta), error: message => notify('transport.notice', { message }) });
   pc.onicecandidate = event => { if (epoch === current) sendSignal({ type: 'ice', candidate: event.candidate?.toJSON() ?? null }); };
   pc.onconnectionstatechange = () => {
     if (peer !== pc || epoch !== current || ending) return;
-    if (pc.connectionState === 'connected') void verifyDirect(pc, current).catch(() => fail('No se pudo verificar la conexión.'));
-    else if (['failed', 'disconnected', 'closed'].includes(pc.connectionState)) cleanup('Se interrumpió la conexión directa. Inicia otra sesión.', true, true);
+    if (pc.connectionState === 'connected') void verifyDirect(pc, current).catch(() => { if (peer === pc && epoch === current) fail('Could not verify the connection.'); });
+    else if (['failed', 'disconnected', 'closed'].includes(pc.connectionState)) cleanup('The direct connection was interrupted. Start a new session.', true, true);
   };
-  pc.ondatachannel = event => attachChannel(event.channel, current);
-  timer = setTimeout(() => { if (epoch === current && !connected) fail('No se encontró una conexión P2P directa en 30 segundos. La red puede bloquearla.'); }, 30000);
+  pc.ondatachannel = event => { if (peer === pc && epoch === current) attachChannel(event.channel, current); else event.channel.close(); };
+  timer = setTimeout(() => { if (epoch === current && !connected) fail('No direct P2P connection was found within 30 seconds. The network may block it.'); }, 30000);
   if (role === 'host') {
     attachChannel(pc.createDataChannel('control', { ordered: true }), current);
-    attachChannel(pc.createDataChannel('frames', { ordered: false, maxRetransmits: 0 }), current);
+
     attachChannel(pc.createDataChannel('clipboard', { ordered: true }), current);
     const offer = await pc.createOffer();
     if (epoch !== current) return;
     await pc.setLocalDescription(offer);
+    if (epoch !== current) return;
     sendSignal({ type: 'offer', sdp: offer.sdp! });
   }
 }
 
 async function signal(payload: SignalPayload, current: number) {
-  const pc = peer; if (!pc || epoch !== current || isRelaySignal(payload)) { if (isRelaySignal(payload)) fail('La señal contiene una ruta de retransmisión no permitida.'); return; }
+  const pc = peer; if (!pc || epoch !== current) return;
+  if (isRelaySignal(payload)) { fail('The signal contains a disallowed relay route.'); return; }
   if (payload.type === 'ice') {
     if (!payload.candidate) return;
     if (!pc.remoteDescription) { if (pendingIce.length < 100) pendingIce.push(payload.candidate); return; }
     await pc.addIceCandidate(payload.candidate); return;
   }
-  if ((payload.type === 'offer' && role !== 'guest') || (payload.type === 'answer' && role !== 'host')) throw new Error('Rol de señalización incorrecto.');
+  if ((payload.type === 'offer' && role !== 'guest') || (payload.type === 'answer' && role !== 'host')) throw new Error('Incorrect signaling role.');
   await pc.setRemoteDescription(payload);
-  for (const candidate of pendingIce) if (candidate) await pc.addIceCandidate(candidate);
-  pendingIce = [];
+  if (epoch !== current) return;
+  const queuedIce = pendingIce; pendingIce = [];
+  for (const candidate of queuedIce) { if (epoch !== current) return; if (candidate) await pc.addIceCandidate(candidate); }
+  if (epoch !== current) return;
   if (payload.type === 'offer') {
-    const answer = await pc.createAnswer(); await pc.setLocalDescription(answer);
+    const answer = await pc.createAnswer();
+    if (epoch !== current) return;
+    await pc.setLocalDescription(answer);
+    if (epoch !== current) return;
     sendSignal({ type: 'answer', sdp: answer.sdp! });
   }
 }
@@ -296,12 +301,13 @@ async function signal(payload: SignalPayload, current: number) {
 async function start(message: Record<string, any>) {
   cleanup();
   const settings = SettingsSchema.parse(message.settings);
-  if (!validateSignalingUrl(settings.signalingUrl) || !['host', 'guest'].includes(message.role)) throw new Error('Configuración no válida.');
+  if (!validateSignalingUrl(settings.signalingUrl) || !['host', 'guest'].includes(message.role)) throw new Error('Invalid settings.');
   const current = ++epoch;
   role = message.role; clipboardEnabled = message.clipboard === true; paused = false;
+  pulse = setInterval(() => notify('transport.pulse'), 20000);
   const url = new URL('/v1/connect', settings.signalingUrl); url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
   const ws = new WebSocket(url); socket = ws;
-  timer = setTimeout(() => { if (epoch === current) fail('No se pudo contactar el servidor de conexión.'); }, 12000);
+  timer = setTimeout(() => { if (epoch === current) fail('Could not reach the signaling server.'); }, 12000);
   ws.onopen = () => {
     if (epoch !== current) return;
     ws.send(JSON.stringify(role === 'host' ? { type: 'host.open', deviceId: message.deviceId, ownerToken: message.ownerToken, password: message.password } : { type: 'guest.join', deviceId: message.deviceId, password: message.password }));
@@ -319,13 +325,13 @@ async function start(message: Record<string, any>) {
       notify('transport.status', { status: 'waiting', sessionId }); return;
     }
     if (message.type === 'paired') {
-      if (message.role !== role || peer) { fail('La sesión recibida no coincide.'); return; }
+      if (message.role !== role || peer) { fail('The received session does not match.'); return; }
       sessionId = message.sessionId; clearTimeout(timer);
       notify('transport.status', { status: 'connecting', sessionId });
-      negotiation = createPeer(settings, current).catch(() => { if (epoch === current) fail('No se pudo preparar WebRTC.'); }); return;
+      negotiation = createPeer(settings, current).catch(() => { if (epoch === current) fail('Could not prepare WebRTC.'); }); return;
     }
     if (message.type === 'signal' && message.sessionId === sessionId) {
-      negotiation = negotiation.then(() => signal(message.payload, current)).catch(() => { if (epoch === current) fail('No se pudo negociar la conexión directa.'); }); return;
+      negotiation = negotiation.then(() => signal(message.payload, current)).catch(() => { if (epoch === current) fail('Could not negotiate the direct connection.'); }); return;
     }
     if (message.type === 'ended' && message.sessionId === sessionId) { cleanup(message.reason, true); return; }
     if (message.type === 'error') {
@@ -335,19 +341,19 @@ async function start(message: Record<string, any>) {
   };
   ws.onclose = () => {
     if (epoch !== current || ending) return;
-    if (connected) notify('transport.notice', { message: 'El servidor se desconectó. La sesión P2P continúa.' });
-    else fail('El servidor cerró la conexión. Revisa la configuración o inicia otra sesión.');
+    if (connected) notify('transport.notice', { message: 'The signaling server disconnected. The P2P session continues.' });
+    else fail('The server closed the connection. Check settings or start a new session.');
   };
-  ws.onerror = () => { if (epoch === current && !connected) fail('No se pudo conectar. Comprueba el servidor y que autorice el ID de esta extensión.'); };
+  ws.onerror = () => { if (epoch === current && !connected) fail('Could not connect. Check the server and its extension ID allowlist.'); };
 }
 
 async function onMessage(message: Record<string, any>) {
   switch (message.type) {
     case 'identity.register': {
       const settings = SettingsSchema.parse(message.settings);
-      if (!validateSignalingUrl(settings.signalingUrl)) throw new Error('Servidor no válido.');
+      if (!validateSignalingUrl(settings.signalingUrl)) throw new Error('Invalid signaling server.');
       const response = await fetch(new URL('/v1/devices', settings.signalingUrl), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}', credentials: 'omit', redirect: 'error', signal: AbortSignal.timeout(10000) });
-      if (!response.ok) throw new Error(`Registro rechazado (${response.status}). Autoriza el ID de la extensión en el servidor.`);
+      if (!response.ok) throw new Error(`Registration rejected (${response.status}). Allow this extension ID on the server.`);
       return { ok: true, identity: await response.json() };
     }
     case 'session.start': await start(message); return { ok: true };
@@ -356,7 +362,10 @@ async function onMessage(message: Record<string, any>) {
       if (role !== 'host' || !connected) break;
       const snapshot = SnapshotSchema.parse(message.snapshot);
       paused = snapshot.paused; latestSnapshot = snapshot;
-      sendPeer({ type: 'snapshot', snapshot }); syncClipboard(); break;
+      sendPeer({ type: 'snapshot', snapshot }); syncClipboard();
+      const key = JSON.stringify([snapshot.generation, snapshot.presentation, snapshot.paused]);
+      if (key !== mediaKey) { mediaKey = key; void media?.present(snapshot.paused ? undefined : snapshot.presentation, snapshot.presentation ? mediaHooks.source?.(snapshot.presentation.captureId) : undefined, snapshot.generation); }
+      break;
     }
     case 'session.clipboard': {
       clipboardEnabled = message.enabled === true; paused = message.paused === true;
@@ -364,7 +373,7 @@ async function onMessage(message: Record<string, any>) {
     }
     case 'session.notice': sendPeer({ type: 'notice', message: String(message.message).slice(0, 512) }); break;
     case 'session.command': {
-      if (role !== 'guest' || !connected || paused || !latestSnapshot?.controlEnabled) break;
+      if (role !== 'guest' || !connected || paused || !latestSnapshot?.controlEnabled) return { ok: false, error: 'Remote control is unavailable.' };
       const command = ControlCommandSchema.parse(message.command);
       if (message.requestId) {
         if (pendingCommands.size >= 32) return { ok: false, error: 'Too many pending actions.' };
@@ -377,22 +386,8 @@ async function onMessage(message: Record<string, any>) {
       }
       if (command.type === 'text' && command.text.length > 2048) {
         const chars = Array.from(command.text);
-        for (let i = 0; i < chars.length; i += 2048) if (!sendPeer({ type: 'command', command: { ...command, text: chars.slice(i, i + 2048).join('') } })) { notify('transport.notice', { message: 'La conexión está congestionada. Parte del texto no se envió.' }); break; }
-      } else if (!sendPeer({ type: 'command', command })) notify('transport.notice', { message: 'La conexión está congestionada. La acción no se envió.' });
-      break;
-    }
-    case 'session.resendFrame': if (lastFrame && connected && !paused) notify('transport.frame', { frame: lastFrame }); break;
-    case 'capture.frame': {
-      if (role !== 'host' || !connected || paused || imageChannel?.readyState !== 'open') break;
-      const meta = FrameMetaSchema.parse(message.frame.meta) as FrameMeta;
-      const data = String(message.frame.data);
-      if (data.length > 3_000_000) break;
-      const congested = imageChannel.bufferedAmount > 256 * 1024;
-      if (Date.now() - lastProfile > 3000) { lastProfile = Date.now(); notify('transport.profile', { congested }); }
-      if (congested) break;
-      const raw = atob(data); const bytes = Uint8Array.from(raw, c => c.charCodeAt(0));
-      const packets = encodeFrame(meta, bytes);
-      for (const packet of packets) { if (imageChannel.bufferedAmount > 512 * 1024) break; imageChannel.send(packet); }
+        for (let i = 0; i < chars.length; i += 2048) if (!sendPeer({ type: 'command', command: { ...command, text: chars.slice(i, i + 2048).join('') } })) { notify('transport.notice', { message: 'The connection is congested. Part of the text was not sent.' }); break; }
+      } else if (!sendPeer({ type: 'command', command })) notify('transport.notice', { message: 'The connection is congested. The action was not sent.' });
       break;
     }
   }
