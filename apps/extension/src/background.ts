@@ -46,10 +46,8 @@ function broadcast() {
   for (const port of viewers) { try { port.postMessage({ type: 'state', state }); } catch { viewers.delete(port); } }
   void chrome.runtime.sendMessage({ type: 'state', state }).catch(() => undefined);
   void chrome.storage.session.set({ appState: state });
-  const sharing = state.role === 'host' && !['idle', 'error'].includes(state.status);
-  void chrome.action.setBadgeText({ text: sharing ? state.paused ? 'II' : 'ON' : '' });
-  void chrome.action.setBadgeBackgroundColor({ color: state.paused ? '#d2b573' : '#26724c' });
-  void chrome.action.setTitle({ title: sharing ? `GhostPair · ${state.paused ? 'Paused' : 'Sharing tabs'} · Open to stop` : 'GhostPair' });
+  void chrome.action.setBadgeText({ text: '' });
+  void chrome.action.setTitle({ title: 'GhostPair' });
 }
 function update(patch: Partial<AppState>) { state = patchState(state, patch); broadcast(); }
 function hostState() {

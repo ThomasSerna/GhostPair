@@ -30,7 +30,9 @@ export async function launchExtension(name, extensionPath) {
     headless: process.env.GHOSTPAIR_HEADED !== '1',
     // Native viewport dimensions must agree with the captured tab's geometry.
     viewport: null,
-    ignoreDefaultArgs: ['--disable-extensions'],
+    // Visual inspection does not opt into Playwright's automation-only toolbar banner.
+    // Native capture and extension debugging indicators keep their normal behavior.
+    ignoreDefaultArgs: ['--disable-extensions', ...(process.env.GHOSTPAIR_INSPECT === '1' ? ['--enable-automation'] : [])],
     // CDP's official test-only install API requires this in an isolated process.
     // No flag suppresses the browser's debugger warning or sharing indicators.
     args: ['--enable-unsafe-extension-debugging', '--window-size=1100,860'],
