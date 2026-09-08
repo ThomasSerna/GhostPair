@@ -23,16 +23,16 @@ try {
   const page = await context.newPage();
   const errors = []; page.on('pageerror', e => errors.push(e.message));
   await page.goto('http://127.0.0.1:5193/popup.html');
-  await page.getByRole('button', { name: 'Iniciar sesión compartida' }).waitFor();
+  await page.getByRole('button', { name: 'Share current tab →' }).waitFor();
   await page.screenshot({ path: resolve(output, 'popup.png'), fullPage: true });
-  await page.getByRole('tab', { name: 'Conectarse' }).click();
-  await page.screenshot({ path: resolve(output, 'join.png'), fullPage: true });
-  await page.getByRole('button', { name: 'Abrir configuración' }).click();
+  await page.getByRole('button', { name: 'Open settings' }).click();
   await page.screenshot({ path: resolve(output, 'settings.png'), fullPage: true });
   await page.setViewportSize({ width: 1365, height: 850 });
   await page.goto('http://127.0.0.1:5193/viewer.html');
-  await page.getByText('La sesión ha terminado.').waitFor();
+  await page.getByText('Connect with your host.').waitFor();
   await page.screenshot({ path: resolve(output, 'viewer.png'), fullPage: true });
+  await page.setViewportSize({ width: 398, height: 790 });
+  await page.screenshot({ path: resolve(output, 'viewer-mobile.png'), fullPage: true });
   if (errors.length) throw new Error(errors.join('\n'));
   process.stdout.write(`Visual QA: 4 screenshots, no page errors. ${output}\n`);
 } finally { await browser?.close(); await server.close(); }

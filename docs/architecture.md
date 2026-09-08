@@ -1,40 +1,57 @@
-# Arquitectura
+# Architecture
 
-## Procesos
+## Extension contexts
 
-El service worker de la extensión mantiene la autorización de ventana, aplica comandos CDP permitidos y ejecuta operaciones de `chrome.tabs`. La página offscreen mantiene WebSocket, RTCPeerConnection y el adaptador de portapapeles. El popup contiene la activación consciente; el viewer muestra la imagen y traduce las interacciones. No hay content scripts accesibles a las páginas ni un servidor de depuración escuchando en el PC.
+The service worker owns session authorization, the selected host window, scoped `chrome.tabs` operations, and DOM input routing. The host offscreen document retains authorized `tabCapture` streams, WebSocket signaling, WebRTC connections, and the clipboard adapter. The guest's full-page viewer owns its peer connection and plays received video directly in a `<video>` element. The popup provides host consent and controls and opens or focuses the guest page.
+
+Internal extension ports carry JSON messages, not `MediaStream` objects. Shared peer transport runs in host offscreen or guest viewer context. Closing or reloading the guest page ends its session. It returns to a connection form when opened again and does not reconnect automatically.
 
 ```mermaid
 flowchart LR
-  H[Extensión anfitrión] <-->|WSS: autenticación / SDP / ICE| S[Señalización Node.js]
-  G[Extensión visitante] <-->|WSS: autenticación / SDP / ICE| S
-  H <-.->|STUN| T[STUN sin relay]
+  H[Host offscreen] <-->|WSS: authentication / SDP / ICE| S[Node.js signaling]
+  G[Guest viewer] <-->|WSS: authentication / SDP / ICE| S
+  H <-.->|STUN| T[STUN without relay]
   G <-.->|STUN| T
-  H <-->|WebRTC: imagen, control, texto| G
+  H <-->|WebRTC: control / clipboard| G
+  H -->|WebRTC: active tab video| G
+  W[Host service worker] <-->|Scoped commands / status| H
+  W <-->|Document authorization / DOM input| C[Authorized content script]
 ```
 
-## Identidad y sesión
+## Identity and pairing
 
-`POST /v1/devices` crea un identificador público aleatorio de 128 bits y devuelve una credencial de propietario de 256 bits una sola vez. SQLite conserva el hash SHA-256 de esa credencial. La extensión la guarda en `storage.local` limitado a `TRUSTED_CONTEXTS`; esto no cifra el perfil frente a un usuario con acceso al disco.
+`POST /v1/devices` creates a random 128-bit public identifier and returns a 256-bit owner credential once. SQLite stores the SHA-256 hash of that credential. The extension stores it in `storage.local`, restricted to `TRUSTED_CONTEXTS`; this does not encrypt the browser profile against someone with disk access.
 
-`/v1/connect` recibe mensajes WSS definidos por `packages/protocol`: `host.open`, `guest.join`, `signal`, `host.close` y `ping`. El servidor emite `host.ready`, `paired`, `signal`, `ended`, `error` y `pong`. La contraseña humana se verifica con scrypt asíncrono, sal aleatoria y concurrencia limitada. No se guarda en SQLite. Conocer el identificador público no concede el rol de anfitrión.
+`/v1/connect` accepts WSS messages defined by `packages/protocol`: `host.open`, `guest.join`, `signal`, `host.close`, and `ping`. The server emits `host.ready`, `paired`, `signal`, `ended`, `error`, and `pong`. Passwords contain 8–256 characters and are checked using asynchronous scrypt with a random salt and bounded concurrency. They are not saved in SQLite. Knowing a public identifier does not grant the host role.
 
-Las salas pertenecen al socket autenticado. Cada apertura obtiene un sessionId nuevo; todos los intercambios de señalización se validan contra la sesión y el rol del socket. Tras una operación criptográfica asíncrona se comprueba de nuevo la vigencia de la sala. Un segundo visitante no desplaza al primero.
+Rooms belong to the authenticated socket. Each opening receives a new session ID; signaling is checked against the session and socket role. Room validity is checked again after asynchronous cryptographic work. A second guest cannot displace the first. Protocol incompatibility is reported explicitly; both participants must update together when the peer protocol changes. Existing installation identities do not need to be recreated.
 
-El servidor es parte de la confianza del emparejamiento. TLS protege contraseñas y señalización en tránsito; WebRTC protege el transporte directo. No hay PAKE ni garantía frente a un servidor de señalización malicioso.
+The signaling operator is trusted for pairing. TLS protects production signaling and passwords in transit; WebRTC encrypts direct transport. There is no PAKE or independent peer identity guarantee against malicious signaling.
 
-## Transporte y permisos
+## Capture, transport, and input
 
-El canal de imagen transporta JPEG fragmentado con metadatos de pestaña, geometría y generación. La reconstrucción tiene límites de tamaño, caducidad y número de imágenes pendientes. Control y texto usan canales fiables independientes. Los mensajes recibidos se validan; el visitante no puede solicitar métodos CDP arbitrarios.
+The manifest uses `tabCapture`, `activeTab`, and `scripting`, with optional HTTP/HTTPS host access requested during sharing. There is no extension `debugger` permission or runtime CDP capture. Capturing a tab requires the host to invoke the extension on that tab. Its short-lived stream identifier is obtained and consumed in offscreen with the `USER_MEDIA` reason before waiting for a guest. Capture is video-only.
 
-La captura y la entrada se ligan al mismo target. El control requiere pertenencia a la ventana autorizada, pestaña activa, estado habilitado y generación vigente. Los cambios de pestaña invalidan la imagen anterior. Una imagen estática no constituye por sí sola una desconexión.
+A session can retain up to five authorized tab streams. Only the active authorized tab is transmitted. A new tab, including one created remotely, waits for local host approval. Releasing a tab stops its capture. Native capture cancellation ends the session and requires fresh local authorization. Tab administration remains limited to the consented window.
 
-Los permisos de portapapeles son opcionales. La sincronización solo se ejecuta si ambos peers la habilitan, parte de un valor inicial que no transmite y deduplica escrituras mediante versión y origen. No almacena historial ni transmite contenido por señalización.
+A stable peer connection contains reliable control and clipboard data channels. A separate video peer connection is created for each presentation generation and negotiated over the authenticated control channel. It carries the selected tab's video track. Switching tabs or documents, changing zoom, or resizing invalidates the previous presentation. The viewer clears old video and disables input until the current document and geometry are ready and the first frame from the new generation is available. Late messages from prior generations cannot re-enable input.
 
-## Límites de confianza
+Every input command is checked against session, authorized window and tab, active document, current presentation generation, permissions, pause state, and control state. Content scripts run only in authorized documents and implement bounded DOM interactions: clicks, focus, basic Unicode editing in inputs, textareas and contenteditable elements, and scrolling of the page or scroll containers. Browser navigation, history, and tab management use `chrome.tabs`. Queued input is invalidated on transitions and termination.
 
-- Un visitante autorizado puede modificar y enviar datos desde las páginas compartidas, conforme al alcance informado al anfitrión.
-- Las páginas web no pueden invocar los mensajes internos de la extensión; no se declara `externally_connectable`.
-- El token de propietario nunca se entrega al visitante ni se incluye en direcciones o logs.
-- Se rechazan candidatos relay y servidores TURN. La conexión puede fallar detrás de redes restrictivas.
-- Cancelar o terminar requiere cortar captura, entrada, portapapeles y canales. Una cancelación del navegador no se neutraliza reconectando el debugger automáticamente.
+Synthetic DOM events are not trusted browser input. Pages requiring `Event.isTrusted`, complex canvas widgets, inaccessible frames, native dialogs, and advanced editing behavior are outside the general compatibility guarantee. Coordinates use the current CSS viewport, including browser zoom, rather than assuming video pixels equal CSS pixels.
+
+Shared state reports capture and control availability. Notifications have occurrence IDs: dismissing an occurrence acknowledges that ID, so repeated state updates cannot restore it and a later error with identical text can still be shown. Operations such as creating a tab have request IDs and completion results; the guest dialog remains open on failure.
+
+## Clipboard and lifecycle
+
+Clipboard permissions are optional. Synchronization runs only when both peers enable it, begins from a baseline value that is not transmitted, and deduplicates writes by version and origin. It sends text over the direct clipboard channel, keeps no history, and never sends clipboard content through signaling. The size limit is 256 KiB of UTF-8.
+
+Ending the session, canceling native capture, losing a required permission, or terminating the viewer stops media, pending input, clipboard polling, and peer channels. Pause and withdrawal of control disable the relevant actions. Native capture indicators remain enabled; the extension does not suppress browser controls.
+
+## Trust boundaries
+
+- An authorized guest can change or submit data in authorized pages within the scope accepted by the host.
+- Web pages cannot invoke internal extension messages; the manifest does not declare `externally_connectable`.
+- The owner credential is never sent to the guest or included in addresses or logs.
+- TURN servers and relay candidates are rejected. Some restrictive networks cannot establish a direct session.
+- Only public `VITE_*` build settings enter the extension bundle. The root `.env` also configures the server, with process variables taking precedence. Server-only settings must not use the `VITE_` prefix.

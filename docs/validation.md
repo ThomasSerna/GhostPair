@@ -1,66 +1,108 @@
-# Validación de GhostPair
+# GhostPair validation
 
-## Entorno y ejecución
+## Environment and commands
 
-Las pruebas automáticas de navegador usan Windows, Node.js 24 y Playwright. Crean perfiles temporales dentro de `tests/browser/.artifacts`; no usan los perfiles personales instalados. Las ventanas se ejecutan en modo headless. Ningún argumento desactiva avisos de captura o del depurador.
+Automated browser checks use Windows, Node.js 24, and Playwright with temporary profiles under `tests/browser/.artifacts`. They do not use installed personal profiles. Runs are headless unless explicitly documented otherwise; no argument suppresses native capture or debugging warnings.
 
 ```powershell
 npm ci
 npm run build
-node tests/browser/api-probe.mjs
-node tests/browser/capture-probe.mjs
+npm run typecheck
+npm test
+node tests/browser/tab-capture-probe.mjs
+node tests/browser/dom-probe.mjs
+node tests/browser/environment-check.mjs
 npm run test:browser
+node tests/browser/benchmark.mjs
+node scripts/inspect-ui.mjs
+npm run package
 ```
 
-Para ejecutar una sola combinación: `node tests/browser/smoke.mjs chrome:edge`. Las rutas de ejecutables se pueden configurar con `GHOSTPAIR_CHROME` y `GHOSTPAIR_EDGE`.
+Run a single pairing with `node tests/browser/smoke.mjs chrome:edge`. Override executable locations with `GHOSTPAIR_CHROME` and `GHOSTPAIR_EDGE`. Set `GHOSTPAIR_HEADED=1` for visible windows and optionally `GHOSTPAIR_INSPECT=1` to hold the synthetic session for one minute for inspection.
 
-El navegador carga la extensión mediante la API de pruebas `Extensions.loadUnpacked`, habilitada exclusivamente en ese proceso con `--enable-unsafe-extension-debugging`. Chrome y Edge actuales retiraron las antiguas banderas de carga de extensiones. Véanse la [documentación de CDP](https://chromedevtools.github.io/devtools-protocol/tot/Extensions/#method-loadUnpacked) y la [documentación de Playwright](https://playwright.dev/docs/chrome-extensions).
+The harness loads an unpacked extension using `Extensions.loadUnpacked`, enabled only for the isolated browser process with `--enable-unsafe-extension-debugging`. The capture probe invokes `Extensions.triggerAction` against a browser **tab target** to exercise local extension authorization; it first verifies rejection without invocation. These test APIs are separate from the extension runtime. See [the CDP extension testing API](https://chromedevtools.github.io/devtools-protocol/tot/Extensions/) and [Playwright extension testing](https://playwright.dev/docs/chrome-extensions).
 
-## Evidencia obtenida
+## Migration evidence: September 7–8, 2026
 
-Validación automatizada del 6 de septiembre de 2026: **48 tests aprobados**, comprobación de tipos y compilación correctas. Incluye autenticación, límites de protocolo, reconstrucción de imágenes, autorización de ventana, portapapeles con adaptadores de memoria y cancelación durante el arranque.
+**82 unit tests in 11 files passed**, along with TypeScript checking, compilation and packaging. The package checks reject debugger permissions/calls, required test host grants, instrumentation, source maps and environment files. Development packages are `ghostpair-chrome-0.2.0.zip` and `ghostpair-edge-0.2.0.zip`.
 
-La integración completa pasó en **Chrome→Chrome, Edge→Edge y Chrome→Edge**, con las versiones indicadas abajo. Se verificaron conexión directa, contraseña incorrecta, imagen, clic, liberación del ratón fuera de la imagen, Unicode, escritura con Enter, zoom, redimensionamiento, pausa, retirada del control, creación/cierre de pestañas y finalización. Al apagar el servidor de señalización, las tres combinaciones siguieron permitiendo clics por P2P.
+The new capture primitive probe passed on both installed browsers:
 
-La imagen Docker de señalización se construyó y su servidor respondió `200` con `{"status":"ok"}`. La configuración de Compose pasó la validación local. No se ha desplegado un dominio público.
+| Check | Chrome 152.0.7977.78 | Edge 152.0.4191.66 |
+| --- | --- | --- |
+| Reject capture before local extension invocation | Passed | Passed |
+| Obtain an authorized stream ID and consume it in offscreen | Passed | Passed |
+| Retain two live authorized tab streams simultaneously | Passed | Passed |
+| Keep authorized capture across a cross-origin navigation | Passed | Passed |
 
-La prueba del módulo de captura también pasó en ambos navegadores: rechazó comandos de una imagen anterior y el cierre de una pestaña situada fuera de la ventana autorizada. Los ZIP de desarrollo se abrieron y verificaron: contienen el manifiesto MV3 y sus recursos, sin código de pruebas ni permisos obligatorios añadidos por el smoke.
+Results are written to `tests/browser/.artifacts/tab-capture-probe.json`. The separate migrated integration suite also passed:
 
-Prueba de primitivas ejecutada el 6 de septiembre de 2026:
+| Integration scenario | Chrome → Chrome | Edge → Edge | Chrome → Edge |
+| --- | --- | --- | --- |
+| Eight-character authentication and wrong-password notification dismissal | Passed | Passed | Passed |
+| Native video, DOM clicks, Unicode, deletion, textarea editing and nested scroll | Passed | Passed | Passed |
+| Zoom, resize, pause and view-only mode | Passed | Passed | Passed |
+| Tab dialog validation, Escape and focus restoration | Passed | Passed | Passed |
+| Pending approval, two authorized tabs, source switching and release | Passed | Passed | Passed |
+| Cross-origin navigation and current-generation input | Passed | Passed | Passed |
+| Host stop, guest disconnect, reconnect, viewer reload and singleton ownership | Passed | Passed | Passed |
+| Preserved identity/address, P2P after signaling loss and final capture release | Passed | Passed | Passed |
 
-| Caso | Chrome 152.0.7977.78 | Edge 152.0.4191.66 |
-|---|---|---|
-| Instalar extensión MV3 en perfil aislado | Aprobado | Aprobado |
-| Capturar JPEG por `chrome.debugger` / `Page.startScreencast` | Aprobado | Aprobado |
-| Clic mediante `Input.dispatchMouseEvent` | Aprobado | Aprobado |
-| Insertar texto Unicode `á漢🙂` | Aprobado | Aprobado |
-| Redimensionar a 820 × 600 y cambiar zoom a 125 % | Aprobado | Aprobado |
-| Abrir y cerrar una pestaña dentro de la misma ventana | Aprobado | Aprobado |
-| Crear documento offscreen con motivo `CLIPBOARD` | Aprobado | Aprobado |
-| Copiar y pegar en el portapapeles real de Windows sin foco | Pendiente | Pendiente |
+The DOM probe separately exercised native input setters, checkboxes, basic contenteditable editing, inaccessible-frame errors, sender isolation and listener disposal in both browsers. Resize rejects input locally before the service worker responds. This probe stubs runtime messaging and does not validate extension permissions.
 
-La prueba reveló que, con zoom de navegador al 125 %, el ancho de metadatos de captura puede ser 820 mientras el ancho CSS es 656. Los eventos de entrada necesitan coordenadas CSS. La integración comprueba ese caso con un objetivo pequeño para detectar errores de escala.
+The environment check builds disposable extension copies from root and workspace directories, verifies process-variable precedence and confirms that private sentinel values never enter the bundle. It also checks server root-file resolution from both directories. Unit tests cover missing files, invalid configuration, saved settings/reset, password boundaries, notification IDs, five-capture limits, permission revocation, cancellation during acquisition, delayed old media/control negotiation and pending-operation cleanup.
 
-Los resultados completos, con versiones y geometría, se guardan en `tests/browser/.artifacts/api-probe-results.json`. El informe de integración se guarda en `smoke-results.json` en el mismo directorio, junto con capturas sintéticas del visor. Los artefactos no se incluyen en Git.
+Chrome→Chrome and Edge→Edge also passed with **visible windows** on September 7. However, Computer Use blocked inspection of the native toolbar because it could not confidently determine the window URL. The absence of debugger permission/calls is verified in the package; visual absence of the extension debugging banner and appearance of native consent indicators remain **unverified**. No browser-chrome screenshot was accepted as evidence. Separate UI screenshots use mocked extension APIs and validate page layout only.
 
-## Qué cubre la integración
+The integration manifest grants HTTP/HTTPS host access to avoid headless permission dialogs. Capture still requires native extension invocation. Actual optional-permission approval/denial and native cancellation UI remain manual checks. Results and page screenshots are in `tests/browser/.artifacts`, excluded from Git.
 
-El smoke conecta dos procesos y perfiles independientes usando el servidor real y el JavaScript compilado de la extensión. Redimensiona la ventana nativa para mantener coherencia entre captura y entrada, sin emular sus métricas. Tras cerrar la pestaña capturada, comprueba que la sesión continúe sobre la pestaña anterior. Al terminar, verifica que la extensión ya no pueda enviar comandos por `chrome.debugger`; la conexión CDP de Playwright es independiente.
+## Synthetic performance comparison
 
-El servidor de pruebas usa SQLite en memoria y puertos locales temporales. Se configura un respondedor STUN local limitado a Binding, sin soporte de TURN. Las ejecuciones aprobadas usaron candidatos de la misma máquina y no necesitaron solicitudes a ese respondedor. No se contactan servicios públicos por defecto; `GHOSTPAIR_TEST_STUN` permite elegir otro STUN explícitamente. Esto no prueba NAT, el STUN de producción ni conectividad entre dos equipos.
+The benchmark rebuilds MVP commit `3ff895e` in a disposable directory using current locked dependencies. Both variants use Chrome loopback, a 1280×720 source containing moving rectangles updated at 30 Hz, three seconds of warmup and a five-second sample. Instrumentation is added only to disposable test copies. See `benchmark-results.json` for raw measurements.
 
-La copia de la extensión usada por el smoke conserva los archivos JavaScript de producción. Sólo su manifiesto temporal añade permiso obligatorio para `http://127.0.0.1/*`, porque el diálogo nativo de permiso opcional requiere interacción que el entorno headless no proporciona. La concesión y revocación de permisos nativos debe verificarse en la prueba manual.
+| Measurement | MVP CDP/JPEG | Native tabCapture/WebRTC |
+| --- | --- | --- |
+| Video payload rate | 3.90 Mb/s | 0.49 Mb/s |
+| Rendered frames per second | 11.57 | 21.69 |
+| Combined browser CPU time over the sample | 8.36 CPU seconds | 8.45 CPU seconds |
 
-El portapapeles permanece desactivado. Un perfil headless de Windows no garantiza aislamiento del portapapeles del sistema; por ello no se lee, registra ni modifica su contenido. La creación del documento offscreen acredita disponibilidad de la API, no el funcionamiento de copiar/pegar sin foco. Los tests con adaptadores de memoria cubren la lógica de sincronización por separado.
+These September 8 results show higher frame rate and lower video payload traffic for this animation, without demonstrating lower CPU use. Counts are data-channel video payload for the MVP and inbound video RTP payload for the replacement; network overhead is excluded. CPU time sums host/guest browser processes present at both samples and can exceed elapsed time on a multicore machine. This short local sample is not a controlled hardware study or a claim about arbitrary pages. Memory, interaction latency and long-session behavior were not measured.
 
-## Comprobaciones pendientes antes de publicar
+## Historical MVP evidence: September 6, 2026
 
-- En dos PC autorizados, comprobar Chrome↔Chrome, Edge↔Edge y Chrome↔Edge en LAN y redes diferentes; incluir una red que impida la conexión directa y verificar el error después de 30 segundos.
-- Verificar los avisos nativos y el distintivo de sesión en el icono, además de los permisos opcionales, su denegación y su revocación.
-- Con datos sintéticos en dos portapapeles de prueba, verificar copia bidireccional sin foco, texto Unicode, límite de 256 KiB, cambios simultáneos y ausencia de lecturas después de pausar, desactivar o terminar.
-- Verificar arrastre, doble clic, selección, desplazamiento, atajos y composición IME; probar formularios, editores enriquecidos e iframes de otro origen.
-- Probar escalado de Windows, minimización, cambios de pantalla, apertura de DevTools, traslado de pestañas fuera de la ventana autorizada y páginas internas no admitidas.
-- Ejecutar sesiones de 30 minutos y medir memoria, colas, frecuencia de imágenes y latencia. Objetivos: interacción inferior a 300 ms en LAN y texto sincronizado en hasta 1,5 s. Estos objetivos aún no constituyen mediciones obtenidas.
-- Repetir en dos equipos la interrupción de señalización ya validada localmente; cortar el enlace entre equipos y confirmar que se requiere una sesión nueva.
+The previous implementation passed 48 unit tests, type checking, compilation, and local Chrome→Chrome, Edge→Edge, and Chrome→Edge integration using Chrome 152.0.7977.78 and Edge 152.0.4191.66. Those results covered the former CDP/JPEG capture and input path. They do **not** validate the replacement tabCapture/WebRTC/DOM implementation.
 
-`Page.startScreencast` sigue siendo una API experimental; la aceptación de la extensión y de su uso del depurador corresponde a las tiendas. La evidencia automática local no reemplaza esas pruebas ni la revisión de publicación.
+Historical integration exercised authentication, image delivery, clicks, Unicode input, zoom and resize, pause, control withdrawal, tab operations, and termination. It continued operating over P2P after signaling stopped. The signaling Docker image built and its health endpoint returned `200` with `{"status":"ok"}`; Compose configuration passed locally. No public domain was deployed. Development ZIP contents were inspected at that time.
+
+Historical reports, when retained locally, are under `tests/browser/.artifacts`. Artifacts are excluded from Git. A passed offscreen clipboard-document creation check demonstrates API availability, not real Windows clipboard synchronization.
+
+## Automated acceptance coverage
+
+Integration connects independent browser processes and profiles to the real local signaling server using production extension JavaScript. Data remains synthetic. The test manifest grants host permissions to avoid headless permission dialogs; actual permission prompts and revocation remain manual checks.
+
+Use SQLite in memory and temporary local ports. The local STUN fixture implements Binding only, never TURN. Connections on one machine do not establish NAT traversal or connectivity between computers. No public STUN service is used unless explicitly configured through `GHOSTPAIR_TEST_STUN`.
+
+Required migration scenarios:
+
+- Root and workspace `.env` loading, process-variable priority, missing files, invalid values, saved-setting preservation/reset, and exclusion of server-only values from extension bundles.
+- Rejection of 7-character and 257-character passwords; successful authentication with 8 characters and existing longer passwords.
+- Full-page guest connection, wrong-password handling, reconnecting after either participant ends the session, no duplicate viewer, and termination on viewer close or reload.
+- Dismissal of local and shared notification occurrences, including later identical text; tab dialog validation, Enter/Escape, focus, and creation failure.
+- Per-tab authorization, approval for a remotely created tab, five-tab capture limit and release, cross-origin navigation, and switching between authorized tabs.
+- Basic Unicode editing, DOM clicks, scroll containers, zoom and resize, pause, and control withdrawal. Reject stale document, tab, and presentation-generation input.
+- Delayed old signaling/video messages must not restore an obsolete presentation or enable input. Termination must release streams, connections, clipboard polling, and queued actions.
+- Packaged manifest and JavaScript must contain no extension debugger capture implementation or test-only permissions.
+
+The system clipboard is disabled in headless integration. Windows clipboard access is not isolated by browser profile; automated runs must not read or overwrite real clipboard contents. Memory-adapter unit tests cover synchronization logic separately.
+
+## Checks still required before publication
+
+- On two authorized computers, test Chrome↔Chrome, Edge↔Edge, and Chrome↔Edge on LAN and separate networks. Include a network blocking direct connectivity and verify the error after 30 seconds.
+- In visible Chrome and Edge windows, inspect native capture indicators, the extension badge, and absence of an extension debugging banner. Exercise optional permission approval, denial, revocation, native cancellation, and fresh local authorization.
+- With synthetic text in two controlled Windows clipboards, test bidirectional copying without focus, Unicode, the 256 KiB limit, simultaneous changes, and no polling after disabling or ending.
+- Check forms, contenteditable regions, rich text editors, cross-origin iframes, shortcuts, selection, and IME. Record synthetic-event compatibility limits instead of treating all browser interactions as supported.
+- Test Windows scaling, minimization, display changes, moving tabs out of the authorized window, and unsupported internal pages.
+- Run 30-minute sessions and measure CPU, memory, video bandwidth, frame rate, and interaction latency against the MVP under the same workload. Targets are under 300 ms interaction latency on LAN and text synchronization within 1.5 seconds. These targets are not measured results.
+- Repeat signaling interruption between two computers; interrupt the direct link and verify that a fresh connection attempt is required.
+
+Local automation does not replace visible-browser validation, multi-computer testing, performance measurements, or store review.

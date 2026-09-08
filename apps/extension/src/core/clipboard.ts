@@ -52,7 +52,7 @@ export class ClipboardSync {
       } catch {
         if (!this.current(epoch)) return;
         this.stop();
-        this.onError('No se pudo leer el portapapeles. Revisa los permisos de la extensión.');
+        this.onError('Could not read the clipboard. Check extension permissions.');
       }
     });
   }
@@ -86,12 +86,12 @@ export class ClipboardSync {
         if (!this.current(epoch) || text === this.baseline) return;
         this.baseline = text;
         if (textBytes(text) > MAX_CLIPBOARD_BYTES) {
-          this.onError('El texto supera el límite de 256 KiB y no se compartió.');
+          this.onError('The text exceeds the 256 KiB limit and was not shared.');
           return;
         }
         if (this.version.counter >= Number.MAX_SAFE_INTEGER - 1) {
           this.stop();
-          this.onError('Reinicia la sesión para seguir sincronizando el portapapeles.');
+          this.onError('Start a new session to continue clipboard synchronization.');
           return;
         }
         this.version = { counter: this.version.counter + 1, origin: this.origin };

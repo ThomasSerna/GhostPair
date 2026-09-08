@@ -161,7 +161,7 @@ export function createServer(overrides: Partial<ServerConfig> = {}) {
     room.pendingGuest = undefined;
     if (pending) {
       resetClient(pending);
-      error(pending, 'SESSION_UNAVAILABLE', 'La sesión ya no está disponible.');
+      error(pending, 'SESSION_UNAVAILABLE', 'The session is no longer available.');
     }
     for (const member of [room.host, room.guest]) {
       if (!member) continue;
@@ -182,7 +182,7 @@ export function createServer(overrides: Partial<ServerConfig> = {}) {
     if (client.pendingDevice && openingHosts.get(client.pendingDevice) === client) openingHosts.delete(client.pendingDevice);
     const room = client.room;
     if (room?.pendingGuest === client) room.pendingGuest = undefined;
-    if (room && (room.host === client || room.guest === client)) removeRoom(room, false, 'Señalización desconectada.');
+    if (room && (room.host === client || room.guest === client)) removeRoom(room, false, 'Signaling disconnected.');
     client.room = undefined;
   }
 
@@ -197,12 +197,12 @@ export function createServer(overrides: Partial<ServerConfig> = {}) {
   }
 
   function beginAuth(client: Client, deviceId: string): boolean {
-    if (client.phase !== 'idle') { error(client, 'INVALID_STATE', 'La conexión ya participa en una sesión.'); return false; }
+    if (client.phase !== 'idle') { error(client, 'INVALID_STATE', 'This connection already participates in a session.'); return false; }
     if (!authIpRate.allow(client.ip) || !authDeviceRate.allow(deviceId)) {
       counters.rateLimited += 1;
-      error(client, 'RATE_LIMITED', 'Demasiados intentos. Inténtalo más tarde.'); return false;
+      error(client, 'RATE_LIMITED', 'Too many attempts. Try again later.'); return false;
     }
-    if (activeAuth >= config.maxAuthConcurrency) { error(client, 'SERVER_BUSY', 'Servidor ocupado. Inténtalo de nuevo.'); return false; }
+    if (activeAuth >= config.maxAuthConcurrency) { error(client, 'SERVER_BUSY', 'The server is busy. Try again.'); return false; }
     client.phase = 'authenticating';
     return true;
   }
@@ -211,13 +211,13 @@ export function createServer(overrides: Partial<ServerConfig> = {}) {
     if (!beginAuth(client, message.deviceId)) return;
     if (!devices.authenticate(message.deviceId, message.ownerToken)) {
       counters.authFailures += 1; client.phase = 'idle';
-      error(client, 'AUTH_FAILED', 'No se pudo autenticar el dispositivo.'); return;
+      error(client, 'AUTH_FAILED', 'Could not authenticate the device.'); return;
     }
     if (rooms.has(message.deviceId) || openingHosts.has(message.deviceId)) {
-      client.phase = 'idle'; error(client, 'HOST_ALREADY_ACTIVE', 'Este dispositivo ya tiene una sesión.'); return;
+      client.phase = 'idle'; error(client, 'HOST_ALREADY_ACTIVE', 'This device already has a session.'); return;
     }
     if (rooms.size + openingHosts.size >= config.maxRooms) {
-      client.phase = 'idle'; error(client, 'SERVER_BUSY', 'No hay capacidad para otra sesión.'); return;
+      client.phase = 'idle'; error(client, 'SERVER_BUSY', 'There is no capacity for another session.'); return;
     }
     client.pendingDevice = message.deviceId;
     openingHosts.set(message.deviceId, client);
@@ -228,7 +228,7 @@ export function createServer(overrides: Partial<ServerConfig> = {}) {
       if (openingHosts.get(message.deviceId) === client) openingHosts.delete(message.deviceId);
       client.pendingDevice = undefined;
       client.phase = 'idle'; counters.internalErrors += 1;
-      error(client, 'SERVER_BUSY', 'No se pudo iniciar la sesión.'); return;
+      error(client, 'SERVER_BUSY', 'Could not start the session.'); return;
     }
     if (stopping || !clients.has(client) || client.socket.readyState !== WebSocket.OPEN || client.phase !== 'authenticating' || openingHosts.get(message.deviceId) !== client) {
       passwordHash.fill(0); salt.fill(0); return;
@@ -238,7 +238,7 @@ export function createServer(overrides: Partial<ServerConfig> = {}) {
     const sessionId = randomBytes(16).toString('hex');
     const room: Room = {
       deviceId: message.deviceId, sessionId, host: client, salt, passwordHash, paired: false,
-      timer: setTimeout(() => removeRoom(room, true, 'La espera de conexión expiró.'), config.waitingRoomTimeoutMs),
+      timer: setTimeout(() => removeRoom(room, true, 'The connection waiting period expired.'), config.waitingRoomTimeoutMs),
     };
     room.timer.unref();
     rooms.set(room.deviceId, room);
@@ -251,7 +251,7 @@ export function createServer(overrides: Partial<ServerConfig> = {}) {
     if (!beginAuth(client, message.deviceId)) return;
     const room = rooms.get(message.deviceId);
     if (!room || room.paired || room.pendingGuest) {
-      client.phase = 'idle'; error(client, 'SESSION_UNAVAILABLE', 'La sesión no está disponible.'); return;
+      client.phase = 'idle'; error(client, 'SESSION_UNAVAILABLE', 'The session is unavailable.'); return;
     }
     room.pendingGuest = client;
     client.room = room;
@@ -261,7 +261,7 @@ export function createServer(overrides: Partial<ServerConfig> = {}) {
       if (room.pendingGuest === client) room.pendingGuest = undefined;
       if (client.room === room) { client.room = undefined; client.phase = 'idle'; }
       counters.internalErrors += 1;
-      error(client, 'SERVER_BUSY', 'No se pudo comprobar la contraseña.'); return;
+      error(client, 'SERVER_BUSY', 'Could not verify the password.'); return;
     }
     const current = !stopping && clients.has(client) && client.socket.readyState === WebSocket.OPEN && client.phase === 'authenticating' && rooms.get(message.deviceId) === room && room.pendingGuest === client && room.host.socket.readyState === WebSocket.OPEN;
     if (!current) { hash.fill(0); return; }
@@ -270,7 +270,7 @@ export function createServer(overrides: Partial<ServerConfig> = {}) {
     hash.fill(0);
     if (!matches) {
       client.room = undefined; client.phase = 'idle'; counters.authFailures += 1;
-      error(client, 'AUTH_FAILED', 'No se pudo autenticar la conexión.'); return;
+      error(client, 'AUTH_FAILED', 'Could not authenticate the connection.'); return;
     }
     room.paired = true;
     room.guest = client;
@@ -290,27 +290,27 @@ export function createServer(overrides: Partial<ServerConfig> = {}) {
     }
     let input: unknown;
     try { if (binary) throw new Error('Binary signaling'); input = JSON.parse(data.toString()); }
-    catch { counters.protocolErrors += 1; error(client, 'INVALID_MESSAGE', 'Mensaje no válido.'); client.socket.close(1008, 'Invalid message'); return; }
+    catch { counters.protocolErrors += 1; error(client, 'INVALID_MESSAGE', 'Invalid message.'); client.socket.close(1008, 'Invalid message'); return; }
     const parsed = ClientSignalMessageSchema.safeParse(input);
     if (!parsed.success) {
       counters.protocolErrors += 1;
-      error(client, 'INVALID_MESSAGE', 'Mensaje no válido.'); return;
+      error(client, 'INVALID_MESSAGE', 'Invalid message.'); return;
     }
     const message = parsed.data;
     if (message.type === 'ping') { send(client, { type: 'pong', id: message.id }); return; }
     if (message.type === 'host.open') { await openHost(client, message); return; }
     if (message.type === 'guest.join') { await joinGuest(client, message); return; }
-    if (message.sessionId !== client.sessionId) { error(client, 'FORBIDDEN', 'La sesión no pertenece a esta conexión.'); return; }
+    if (message.sessionId !== client.sessionId) { error(client, 'FORBIDDEN', 'The session does not belong to this connection.'); return; }
     if (message.type === 'host.close') {
-      if (client.role !== 'host') { error(client, 'FORBIDDEN', 'Solo el anfitrión puede cerrar la sesión.'); return; }
-      if (client.room) removeRoom(client.room, true, 'El anfitrión terminó la sesión.');
-      else { send(client, { type: 'ended', sessionId: message.sessionId, reason: 'Sesión terminada.' }); resetClient(client); }
+      if (client.role !== 'host') { error(client, 'FORBIDDEN', 'Only the host can end the session.'); return; }
+      if (client.room) removeRoom(client.room, true, 'The host ended the session.');
+      else { send(client, { type: 'ended', sessionId: message.sessionId, reason: 'Session ended.' }); resetClient(client); }
       return;
     }
     const room = client.room;
-    if (!room || !room.paired || rooms.get(room.deviceId) !== room) { error(client, 'SIGNAL_UNAVAILABLE', 'La señalización de esta sesión terminó.'); return; }
+    if (!room || !room.paired || rooms.get(room.deviceId) !== room) { error(client, 'SIGNAL_UNAVAILABLE', 'Signaling for this session ended.'); return; }
     if ((message.payload.type === 'offer' && client.role !== 'host') || (message.payload.type === 'answer' && client.role !== 'guest') || isRelaySignal(message.payload)) {
-      error(client, 'FORBIDDEN', 'Esta señal no está permitida.'); return;
+      error(client, 'FORBIDDEN', 'This signal is not allowed.'); return;
     }
     const peer = client.role === 'host' ? room.guest : room.host;
     if (peer) { send(peer, { type: 'signal', sessionId: room.sessionId, payload: message.payload }); counters.signalingMessages += 1; }
@@ -333,7 +333,7 @@ export function createServer(overrides: Partial<ServerConfig> = {}) {
       ws.on('message', (data, binary) => {
         void handleMessage(client, data, binary).catch(() => {
           counters.internalErrors += 1;
-          error(client, 'INTERNAL_ERROR', 'No se pudo procesar el mensaje.'); ws.close(1011, 'Internal error');
+          error(client, 'INTERNAL_ERROR', 'Could not process the message.'); ws.close(1011, 'Internal error');
         });
       });
     });

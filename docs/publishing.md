@@ -1,53 +1,57 @@
-# Publicación en Chrome y Edge
+# Publishing to Chrome and Edge
 
-## Estado de entrega
+## Delivery status
 
-El repositorio genera paquetes separados para Chrome Web Store y Edge Add-ons. Generar un ZIP no significa que la extensión se haya publicado o haya sido aprobada. Antes del envío deben completarse las pruebas reales indicadas en `validation.md`, el despliegue y los datos del publicador.
+The repository generates separate Chrome Web Store and Edge Add-ons packages. Producing a ZIP does not publish an extension or imply store approval. Complete the real-browser checks in [Validation](validation.md), production deployment, and publisher information before submission.
 
-## Preparación
+## Preparation
 
-1. Disponer de cuentas de desarrollador de Google y Microsoft, dominio HTTPS y un correo de soporte atendido.
-2. Desplegar señalización y STUN. Configurar sus direcciones en `apps/extension/.env.local` antes de `npm run package`.
-3. Sustituir los campos del publicador en `docs/privacy.html`. Caddy servirá esa página en `https://DOMINIO/privacy`.
-4. Ejecutar `npm ci`, `npm run typecheck`, `npm test`, las pruebas de navegadores y `npm run package`.
-5. Registrar las fichas de las extensiones y autorizar sus IDs definitivos en `ALLOWED_ORIGINS`. Probar los paquetes con esos IDs antes del envío final.
-6. Cargar `dist/packages/ghostpair-chrome-0.1.0.zip` y `ghostpair-edge-0.1.0.zip` en las cuentas correspondientes. Adjuntar capturas reales, política de privacidad y datos de contacto.
-7. Facilitar a los revisores instrucciones de conexión entre dos instalaciones; no incluir una contraseña permanente o una sesión desatendida de producción.
+1. Obtain Google and Microsoft developer accounts, an HTTPS domain, and a monitored support email address.
+2. Deploy signaling and STUN. Configure `VITE_SIGNALING_URL` and `VITE_STUN_URLS` in root `.env` before `npm run package`. Existing manually saved settings require **Use build defaults** to adopt a new build's defaults.
+3. Complete publisher fields in `docs/privacy.html`. Caddy serves that page at `https://DOMAIN/privacy`.
+4. Run `npm ci`, `npm run typecheck`, `npm test`, browser checks, and `npm run package`.
+5. Register store listings and allow their final extension IDs in `ALLOWED_ORIGINS`. Test packages with those IDs before final submission.
+6. Upload `dist/packages/ghostpair-chrome-0.2.0.zip` and `ghostpair-edge-0.2.0.zip` to the appropriate accounts. Include real screenshots, privacy policy, and contact details.
+7. Give reviewers instructions for connecting two installations. Do not provide a permanent password or an unattended production session.
 
-## Ficha propuesta
+## Proposed listing
 
-**Nombre:** GhostPair
+**Name:** GhostPair
 
-**Descripción breve:** Comparte y controla páginas con otra persona mediante una conexión P2P autorizada.
+**Short description:** Share and control tabs with another person through an authorized P2P connection.
 
-**Descripción:** GhostPair crea un espacio de colaboración entre dos navegadores. Inicia una sesión, elige una contraseña y comparte tu dirección con otra persona. Podrá ver la página activa de la ventana autorizada, hacer clic, escribir y administrar sus pestañas. Puedes pausar, retirar el control o terminar en cualquier momento desde la extensión. Los avisos del navegador permanecen visibles.
+**Description:** GhostPair connects two browsers for collaboration. Start a session, choose a password, and share your GhostPair address with a guest. Authorize each tab locally to share its video and enable basic clicks, typing, and scrolling. Your guest can navigate and manage tabs in the shared window; new tabs wait for your approval before sharing. Pause, withdraw control, release a tab, or end the session from the extension. Native browser capture indicators remain visible.
 
-La imagen y las interacciones viajan directamente entre los equipos mediante WebRTC. La señalización y STUN ayudan a conectarlos; no existe retransmisión TURN, por lo que algunas redes no serán compatibles. La sincronización opcional del portapapeles comparte cambios de texto de Windows cuando ambos participantes la activan. No incluye audio, archivos ni control del escritorio.
+Video and interactions travel directly over WebRTC. Signaling and STUN help establish the connection. There is no TURN relay, so some networks are incompatible. Optional clipboard synchronization shares new Windows clipboard text when both participants enable it. Audio, files, and desktop control are not included. Some complex pages cannot be controlled through DOM interactions.
 
-## Justificación de permisos
+## Permission rationale
 
-| Permiso | Uso concreto |
+| Permission | Specific use |
 | --- | --- |
-| `debugger` | Capturar la página autorizada y aplicar clics/teclado mediante comandos delimitados de CDP. |
-| `tabs` | Identificar y administrar las pestañas de la ventana compartida. |
-| `storage` | Conservar identidad de instalación y configuración; no historial de navegación ni contraseñas de sesión. |
-| `offscreen` | Mantener WebRTC y el adaptador de portapapeles con el menú cerrado. |
-| `clipboardRead`, `clipboardWrite` (opcionales) | Sincronizar cambios de texto durante sesiones donde ambos lo habiliten. |
-| Acceso al origen de señalización (opcional) | Registrar y autenticar la instalación en el servidor elegido. Se solicita el origen concreto. |
+| `tabCapture` | Capture video from a tab after the host invokes the extension on it. |
+| `activeTab` | Associate a local extension invocation with the tab the host intends to share. |
+| `scripting` | Install the scoped DOM interaction handler in an authorized shared document. |
+| `tabs` | Identify and manage tabs in the consented host window. |
+| `storage` | Keep installation identity and settings, without browsing history or session passwords. |
+| `offscreen` | Retain host capture streams, WebRTC, and the clipboard adapter while the popup is closed. |
+| `clipboardRead`, `clipboardWrite` (optional) | Synchronize new text when both participants enable it. |
+| HTTP/HTTPS host access (optional) | Access the signaling service and install DOM controls on authorized pages. Granting web access does not automatically authorize capture of other tabs. |
 
-## Declaraciones de datos
+The production extension does not request `debugger`. Browser test tooling may use a separate debugging connection to drive isolated browsers; that tooling is not packaged with the extension.
 
-Declarar el tratamiento de contenido de páginas, actividad de navegación necesaria para mostrar las pestañas, datos de autenticación e identificadores de instalación. La transmisión P2P también es tratamiento de datos. Describir la sincronización del portapapeles y las direcciones IP que ven los peers y la infraestructura de conexión. No declarar que el producto no trata datos.
+## Data disclosures
 
-Todos los scripts se incluyen en el paquete; no hay JavaScript alojado remotamente, publicidad ni telemetría de contenido. La política y las fichas deben coincidir con la configuración real del operador, incluida retención de logs e identidades.
+Disclose processing of shared page content, browsing information needed to show tabs, authentication data, and installation identifiers. P2P transmission is still data processing. Describe clipboard synchronization and IP addresses visible to peers and connection infrastructure. Do not claim that the product processes no data.
 
-## Capturas requeridas
+All scripts ship in the package; there is no remotely hosted JavaScript, advertising, or content telemetry. The privacy policy and store declarations must match the operator's actual configuration, including infrastructure log retention and identity storage.
 
-- Menú «Compartir» con información y consentimiento, sin datos reales.
-- Sesión conectada con dirección de demostración.
-- Vista remota sobre la página de pruebas local.
-- Controles de pausa, finalización y portapapeles.
+## Required screenshots
 
-Las capturas de prueba headless no sustituyen la revisión de los avisos nativos en Windows. Capturar las imágenes definitivas después de completar la validación manual.
+- Host sharing controls and consent, using synthetic data.
+- An authorized tab and a tab awaiting host approval.
+- The full-page guest connection form and an active remote view.
+- Pause, termination, and clipboard controls.
 
-Fuentes oficiales: [Chrome Web Store](https://developer.chrome.com/docs/webstore/publish), [declaración de datos](https://developer.chrome.com/docs/webstore/program-policies/disclosure-requirements), [publicación en Edge](https://learn.microsoft.com/en-us/microsoft-edge/extensions/publish/publish-extension).
+Headless screenshots do not verify native Windows capture indicators. Capture final listing images after manual validation.
+
+Official references: [Chrome Web Store publishing](https://developer.chrome.com/docs/webstore/publish), [data disclosure requirements](https://developer.chrome.com/docs/webstore/program-policies/disclosure-requirements), and [Edge publishing](https://learn.microsoft.com/en-us/microsoft-edge/extensions/publish/publish-extension).
