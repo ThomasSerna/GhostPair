@@ -13,6 +13,7 @@ node tests/browser/tab-capture-probe.mjs
 node tests/browser/dom-probe.mjs
 node tests/browser/environment-check.mjs
 npm run test:browser
+npm run test:frames
 node tests/browser/benchmark.mjs
 node scripts/inspect-ui.mjs
 npm run package
@@ -20,7 +21,19 @@ npm run package
 
 Run a single pairing with `node tests/browser/smoke.mjs chrome:edge`. Override executable locations with `GHOSTPAIR_CHROME` and `GHOSTPAIR_EDGE`. Set `GHOSTPAIR_HEADED=1` for visible windows and optionally `GHOSTPAIR_INSPECT=1` to hold the synthetic session for one minute for inspection.
 
-The harness loads an unpacked extension using `Extensions.loadUnpacked`, enabled only for the isolated browser process with `--enable-unsafe-extension-debugging`. The capture probe invokes `Extensions.triggerAction` against a browser **tab target** to exercise local extension authorization; it first verifies rejection without invocation. These test APIs are separate from the extension runtime. See [the CDP extension testing API](https://chromedevtools.github.io/devtools-protocol/tot/Extensions/) and [Playwright extension testing](https://playwright.dev/docs/chrome-extensions).
+The harness loads an unpacked extension using `Extensions.loadUnpacked`, enabled only for the isolated browser process with `--enable-unsafe-extension-debugging`. Inspection runs omit Playwright's opt-in `--enable-automation` argument to inspect the ordinary toolbar; they do not suppress native capture or extension debugging indicators. The capture probe invokes `Extensions.triggerAction` against a browser **tab target** to exercise local extension authorization; it first verifies rejection without invocation. These test APIs are separate from the extension runtime. See [the CDP extension testing API](https://chromedevtools.github.io/devtools-protocol/tot/Extensions/) and [Playwright extension testing](https://playwright.dev/docs/chrome-extensions).
+
+## Embedded control update: September 8, 2026
+
+**93 unit tests in 12 files passed**, along with TypeScript checking, production compilation and packaging. The production ZIP checks still reject debugger permissions/calls and test-only content.
+
+The real-extension frame suite passed on Chrome 152.0.7977.78 and Edge 152.0.4191.66, using independent host/guest profiles, local signaling and WebRTC. It exercises same-origin, cross-origin and nested frames; identical-URL siblings; dynamic insertion; frame replacement and state-preserving reordering; child focus, Unicode text and scrolling; frame borders/padding/scaling; canvas clicks and canceled wheel events; SVG clicks and single checkbox activation. A restricted data frame leaves the video and permitted siblings usable. Control withdrawal, pause and stop release/dispose child controllers. Page JavaScript cannot see the isolated controller or control it through `postMessage`.
+
+The suite checks `chrome.action.getBadgeText()` is empty, the action title remains `GhostPair`, and native capture is active. Results are in `tests/browser/.artifacts/frame-control-results.json`. Unit tests additionally exercise injection denial, stale route verification, pending input cancellation, original-document key release, and late installation cleanup. Tab tests distinguish child loading from top-document navigation and reject pending actions across control withdrawal/restoration.
+
+The existing session smoke suite also passed Chrome→Chrome, Edge→Edge and Chrome→Edge. Visible Chrome→Chrome and Edge→Edge runs passed. **Native-toolbar visual inspection remains unverified:** Computer Use stopped because automatic policy review could not confidently determine the browser window URL. No alternative screenshot mechanism was used to bypass that restriction. The API assertions and package inspection are not substitutes for native-toolbar visual evidence.
+
+Tests use synthetic local pages, not unspecified real failing sites. Sites that require trusted input, inaccessible frames, native pointer capture/dragging, and advanced editors remain compatibility limits.
 
 ## Migration evidence: September 7–8, 2026
 
@@ -98,7 +111,7 @@ The system clipboard is disabled in headless integration. Windows clipboard acce
 ## Checks still required before publication
 
 - On two authorized computers, test Chrome↔Chrome, Edge↔Edge, and Chrome↔Edge on LAN and separate networks. Include a network blocking direct connectivity and verify the error after 30 seconds.
-- In visible Chrome and Edge windows, inspect native capture indicators, the extension badge, and absence of an extension debugging banner. Exercise optional permission approval, denial, revocation, native cancellation, and fresh local authorization.
+- In visible Chrome and Edge windows, inspect native capture indicators, absence of an activity badge, and absence of an extension debugging banner. Exercise optional permission approval, denial, revocation, native cancellation, and fresh local authorization.
 - With synthetic text in two controlled Windows clipboards, test bidirectional copying without focus, Unicode, the 256 KiB limit, simultaneous changes, and no polling after disabling or ending.
 - Check forms, contenteditable regions, rich text editors, cross-origin iframes, shortcuts, selection, and IME. Record synthetic-event compatibility limits instead of treating all browser interactions as supported.
 - Test Windows scaling, minimization, display changes, moving tabs out of the authorized window, and unsupported internal pages.

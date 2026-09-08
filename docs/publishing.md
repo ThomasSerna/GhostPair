@@ -31,6 +31,7 @@ Video and interactions travel directly over WebRTC. Signaling and STUN help esta
 | `tabCapture` | Capture video from a tab after the host invokes the extension on it. |
 | `activeTab` | Associate a local extension invocation with the tab the host intends to share. |
 | `scripting` | Install the scoped DOM interaction handler in an authorized shared document. |
+| `webNavigation` | Identify embedded documents and their parents, and retire stale control routes when those documents navigate. |
 | `tabs` | Identify and manage tabs in the consented host window. |
 | `storage` | Keep installation identity and settings, without browsing history or session passwords. |
 | `offscreen` | Retain host capture streams, WebRTC, and the clipboard adapter while the popup is closed. |

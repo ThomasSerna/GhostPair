@@ -1,5 +1,6 @@
 import { ControlCommandSchema, PresentationSchema, isSupportedUrl, type ControlCommand, type Presentation, type TabInfo } from '@ghostpair/protocol';
 import { installDomControl } from './dom-control';
+import { FrameControl } from './frame-control';
 
 interface Hooks {
   state: (tabs: TabInfo[], activeTabId: number | undefined, generation: number, presentation?: Presentation) => void;
@@ -15,6 +16,7 @@ export class TabCapture {
   private activeTabId?: number;
   private generation = 0;
   private epoch = 0;
+  private inputRevision = 0;
   private paused = false;
   private control = true;
   private tabs: TabInfo[] = [];
@@ -23,12 +25,17 @@ export class TabCapture {
   private presentation?: Presentation;
   private timer?: ReturnType<typeof setTimeout>;
   private serial: Promise<void> = Promise.resolve();
+  private frameControl = new FrameControl(p => this.presentation === p && this.windowId !== undefined && this.activeTabId === p.tabId && this.sources.get(p.tabId) === p.captureId && !this.paused && this.control);
 
   constructor(private hooks: Hooks) {
+    chrome.webNavigation.onBeforeNavigate.addListener(info => {
+      if (info.tabId === this.activeTabId && info.frameId === 0) { this.invalidate(); this.schedule(); }
+    });
     chrome.tabs.onActivated.addListener(info => { if (info.windowId === this.windowId) { this.invalidate(); this.schedule(); } });
     chrome.tabs.onUpdated.addListener((id, change, tab) => {
       if (tab.windowId !== this.windowId) return;
-      if (id === this.activeTabId && (change.status === 'loading' || change.url)) this.invalidate();
+      // A child frame can set the tab's status to loading without changing its video document.
+      if (id === this.activeTabId && change.url) this.invalidate();
       if (change.status || change.url || change.title) this.schedule();
     });
     chrome.tabs.onCreated.addListener(tab => { if (tab.windowId === this.windowId) this.schedule(); });
@@ -91,11 +98,12 @@ export class TabCapture {
   async setPaused(paused: boolean) { this.paused = paused; this.invalidate(); await this.refresh(); }
   async setControl(enabled: boolean) { this.control = enabled; if (!enabled) await this.releaseInput(); }
   private releaseInput() {
-    const current = this.presentation;
-    return current ? chrome.tabs.sendMessage(current.tabId, { target: 'ghostpair.dom', operation: 'release', captureId: current.captureId }, { documentId: current.documentId }).catch(() => undefined) : Promise.resolve();
+    ++this.inputRevision;
+    return this.frameControl.release();
   }
   private invalidate() {
-    void this.releaseInput(); this.presentation = undefined; ++this.generation; this.publish();
+    ++this.inputRevision;
+    void this.frameControl.clear(); this.presentation = undefined; ++this.generation; this.publish();
   }
   private publish() { this.hooks.state(this.tabs, this.activeTabId, this.generation, this.presentation); }
   private schedule() {
@@ -122,8 +130,9 @@ export class TabCapture {
     if (this.activeTabId !== active?.id) { this.activeTabId = active?.id; this.invalidate(); }
     this.tabs = tabs.filter(tab => tab.id !== undefined && !tab.incognito).map(tab => ({ id: tab.id!, title: tab.title ?? '', url: tab.url ?? '', active: tab.active, supported: isSupportedUrl(tab.url ?? ''), authorized: this.sources.has(tab.id!), captureState: this.sources.has(tab.id!) ? isSupportedUrl(tab.url ?? '') ? 'ready' : 'unavailable' : 'pending' }));
     const captureId = active?.id === undefined ? undefined : this.sources.get(active.id);
-    if (this.paused || !captureId || !active?.id || active.status === 'loading' || !isSupportedUrl(active.url ?? '')) { if (this.presentation) this.invalidate(); this.publish(); return; }
+    if (this.paused || !captureId || !active?.id || !isSupportedUrl(active.url ?? '')) { if (this.presentation) this.invalidate(); this.publish(); return; }
     if (this.presentation?.tabId === active.id) { this.publish(); return; }
+    if (active.status === 'loading') { this.publish(); return; }
     const generation = this.generation;
     try {
       const injection = (await chrome.scripting.executeScript({ target: { tabId: active.id, frameIds: [0] }, world: 'ISOLATED', func: installDomControl, args: [captureId, generation] }))[0];
@@ -131,16 +140,20 @@ export class TabCapture {
       const now = await chrome.tabs.get(active.id);
       if (epoch !== this.epoch || generation !== this.generation || !now.active || now.windowId !== windowId || now.url !== active.url || now.status === 'loading') return;
       this.presentation = PresentationSchema.parse({ ...injection.result, captureId, tabId: active.id, documentId: injection.documentId, generation });
-    } catch {
+      const presentation = this.presentation;
+      // A slow child must not delay publication of the already captured top document.
+      void this.frameControl.bind(presentation).catch(() => { if (this.presentation === presentation) this.hooks.error('Embedded page discovery is unavailable. Check the extension navigation permission.'); });
+    } catch (error) {
       if (epoch !== this.epoch || generation !== this.generation) return;
       this.presentation = undefined;
       const tab = this.tabs.find(t => t.id === active.id); if (tab) tab.captureState = 'unavailable';
-      this.hooks.error('DOM control is unavailable on this page. Check site permissions or choose another tab.');
+      this.hooks.error(`Page control could not be installed. Check site permissions in the extension menu. ${error instanceof Error ? error.message : ''}`.trim());
     }
     this.publish();
   }
   async execute(value: unknown) {
     const command = ControlCommandSchema.parse(value);
+    const inputRevision = this.inputRevision;
     if (this.windowId === undefined || this.paused || !this.control) throw new Error('Remote control is unavailable.');
     if (command.type === 'tab.create') {
       if (!isSupportedUrl(command.url)) throw new Error('Only HTTP and HTTPS pages can be opened.');
@@ -148,11 +161,11 @@ export class TabCapture {
     }
     const epoch = this.epoch;
     const tab = await chrome.tabs.get(command.tabId);
-    if (epoch !== this.epoch || this.paused || !this.control || tab.windowId !== this.windowId || tab.incognito) throw new Error('The target is outside the shared session.');
+    if (epoch !== this.epoch || inputRevision !== this.inputRevision || this.paused || !this.control || tab.windowId !== this.windowId || tab.incognito) throw new Error('The target is outside the shared session.');
     if (command.type === 'tab.activate') { this.invalidate(); await chrome.tabs.update(tab.id!, { active: true }); return; }
     if (command.type === 'tab.close') { await chrome.tabs.remove(tab.id!); return; }
     const current = this.presentation;
-    if (!current || !tab.active || !isSupportedUrl(tab.url ?? '') || tab.status === 'loading' || command.tabId !== current.tabId || command.generation !== current.generation || !('captureId' in command) || command.captureId !== current.captureId || !('documentId' in command) || command.documentId !== current.documentId) throw new Error('The shared page changed. Wait for its current video.');
+    if (!current || !tab.active || !isSupportedUrl(tab.url ?? '') || command.tabId !== current.tabId || command.generation !== current.generation || !('captureId' in command) || command.captureId !== current.captureId || !('documentId' in command) || command.documentId !== current.documentId) throw new Error('The shared page changed. Wait for its current video.');
     if (command.type === 'navigate') {
       if (!isSupportedUrl(command.url)) throw new Error('Only HTTP and HTTPS navigation is supported.');
       this.invalidate(); await chrome.tabs.update(tab.id!, { url: command.url }); return;
@@ -160,7 +173,6 @@ export class TabCapture {
     if (command.type === 'reload') { this.invalidate(); await chrome.tabs.reload(tab.id!); return; }
     if (command.type === 'history') { this.invalidate(); await (command.direction === 'back' ? chrome.tabs.goBack(tab.id!) : chrome.tabs.goForward(tab.id!)); this.schedule(); return; }
     if ('x' in command && (command.x > current.viewportWidth || command.y > current.viewportHeight)) throw new Error('Pointer coordinates are outside the shared viewport.');
-    const reply = await chrome.tabs.sendMessage(tab.id!, { target: 'ghostpair.dom', operation: 'command', captureId: current.captureId, generation: current.generation, command }, { documentId: current.documentId });
-    if (!reply?.ok) throw new Error(reply?.error ?? 'This page did not accept the action.');
+    await this.frameControl.execute(command);
   }
 }

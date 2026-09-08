@@ -28,6 +28,7 @@ npm.cmd run dev:extension  # Rebuild on edits; reload the extension in the brows
 npm.cmd run typecheck
 npm.cmd test
 npm.cmd run test:browser
+npm.cmd run test:frames
 npm.cmd run package
 ```
 
@@ -45,8 +46,8 @@ The signaling server loads the root `.env`; Vite also reads its environment file
 
 - **Authorization:** a session is limited to one host window. Capture and control require local authorization for each tab by invoking the extension on that tab. Up to five authorized tabs can be retained; release a tab before adding another at the limit. Only the active authorized tab is transmitted. The address bar, other windows, and desktop are not captured.
 - **New tabs:** guests can manage tabs in the authorized window. A remotely opened tab is marked **Awaiting host approval** until the host invokes the extension on it and authorizes sharing. The integrated **Open tab** dialog accepts a URL or domain name; domains default to HTTPS.
-- **Control:** basic DOM clicks, focus, Unicode editing, scrolling, and browser navigation are supported. The guest has a navigation bar and tab selector. Press Escape to release keyboard capture. Input is temporarily disabled while a different tab, document, zoom level, or viewport is being presented.
-- **Session controls:** the extension badge and native capture indicators remain visible. The host can pause, withdraw control, release a tab, or end the session. The default stop shortcut is `Ctrl+Shift+9`, configurable in extension shortcuts.
+- **Control:** DOM clicks, focus, Unicode editing, scrolling, and browser navigation are supported, including permitted same-origin and cross-origin embedded frames. Canvas and SVG surfaces receive synthetic pointer, click and wheel events. The guest has a navigation bar and tab selector. Press Escape to release keyboard capture. Input is temporarily disabled while a different tab, main document, zoom level, or viewport is being presented. Loading an embedded page keeps the current video available.
+- **Session controls:** activity appears inside the extension interface. The toolbar keeps its normal icon and name, with no activity badge or sharing tooltip. Native browser capture indicators remain enabled. The host can pause, withdraw control, release a tab, or end the session. The default stop shortcut is `Ctrl+Shift+9`, configurable in extension shortcuts.
 - **Guest connection page:** disconnecting, host termination, and connection errors return to the form in the same page. The host address is retained for that page session; the password is cleared after each attempt. Closing or reloading the guest page ends its connection and requires a new connection attempt.
 - **Clipboard:** disabled until both participants enable it. It synchronizes new Windows clipboard text, including text copied in other applications, approximately every 500 ms. Existing contents are not sent on activation. The limit is 256 KiB of UTF-8; images and files are excluded. Changes between polls may be missed.
 - **Fixed address:** belongs to the installation/profile and configured server. Chrome and Edge can have different addresses. Clearing extension data or uninstalling removes local credentials.
@@ -76,7 +77,9 @@ Do not expose container port 8787 directly. Use `TRUST_PROXY=true` only behind a
 
 Capture uses `chrome.tabCapture` and WebRTC video. The package contains no extension debugger permission or calls. Native capture indicators and permission prompts remain enabled. See [Validation](docs/validation.md) for the synthetic performance comparison and the pending inspection of browser indicators.
 
-Control uses synthetic DOM events, which pages can distinguish from trusted browser input. Basic forms and text work are the intended scope. Complex canvas editors, widgets requiring trusted events, inaccessible frames, rich text editors, and IME composition can have limitations. Audio, DRM playback, desktop control, browser chrome, internal pages, extension stores, local files, incognito, native menus, and file pickers are unsupported. The clipboard adapter uses deprecated `execCommand` for compatibility.
+Control uses synthetic DOM events, which pages can distinguish from trusted browser input. Basic forms and text work are the intended scope. Embedded frame routing supports nesting, borders, scrolling and positive axis-aligned scaling. Frame rotation, skew, perspective, restricted or opaque surfaces, trusted-input requirements, native pointer capture and cross-frame native drag-and-drop are unsupported. Complex editors and IME composition can still have limitations. A frame that Chrome denies access to remains unavailable without disabling the rest of the page. Audio, DRM playback, desktop control, browser chrome, internal pages, extension stores, local files, incognito, native menus, and file pickers are unsupported. The clipboard adapter uses deprecated `execCommand` for compatibility.
+
+This update adds the `webNavigation` permission to track embedded documents. Reload the unpacked extension after rebuilding, or approve the permission update when prompted by your browser. The peer protocol and saved installation identities are unchanged. The extension does not use `chrome.debugger`; eliminating its own activity indicators does not hide native browser capture indicators.
 
 Revoking required permissions, canceling native capture, or ending a session stops capture, input, and clipboard synchronization. A native cancellation requires a new session and fresh local authorization. Enterprise policies can prevent capture or control. Minimization and display changes require the manual validation listed below.
 

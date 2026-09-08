@@ -8,6 +8,7 @@
     "tabCapture",
     "activeTab",
     "scripting",
+    "webNavigation",
     "tabs",
     "storage",
     "offscreen"

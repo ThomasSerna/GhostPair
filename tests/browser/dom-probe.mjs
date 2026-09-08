@@ -36,7 +36,7 @@ const captureId = 'synthetic-capture';
 const results = [];
 const controlSource = `(${installDomControl.toString()})`;
 
-async function send(page, command, { generation = 1, operation = 'execute', sender = { id: 'synthetic-extension' }, targetCaptureId = captureId } = {}) {
+async function send(page, command, { generation = 1, operation = 'command', sender = { id: 'synthetic-extension' }, targetCaptureId = captureId } = {}) {
   return page.evaluate(({ command, generation, operation, sender, captureId }) => {
     let response;
     for (const listener of globalThis.runtimeProbe.listeners) listener({ target: 'ghostpair.dom', captureId, generation, operation, command }, sender, value => { response = value; });
@@ -122,9 +122,10 @@ try {
       assert.deepEqual(await page.evaluate(() => ({ top: document.querySelector('#scroller').scrollTop, left: document.querySelector('#scroller').scrollLeft, document: scrollY })), { top: 80, left: 35, document: 0 }, 'scroll stays in its nested container');
 
       const embeddedPoint = await point(page, 'iframe');
-      const rejected = await send(page, { type: 'pointer', ...embeddedPoint, event: 'down', button: 'left', buttons: 1, modifiers: 0, clickCount: 1 });
-      assert.equal(rejected?.ok, false);
-      assert.match(rejected.error, /embedded surface/, 'cross-origin iframe reports its control limitation');
+      const routed = await send(page, { type: 'pointer', ...embeddedPoint, event: 'down', button: 'left', buttons: 1, modifiers: 0, clickCount: 1 }, { operation: 'prepare' });
+      assert.equal(routed?.ok, true);
+      assert.equal(routed.child.index, 0, 'cross-origin iframe resolves to a child window index');
+      assert.ok(Math.abs(routed.child.x - 0.5) < 0.01 && Math.abs(routed.child.y - 0.5) < 0.01);
 
       const button = await point(page, '#button');
       const stale = await send(page, { type: 'pointer', ...button, event: 'down', button: 'left', buttons: 1, modifiers: 0, clickCount: 1 }, { generation: 0 });
@@ -157,7 +158,7 @@ try {
       assert.equal(await page.evaluate(() => runtimeProbe.sent.length), beforeDisposedResize, 'disposal removes geometry listeners');
       assert.deepEqual(errors, [], 'no uncaught fixture errors');
 
-      const result = { browser: name, version: browser.version(), click: true, checkbox: true, unicode: true, nativeSetterAndInput: true, textareaEditing: true, contenteditable: true, nestedScroll: true, iframeRejected: true, staleGenerationRejected: true, senderAndCaptureIsolation: true, generationRelease: true, disposal: true, runtime: 'stubbed; no extension or media permission validation', clipboard: 'never accessed' };
+      const result = { browser: name, version: browser.version(), click: true, checkbox: true, unicode: true, nativeSetterAndInput: true, textareaEditing: true, contenteditable: true, nestedScroll: true, iframeRoute: true, staleGenerationRejected: true, senderAndCaptureIsolation: true, generationRelease: true, disposal: true, runtime: 'stubbed; no extension or media permission validation', clipboard: 'never accessed' };
       results.push(result);
       console.log(JSON.stringify(result));
     } finally { await browser.close(); }

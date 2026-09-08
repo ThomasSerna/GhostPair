@@ -24,10 +24,14 @@ function harness() {
       get: vi.fn(async (id: number): Promise<any> => { const tab = tabs.get(id); if (!tab) throw new Error('Tab closed'); return { ...tab }; }),
       create: vi.fn(async (_options: object) => ({})), update: vi.fn(async (_id: number, _options: object) => ({})), remove: vi.fn(async (_id: number) => {}),
       goBack: vi.fn(async (_id: number) => {}), goForward: vi.fn(async (_id: number) => {}), reload: vi.fn(async (_id: number) => {}),
-      sendMessage: vi.fn(async (_id: number, _message: any, _options?: object): Promise<any> => ({ ok: true })),
+      sendMessage: vi.fn(async (_id: number, _message: any, _options?: object): Promise<any> => ({ ok: true, token: 'prepared' })),
     },
     tabCapture: { onStatusChanged: event(), getMediaStreamId: vi.fn(async ({ targetTabId }: { targetTabId: number }) => `stream-${targetTabId}`) },
     scripting: { executeScript: vi.fn(async (_options: any): Promise<any[]> => [{ frameId: 0, documentId, result: { ...geometry } }]) },
+    webNavigation: {
+      onBeforeNavigate: event(), onCommitted: event(), onErrorOccurred: event(), onCompleted: event(),
+      getAllFrames: vi.fn(async () => [{ frameId: 0, documentId, parentFrameId: -1, documentLifecycle: 'active', url: 'https://example.com' }]),
+    },
   };
   vi.stubGlobal('chrome', browser);
   const hooks = {
@@ -40,7 +44,7 @@ function harness() {
   const add = (id: number, options: Record<string, unknown> = {}) => { const tab = { ...tabs.get(12), id, active: false, ...options }; tabs.set(id, tab); return tab; };
   const activate = (id: number) => { for (const tab of tabs.values()) tab.active = tab.id === id; browser.tabs.onActivated.emit({ tabId: id, windowId: tabs.get(id).windowId }); };
   const share = async () => { await capture.start(4); await capture.authorize(12); };
-  const commands = () => browser.tabs.sendMessage.mock.calls.filter(([, message]) => message.operation === 'command');
+  const commands = () => browser.tabs.sendMessage.mock.calls.filter(([, message]) => message.operation === 'prepare');
   return { browser, tabs, geometry, hooks, capture, current, target, add, activate, share, commands, document: (value: string) => { documentId = value; } };
 }
 
@@ -56,7 +60,7 @@ describe('TabCapture authorization and scoped control', () => {
     expect(h.current()).toMatchObject({ tabId: 12, documentId: 'document-one', ...h.geometry });
     expect(h.hooks.state.mock.lastCall![0].find(tab => tab.id === 13)).toMatchObject({ authorized: false, captureState: 'pending' });
     await h.capture.execute({ type: 'text', ...h.target(), text: '日本語 🐈' });
-    expect(h.commands()[0]).toEqual([12, expect.objectContaining({ operation: 'command', captureId: h.current()!.captureId, generation: h.current()!.generation, command: expect.objectContaining({ text: '日本語 🐈' }) }), { documentId: 'document-one' }]);
+    expect(h.commands()[0]).toEqual([12, expect.objectContaining({ operation: 'prepare', captureId: h.current()!.captureId, generation: h.current()!.generation, command: expect.objectContaining({ text: '日本語 🐈' }) }), { documentId: 'document-one' }]);
     await h.capture.authorize(12); expect(h.browser.tabCapture.getMediaStreamId).toHaveBeenCalledTimes(1); await h.capture.stop();
   });
 
@@ -116,6 +120,25 @@ describe('TabCapture authorization and scoped control', () => {
     expect(h.browser.tabCapture.getMediaStreamId).toHaveBeenCalledTimes(1); await h.capture.stop();
   });
 
+  it('keeps video and root control available while an embedded document loads', async () => {
+    const h = harness(); await h.share(); const original = h.current();
+    Object.assign(h.tabs.get(12), { status: 'loading' });
+    h.browser.webNavigation.onBeforeNavigate.emit({ tabId: 12, frameId: 9 });
+    h.browser.tabs.onUpdated.emit(12, { status: 'loading' }, h.tabs.get(12));
+    await h.capture.refresh(); expect(h.current()).toBe(original);
+    await h.capture.execute({ type: 'text', ...h.target(), text: 'still usable' });
+    h.browser.webNavigation.onBeforeNavigate.emit({ tabId: 12, frameId: 0 });
+    expect(h.current()).toBeUndefined(); await h.capture.stop();
+  });
+
+  it('rejects a pending action if control is withdrawn and restored while resolving its tab', async () => {
+    const h = harness(); await h.share(); const waiting = deferred<any>();
+    h.browser.tabs.get.mockReturnValueOnce(waiting.promise);
+    const operation = h.capture.execute({ type: 'text', ...h.target(), text: 'stale' });
+    await h.capture.setControl(false); await h.capture.setControl(true); waiting.resolve(h.tabs.get(12));
+    await expect(operation).rejects.toThrow('outside'); expect(h.commands()).toHaveLength(0); await h.capture.stop();
+  });
+
   it('authenticates geometry reports and blocks old coordinates immediately on resize and zoom', async () => {
     const h = harness(); await h.share(); const old = h.target();
     const message = { captureId: old.captureId, generation: old.generation, geometry: { viewportWidth: 800 } };
@@ -131,7 +154,7 @@ describe('TabCapture authorization and scoped control', () => {
   it('releases input before pause/control revocation and rejects subsequent commands', async () => {
     const h = harness(); await h.share(); const old = h.target();
     await h.capture.setControl(false);
-    expect(h.browser.tabs.sendMessage).toHaveBeenCalledWith(12, { target: 'ghostpair.dom', operation: 'release', captureId: old.captureId }, { documentId: old.documentId });
+    expect(h.browser.tabs.sendMessage).toHaveBeenCalledWith(12, { target: 'ghostpair.dom', operation: 'release', captureId: old.captureId, generation: old.generation }, { documentId: old.documentId });
     await expect(h.capture.execute({ type: 'text', ...old, text: 'blocked' })).rejects.toThrow('unavailable');
     await h.capture.setControl(true); await h.capture.setPaused(true); expect(h.current()).toBeUndefined();
     await expect(h.capture.execute({ type: 'tab.create', url: 'https://example.com' })).rejects.toThrow('unavailable');
