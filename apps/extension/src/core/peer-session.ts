@@ -24,29 +24,30 @@ const PeerMessageSchema = z.discriminatedUnion('type', [...MediaSignalSchema.opt
 ]);
 
 const FragmentSchema = z.object({ transfer: z.string().max(64), index: z.number().int().nonnegative(), count: z.number().int().min(1).max(256), data: z.string().max(4000) }).strict();
-class JsonChannel {
+export class JsonChannel {
   private queue: string[] = [];
   private bytes = 0;
   private partial = new Map<string, { count: number; parts: Map<number, string>; size: number; until: number }>();
   private sequence = 0;
-  constructor(private channel: RTCDataChannel, private receive: (value: unknown) => void) {
+  private failed = false;
+  constructor(private channel: RTCDataChannel, private receive: (value: unknown) => void, private failure: () => void) {
     channel.bufferedAmountLowThreshold = 32 * 1024;
     channel.onbufferedamountlow = () => this.flush();
     channel.onmessage = event => this.message(event.data);
   }
   send(value: unknown): boolean {
     const text = JSON.stringify(value);
-    if (text.length > 900_000 || this.bytes + text.length > 1_000_000 || this.channel.readyState !== 'open') return false;
+    if (this.failed || text.length > 900_000 || this.bytes + text.length > 1_000_000 || this.channel.readyState !== 'open') return false;
     const transfer = String(++this.sequence);
     const count = Math.ceil(text.length / 4000);
     const packets = text.length <= 4000 ? [text] : Array.from({ length: count }, (_, index) => JSON.stringify({ transfer, index, count, data: text.slice(index * 4000, (index + 1) * 4000) }));
     for (const packet of packets) { this.queue.push(packet); this.bytes += packet.length; }
-    this.flush(); return true;
+    this.flush(); return !this.failed;
   }
   private flush() {
     while (this.queue.length && this.channel.readyState === 'open' && this.channel.bufferedAmount < 64 * 1024) {
       const packet = this.queue.shift()!; this.bytes -= packet.length;
-      try { this.channel.send(packet); } catch { this.queue = []; this.bytes = 0; break; }
+      try { this.channel.send(packet); } catch { this.failed = true; this.clear(); this.failure(); break; }
     }
   }
   clear() { this.queue = []; this.bytes = 0; this.partial.clear(); }
@@ -131,6 +132,7 @@ function cleanup(reason = 'Session ended.', inform = false, failed = false) {
   connected = false; direct = false; greeted = false; role = undefined; sessionId = undefined;
   clipboardEnabled = false; remoteClipboardEnabled = false; paused = false;
   latestSnapshot = undefined; pendingIce = [];
+  commandsPerSecond = 0; commandWindow = 0;
   ending = false;
   if (inform) notify('transport.ended', { reason, failed });
 }
@@ -203,7 +205,7 @@ async function receiveControl(value: unknown) {
     case 'command': {
       if (role !== 'host' || paused) return;
       if (Date.now() - commandWindow >= 1000) { commandWindow = Date.now(); commandsPerSecond = 0; }
-      if (message.command.type !== 'input.release' && ++commandsPerSecond > 250) return;
+      if (message.command.type !== 'input.release' && ++commandsPerSecond > 250) { fail('The participant exceeded the input rate limit. Start a new session.'); return; }
       const current = epoch;
       const reply = await dispatch({ type: 'transport.command', command: message.command });
       if (epoch !== current) return;
@@ -241,7 +243,7 @@ function attachChannel(channel: RTCDataChannel, current: number) {
       const p = latestSnapshot?.presentation;
       const cancels = connected && greeted && role === 'host' && command?.type === 'input.release' && p &&
         command.tabId === p.tabId && command.captureId === p.captureId && command.documentId === p.documentId && command.generation === p.generation;
-      if (connected && greeted && message?.type === 'stop' || cancels) {
+      if ((connected && greeted && message?.type === 'stop') || cancels) {
         ++inputRevision;
         // Cancel in-flight host input immediately, without waiting behind a slow route.
         const cancellation = receiveControl(value).finally(() => { --pendingControls; });
@@ -257,7 +259,7 @@ function attachChannel(channel: RTCDataChannel, current: number) {
         }
         await receiveControl(value);
       }).catch(() => undefined).finally(() => { --pendingControls; });
-    });
+    }, () => { if (epoch === current && !ending) fail('The control connection could not send input. Start a new session.'); });
     channel.onopen = () => { if (epoch !== current) return; sendPeer({ type: 'hello', protocol: PROTOCOL_VERSION, sessionId, role }); };
     channel.onclose = () => { if (epoch === current && !ending && role) cleanup('The other participant disconnected.', true); };
   } else if (channel.label === 'clipboard') {
@@ -268,7 +270,7 @@ function attachChannel(channel: RTCDataChannel, current: number) {
       const update = value as ClipboardUpdate;
       if (update.origin !== (role === 'host' ? 'guest' : 'host') || typeof update.text !== 'string' || update.text.length > MAX_CLIPBOARD_BYTES) return;
       void clipboardSync?.receive(update);
-    });
+    }, () => { if (epoch === current && !ending) fail('The clipboard connection failed. Start a new session.'); });
     channel.onopen = syncClipboard;
     channel.onclose = () => { clipboardSync?.stop(); };
   } else channel.close();
@@ -399,18 +401,24 @@ async function onMessage(message: Record<string, any>) {
       if (role !== 'guest' || !connected || paused || !latestSnapshot?.controlEnabled) return { ok: false, error: 'Remote control is unavailable.' };
       const command = ControlCommandSchema.parse(message.command);
       if (message.requestId) {
-        if (pendingCommands.size >= 32) return { ok: false, error: 'Too many pending actions.' };
+        if (pendingCommands.size >= 32) { fail('Too many pending actions. Start a new session.'); return { ok: false, error: 'Too many pending actions.' }; }
         return new Promise<{ ok: boolean; error?: string }>(resolve => {
           const requestId = String(message.requestId);
           const timer = setTimeout(() => { pendingCommands.delete(requestId); resolve({ ok: false, error: 'The host did not confirm the action. Check the tab list before trying again.' }); }, 10000);
           pendingCommands.set(requestId, { resolve, timer });
-          if (!sendPeer({ type: 'command', command, requestId })) { clearTimeout(timer); pendingCommands.delete(requestId); resolve({ ok: false, error: 'The connection is congested.' }); }
+          if (!sendPeer({ type: 'command', command, requestId })) { clearTimeout(timer); pendingCommands.delete(requestId); resolve({ ok: false, error: 'The connection is congested.' }); if (role) fail('The connection is congested. Start a new session.'); }
         });
       }
       if (command.type === 'text' && command.text.length > 2048) {
         const chars = Array.from(command.text);
-        for (let i = 0; i < chars.length; i += 2048) if (!sendPeer({ type: 'command', command: { ...command, text: chars.slice(i, i + 2048).join('') } })) { notify('transport.notice', { message: 'The connection is congested. Part of the text was not sent.' }); break; }
-      } else if (!sendPeer({ type: 'command', command })) notify('transport.notice', { message: 'The connection is congested. The action was not sent.' });
+        for (let i = 0; i < chars.length; i += 2048) if (!sendPeer({ type: 'command', command: { ...command, text: chars.slice(i, i + 2048).join('') } })) {
+          if (role) fail('The connection is congested. Start a new session.');
+          return { ok: false, error: 'The connection failed. Part of the text was not sent.' };
+        }
+      } else if (!sendPeer({ type: 'command', command })) {
+        if (role) fail('The connection is congested. Start a new session.');
+        return { ok: false, error: 'The connection failed. The action was not sent.' };
+      }
       break;
     }
   }

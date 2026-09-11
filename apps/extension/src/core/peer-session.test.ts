@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PROTOCOL_VERSION } from '@ghostpair/protocol';
-import { createPeerSession } from './peer-session';
+import { createPeerSession, JsonChannel } from './peer-session';
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -129,4 +129,56 @@ describe('peer session lifetime', () => {
     expect(h.dispatch.mock.calls[0][0].command.text).toBe('current');
     h.session.stop();
   });
+
+  it('ends the session instead of silently dropping a discrete command at the rate limit', async () => {
+    const h = harness(), first = await h.start(); await first.greet(); first.pc.connect(); await settled();
+    for (let i = 0; i < 251; i++) {
+      first.control.receive({ type: 'command', command: { type: 'text', ...target, text: 'x' } }); await settled();
+    }
+    expect(h.dispatch).toHaveBeenCalledTimes(250);
+    expect(h.notify.mock.calls.filter(([type]) => type === 'transport.ended')).toEqual([['transport.ended', expect.objectContaining({ failed: true, reason: expect.stringContaining('rate limit') })]]);
+    const second = await h.start(); await second.greet(); second.pc.connect(); await settled();
+    second.control.receive({ type: 'command', command: { type: 'text', ...target, text: 'new session' } }); await settled();
+    expect(h.dispatch).toHaveBeenCalledTimes(251); h.session.stop();
+  });
+
+  it('ends a congested receive queue and never executes its pending actions', async () => {
+    const h = harness(), first = await h.start(); await first.greet(); first.pc.connect(); await settled();
+    const slow = deferred<any>(); h.dispatch.mockReturnValueOnce(slow.promise);
+    const command = { type: 'command', command: { type: 'text', ...target, text: 'x' } };
+    first.control.receive(command); await settled();
+    for (let i = 0; i < 256; i++) first.control.receive(command);
+    expect(h.notify).toHaveBeenCalledWith('transport.ended', expect.objectContaining({ failed: true, reason: expect.stringContaining('pending commands') }));
+    slow.resolve({ ok: true }); for (let i = 0; i < 30; i++) await settled();
+    expect(h.dispatch).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports send exceptions once and closes the session', async () => {
+    const h = harness(), first = await h.start(); await first.greet(); first.pc.connect(); await settled();
+    first.control.send.mockImplementation(() => { throw new Error('channel unavailable'); });
+    await h.session.handle({ type: 'session.state', snapshot });
+    expect(h.notify.mock.calls.filter(([type]) => type === 'transport.ended')).toHaveLength(1);
+    expect(first.pc.close).toHaveBeenCalled();
+  });
+});
+
+it('reports immediate and delayed channel send failures without claiming success', () => {
+  for (const buffered of [false, true]) {
+    const channel = new Channel('control') as Channel & { onbufferedamountlow?: () => void };
+    channel.bufferedAmount = buffered ? 100_000 : 0;
+    const failure = vi.fn(), pipe = new JsonChannel(channel as unknown as RTCDataChannel, vi.fn(), failure);
+    channel.send.mockImplementation(() => { throw new Error('send failed'); });
+    expect(pipe.send({ type: 'test' })).toBe(buffered);
+    if (buffered) { channel.bufferedAmount = 0; channel.onbufferedamountlow?.(); }
+    expect(failure).toHaveBeenCalledTimes(1); expect(pipe.send({ type: 'later' })).toBe(false);
+    channel.onbufferedamountlow?.(); expect(channel.send).toHaveBeenCalledTimes(1);
+  }
+});
+
+it('refuses enqueueing beyond the bounded channel buffer', () => {
+  const channel = new Channel('control'); channel.bufferedAmount = 100_000;
+  const pipe = new JsonChannel(channel as unknown as RTCDataChannel, vi.fn(), vi.fn());
+  expect(pipe.send({ text: 'x'.repeat(800_000) })).toBe(true);
+  expect(pipe.send({ text: 'x'.repeat(300_000) })).toBe(false);
+  expect(channel.send).not.toHaveBeenCalled(); pipe.clear();
 });

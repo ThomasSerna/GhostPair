@@ -5,6 +5,7 @@ import { Brand, Status, Notifications, request } from './ui';
 import { ConnectionPanel } from './connection-panel';
 import { NewTabDialog } from './new-tab-dialog';
 import { createPeerSession } from './core/peer-session';
+import { InputBuffer } from './core/input-buffer';
 import './styles.css';
 
 function Viewer() {
@@ -31,11 +32,16 @@ function Viewer() {
   const [duplicate, setDuplicate] = useState(false);
   const disposed = useRef(false);
   const lastClick = useRef({ time: 0, x: 0, y: 0, button: -1, count: 0 });
+  const input = useRef<InputBuffer | null>(null);
+  input.current ??= new InputBuffer(transmit);
 
-  function send(command: ControlCommand) {
+  function transmit(command: ControlCommand) {
     if (!port.current || !stateRef.current || stateRef.current.status !== 'connected' || stateRef.current.paused || !stateRef.current.controlEnabled) return;
-    void peer.current?.handle({ type: 'session.command', command }).catch(e => setError(e.message));
+    void peer.current?.handle({ type: 'session.command', command }).then(reply => {
+      if (reply?.ok === false) setError(('error' in reply ? reply.error : undefined) ?? 'Could not apply the action.');
+    }).catch(e => setError(e.message));
   }
+  function send(command: ControlCommand) { input.current!.send(command); }
   function target() {
     const f = frame.current;
     const s = stateRef.current;
@@ -43,9 +49,10 @@ function Viewer() {
   }
   function releaseInput() {
     const original = heldPointer.current ?? target();
-    const held = Boolean(heldPointer.current || heldKeys.current.size);
+    input.current?.discard();
     heldPointer.current = undefined; heldKeys.current.clear();
-    if (original && held) send({ type: 'input.release', tabId: original.tabId, captureId: original.captureId, documentId: original.documentId, generation: original.generation });
+    lastClick.current.count = 0;
+    if (original) send({ type: 'input.release', tabId: original.tabId, captureId: original.captureId, documentId: original.documentId, generation: original.generation });
   }
   function applyState(next: AppState) {
     if (stateRef.current?.sessionId !== next.sessionId || stateRef.current?.generation !== next.generation || stateRef.current?.activeTabId !== next.activeTabId || next.status !== 'connected') {
@@ -79,6 +86,7 @@ function Viewer() {
       });
       connection.onDisconnect.addListener(() => {
         if (disposed.current) return;
+        releaseInput();
         port.current = null; peer.current?.stop('The viewer lost its extension connection.');
         setError('The extension connection was interrupted. Start a new session.');
         retry = setTimeout(connectPort, 500);
