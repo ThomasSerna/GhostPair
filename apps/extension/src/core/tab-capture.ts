@@ -153,6 +153,11 @@ export class TabCapture {
   }
   async execute(value: unknown) {
     const command = ControlCommandSchema.parse(value);
+    if (command.type === 'input.release') {
+      const p = this.presentation;
+      if (p && command.tabId === p.tabId && command.captureId === p.captureId && command.documentId === p.documentId && command.generation === p.generation) await this.releaseInput();
+      return;
+    }
     const inputRevision = this.inputRevision;
     if (this.windowId === undefined || this.paused || !this.control) throw new Error('Remote control is unavailable.');
     if (command.type === 'tab.create') {

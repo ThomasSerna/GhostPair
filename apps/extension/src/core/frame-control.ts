@@ -136,7 +136,11 @@ export class FrameControl {
       if (!p) throw changed();
       this.check(p, revision);
       try { await this.executeNow(p, revision, command); }
-      catch (error) { await this.release(); throw error; }
+      catch (error) {
+        // A late failure belongs to its original operation, never a replacement view.
+        if (this.presentation === p && this.revision === revision) await this.release();
+        throw error;
+      }
     });
     this.queue = work.catch(() => undefined); return work;
   }

@@ -23,7 +23,7 @@ const fixture = createServer((_request, response) => {
     <script>
       globalThis.probe = { clicks: 0, releases: 0, inputEvents: [], customSetterCalls: 0 };
       document.querySelector('#button').addEventListener('click', () => probe.clicks++);
-      document.addEventListener('mouseup', () => probe.releases++);
+      document.addEventListener('pointercancel', () => probe.releases++);
       const input = document.querySelector('#controlled');
       const descriptor = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value');
       Object.defineProperty(input, 'value', { get() { return descriptor.get.call(this); }, set(value) { probe.customSetterCalls++; descriptor.set.call(this, value); } });

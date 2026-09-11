@@ -17,7 +17,7 @@ const fixture = httpServer((request, response) => {
     <div id="space"></div><script>
       window.probe={clicks:[],downs:0,ups:0,keys:[],wheels:[]};
       document.querySelector('#button').addEventListener('click', e=>probe.clicks.push({x:e.clientX,y:e.clientY,trusted:e.isTrusted}));
-      document.addEventListener('pointerdown',()=>probe.downs++);document.addEventListener('pointerup',()=>probe.ups++);
+      document.addEventListener('pointerdown',()=>probe.downs++);document.addEventListener('pointercancel',()=>probe.ups++);
       document.addEventListener('keyup',e=>probe.keys.push(e.code));
       document.querySelector('#canvas')?.addEventListener('click',e=>probe.clicks.push({x:e.clientX,y:e.clientY,ctrl:e.ctrlKey,detail:e.detail,trusted:e.isTrusted}));
       document.querySelector('#svg')?.addEventListener('click',e=>probe.clicks.push({svg:true,x:e.clientX}));

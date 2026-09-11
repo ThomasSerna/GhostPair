@@ -47,6 +47,9 @@ class Peer {
   connect() { this.connectionState = 'connected'; this.onconnectionstatechange?.(); }
 }
 const id = 'a'.repeat(32);
+const presentation = { tabId: 1, captureId: 'capture', documentId: 'document', generation: 3, viewportWidth: 800, viewportHeight: 600, offsetLeft: 0, offsetTop: 0, scale: 1 };
+const target = { tabId: 1, captureId: 'capture', documentId: 'document', generation: 3 };
+const snapshot = { presentation, generation: 3, activeTabId: 1, tabs: [], paused: false, controlEnabled: true, clipboardEnabled: false };
 function harness() {
   const notify = vi.fn(), dispatch = vi.fn(async (_message: any): Promise<any> => ({ ok: true }));
   const session = createPeerSession(notify, dispatch, { read: async () => '', write: async () => {} });
@@ -100,5 +103,30 @@ describe('peer session lifetime', () => {
     reply.resolve({ ok: true }); await settled();
     expect(second.control.send.mock.calls.map(([value]) => value).join(' ')).not.toContain('old-command');
     h.session.stop(); expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('cancels in-flight and queued input before accepting later commands', async () => {
+    const h = harness(), first = await h.start(); await first.greet(); first.pc.connect(); await settled();
+    await h.session.handle({ type: 'session.state', snapshot });
+    const slow = deferred<any>(); h.dispatch.mockReturnValueOnce(slow.promise);
+    first.control.receive({ type: 'command', command: { type: 'text', ...target, text: 'in flight' } }); await settled();
+    first.control.receive({ type: 'command', requestId: 'canceled', command: { type: 'text', ...target, text: 'queued' } });
+    first.control.receive({ type: 'command', command: { type: 'input.release', ...target } }); await settled();
+    expect(h.dispatch.mock.calls.map(([message]) => message.command.type)).toEqual(['text', 'input.release']);
+    first.control.receive({ type: 'command', command: { type: 'text', ...target, text: 'after release' } });
+    slow.resolve({ ok: false }); await settled();
+    expect(h.dispatch.mock.calls.map(([message]) => message.command.text).filter(Boolean)).toEqual(['in flight', 'after release']);
+    expect(first.control.send.mock.calls.map(([value]) => JSON.parse(value))).toContainEqual({ type: 'command.result', requestId: 'canceled', ok: false, error: 'The input was canceled.' });
+    h.session.stop();
+  });
+
+  it('does not let an old release cancel commands for the current presentation', async () => {
+    const h = harness(), first = await h.start(); await first.greet(); first.pc.connect(); await settled();
+    await h.session.handle({ type: 'session.state', snapshot });
+    first.control.receive({ type: 'command', command: { type: 'text', ...target, text: 'current' } });
+    first.control.receive({ type: 'command', command: { type: 'input.release', ...target, generation: 2 } });
+    await settled();
+    expect(h.dispatch.mock.calls[0][0].command.text).toBe('current');
+    h.session.stop();
   });
 });

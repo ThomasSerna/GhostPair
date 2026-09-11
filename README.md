@@ -44,6 +44,8 @@ The signaling server loads the root `.env`; Vite also reads its environment file
 
 ## Using a session
 
+Version 0.3.0 uses peer protocol 3 for explicit input cancellation. Update both participants together; saved addresses, identities and settings are preserved.
+
 - **Authorization:** a session is limited to one host window. Capture and control require local authorization for each tab by invoking the extension on that tab. Up to five authorized tabs can be retained; release a tab before adding another at the limit. Only the active authorized tab is transmitted. The address bar, other windows, and desktop are not captured.
 - **New tabs:** guests can manage tabs in the authorized window. A remotely opened tab is marked **Awaiting host approval** until the host invokes the extension on it and authorizes sharing. The integrated **Open tab** dialog accepts a URL or domain name; domains default to HTTPS.
 - **Control:** DOM clicks, focus, Unicode editing, scrolling, and browser navigation are supported, including permitted same-origin and cross-origin embedded frames. Canvas and SVG surfaces receive synthetic pointer, click and wheel events. The guest has a navigation bar and tab selector. Press Escape to release keyboard capture. Input is temporarily disabled while a different tab, main document, zoom level, or viewport is being presented. Loading an embedded page keeps the current video available.

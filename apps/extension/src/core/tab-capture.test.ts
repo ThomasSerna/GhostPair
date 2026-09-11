@@ -52,6 +52,22 @@ describe('TabCapture authorization and scoped control', () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); vi.unstubAllGlobals(); });
 
+  it('releases current input without activation and ignores old release targets', async () => {
+    const h = harness(); await h.share();
+    const original = h.target();
+    await h.capture.execute({ type: 'input.release', ...original });
+    expect(h.browser.tabs.sendMessage.mock.calls.some(([, message]) => message.operation === 'release')).toBe(true);
+    expect(h.commands()).toHaveLength(0);
+    h.browser.tabs.onZoomChange.emit({ tabId: 12 }); await h.capture.refresh();
+    h.browser.tabs.sendMessage.mockClear();
+    await h.capture.execute({ type: 'input.release', ...original });
+    expect(h.browser.tabs.sendMessage).not.toHaveBeenCalled();
+    await h.capture.execute({ type: 'input.release', ...h.target() });
+    await h.capture.execute({ type: 'input.release', ...h.target() });
+    expect(h.commands()).toHaveLength(0);
+    await h.capture.stop();
+  });
+
   it('consumes the tab stream once and installs control only in its authorized active document', async () => {
     const h = harness(); h.add(13); await h.share();
     expect(h.browser.tabCapture.getMediaStreamId).toHaveBeenCalledExactlyOnceWith({ targetTabId: 12 });

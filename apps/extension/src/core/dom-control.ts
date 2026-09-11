@@ -153,8 +153,7 @@ export function installDomControl(captureId: string, generation: number, root = 
   function release() {
     prepared = undefined;
     if (down) {
-      down.dispatchEvent(new PointerEvent('pointerup', { ...downFields, buttons: 0, pointerId: 1, pointerType: 'mouse' }));
-      down.dispatchEvent(new MouseEvent('mouseup', { ...downFields, buttons: 0 }));
+      down.dispatchEvent(new PointerEvent('pointercancel', { ...downFields, cancelable: false, buttons: 0, pointerId: 1, pointerType: 'mouse' }));
     }
     down = null;
     suppressMouse = false;

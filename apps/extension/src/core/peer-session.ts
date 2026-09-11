@@ -203,7 +203,7 @@ async function receiveControl(value: unknown) {
     case 'command': {
       if (role !== 'host' || paused) return;
       if (Date.now() - commandWindow >= 1000) { commandWindow = Date.now(); commandsPerSecond = 0; }
-      if (++commandsPerSecond > 250) return;
+      if (message.command.type !== 'input.release' && ++commandsPerSecond > 250) return;
       const current = epoch;
       const reply = await dispatch({ type: 'transport.command', command: message.command });
       if (epoch !== current) return;
@@ -230,10 +230,33 @@ function attachChannel(channel: RTCDataChannel, current: number) {
     controlChannel = channel;
     let controls: Promise<void> = Promise.resolve();
     let pendingControls = 0;
+    let inputRevision = 0;
     controlPipe = new JsonChannel(channel, value => {
+      if (epoch !== current) return;
       if (connected && greeted && (value as any)?.type === 'media.reset') { void receiveControl(value); return; }
       if (++pendingControls > 256) { fail('The participant sent too many pending commands.'); return; }
-      controls = controls.then(() => epoch === current ? receiveControl(value) : undefined).catch(() => undefined).finally(() => { --pendingControls; });
+      const parsed = PeerMessageSchema.safeParse(value);
+      const message = parsed.success ? parsed.data : undefined;
+      const command = message?.type === 'command' ? message.command : undefined;
+      const p = latestSnapshot?.presentation;
+      const cancels = connected && greeted && role === 'host' && command?.type === 'input.release' && p &&
+        command.tabId === p.tabId && command.captureId === p.captureId && command.documentId === p.documentId && command.generation === p.generation;
+      if (connected && greeted && message?.type === 'stop' || cancels) {
+        ++inputRevision;
+        // Cancel in-flight host input immediately, without waiting behind a slow route.
+        const cancellation = receiveControl(value).finally(() => { --pendingControls; });
+        controls = Promise.allSettled([controls, cancellation]).then(() => undefined);
+        return;
+      }
+      const revision = inputRevision;
+      controls = controls.then(async () => {
+        if (epoch !== current) return;
+        if (command && revision !== inputRevision) {
+          if (message?.type === 'command' && message.requestId) sendPeer({ type: 'command.result', requestId: message.requestId, ok: false, error: 'The input was canceled.' });
+          return;
+        }
+        await receiveControl(value);
+      }).catch(() => undefined).finally(() => { --pendingControls; });
     });
     channel.onopen = () => { if (epoch !== current) return; sendPeer({ type: 'hello', protocol: PROTOCOL_VERSION, sessionId, role }); };
     channel.onclose = () => { if (epoch === current && !ending && role) cleanup('The other participant disconnected.', true); };

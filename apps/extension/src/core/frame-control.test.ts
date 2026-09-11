@@ -103,6 +103,24 @@ it('never commits after a parent verification reports replacement', async () => 
   await expect(h.control.execute(h.input())).rejects.toThrow('changed'); expect(h.committed).toEqual([]);
 });
 
+it('does not release a new generation when an old in-flight route fails', async () => {
+  const h = harness(); await h.control.bind(p);
+  const gate = deferred<any>(), entered = deferred<void>(), original = h.sendMessage.getMockImplementation()!;
+  h.sendMessage.mockImplementation(async (...args) => {
+    if (args[1].operation === 'prepare' && args[1].generation === p.generation && args[2].documentId === 'root') { entered.resolve(); return gate.promise; }
+    return original(...args);
+  });
+  const old = h.control.execute(h.input()).catch(error => error);
+  await entered.promise; await h.control.clear();
+  const next = { ...p, generation: p.generation + 1 };
+  await h.control.bind(next);
+  const fresh = h.control.execute({ ...h.input(), generation: next.generation });
+  gate.resolve({ ok: true, token: 'old' });
+  expect(await old).toBeInstanceOf(Error); await fresh;
+  expect(h.committed).toHaveLength(1);
+  expect(h.operations.some(o => o.message.operation === 'release' && o.message.generation === next.generation)).toBe(false);
+});
+
 it('disposes every document on clear with the original presentation generation', async () => {
   const h = harness(); await h.control.bind(p); await h.control.clear();
   expect(new Set(h.operations.filter(o => o.message.operation === 'dispose' && o.message.generation === 3).map(o => o.id))).toEqual(new Set(['root', 'a', 'b', 'nested']));

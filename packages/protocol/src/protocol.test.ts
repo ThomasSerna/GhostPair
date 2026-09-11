@@ -15,6 +15,12 @@ describe('network boundaries', () => {
     expect(ControlCommandSchema.safeParse({ type: 'pointer', event: 'down', x: Infinity, y: 0, tabId: 1, generation: 1 }).success).toBe(false);
     expect(ControlCommandSchema.safeParse({ type: 'tab.create', url: 'https://example.com', extra: true }).success).toBe(false);
   });
+  it('requires a complete document-scoped release command', () => {
+    const release = { type: 'input.release', tabId: 1, captureId: 'capture', documentId: 'document', generation: 3 };
+    expect(ControlCommandSchema.safeParse(release).success).toBe(true);
+    expect(ControlCommandSchema.safeParse({ type: 'input.release', tabId: 1 }).success).toBe(false);
+    expect(ControlCommandSchema.safeParse({ ...release, x: 0 }).success).toBe(false);
+  });
   it('enforces UTF-8 clipboard size, not just code unit count', () => {
     expect(ClipboardUpdateSchema.safeParse({ type: 'clipboard.update', origin: 'host', version: 1, text: '🙂'.repeat(100000) }).success).toBe(false);
   });

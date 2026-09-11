@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-export const PROTOCOL_VERSION = 2;
+export const PROTOCOL_VERSION = 3;
 export const MAX_CLIPBOARD_BYTES = 256 * 1024;
 
 export const MAX_SIGNAL_BYTES = 64 * 1024;
@@ -78,6 +78,7 @@ export interface AppState {
 const target = { tabId: z.number().int().min(0), generation: z.number().int().min(0), captureId: z.string().min(1).max(128), documentId: z.string().min(1).max(128) };
 const coords = { x: z.number().finite().min(0).max(32768), y: z.number().finite().min(0).max(32768) };
 export const ControlCommandSchema = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('input.release'), ...target }).strict(),
   z.object({ type: z.literal('pointer'), ...target, ...coords, event: z.enum(['move', 'down', 'up']), button: z.enum(['left', 'middle', 'right']).default('left'), buttons: z.number().int().min(0).max(7).default(0), modifiers: z.number().int().min(0).max(15).default(0), clickCount: z.number().int().min(0).max(3).default(1) }).strict(),
   z.object({ type: z.literal('wheel'), ...target, ...coords, deltaX: z.number().finite().min(-10000).max(10000), deltaY: z.number().finite().min(-10000).max(10000), modifiers: z.number().int().min(0).max(15).default(0) }).strict(),
   z.object({ type: z.literal('key'), ...target, event: z.enum(['down', 'up']), key: z.string().max(64), code: z.string().max(64), keyCode: z.number().int().min(0).max(65535), modifiers: z.number().int().min(0).max(15).default(0), repeat: z.boolean().default(false) }).strict(),
