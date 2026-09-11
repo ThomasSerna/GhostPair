@@ -15,7 +15,8 @@ export function installDomControl(captureId: string, generation: number, root = 
   }
   let down: Element | null = null;
   let downFields: MouseEventInit = {};
-  const keys = new Map<string, { element: Element | null; fields: KeyboardEventInit }>();
+  let suppressMouse = false;
+  const keys = new Map<string, { element: Element | null; fields: KeyboardEventInit; space?: boolean }>();
   type Prepared = { token: string; command: ControlCommand; element: Element | null; child?: { index: number; x?: number; y?: number }; childWindow?: Window | null };
   let prepared: Prepared | undefined;
   const context: Context = { captureId, generation, ready: true, geometry: JSON.stringify(geometry()), dispose, release };
@@ -76,11 +77,63 @@ export function installDomControl(captureId: string, generation: number, root = 
     return pending;
   }
   const editable = (element: Element | null): element is HTMLInputElement | HTMLTextAreaElement => element instanceof HTMLTextAreaElement || element instanceof HTMLInputElement && ['text', 'search', 'url', 'tel', 'password', 'email', 'number'].includes(element.type);
+  const parent = (element: Element): Element | null => element.parentElement ?? (element.getRootNode() instanceof ShadowRoot ? (element.getRootNode() as ShadowRoot).host : null);
+  function disabled(element: Element | null): boolean {
+    // :disabled on the control includes fieldset inheritance and the first-legend exception.
+    for (let current = element; current; current = parent(current)) {
+      if (current.hasAttribute('inert') || current.matches('button:disabled,input:disabled,select:disabled,textarea:disabled,option:disabled,optgroup:disabled')) return true;
+    }
+    return false;
+  }
+  function commonAncestor(first: Element | null, second: Element): Element | null {
+    if (!first?.isConnected) return null;
+    const ancestors = new Set<Element>();
+    for (let current: Element | null = first; current; current = parent(current)) ancestors.add(current);
+    for (let current: Element | null = second; current; current = parent(current)) if (ancestors.has(current)) return current;
+    return null;
+  }
+  const spaceActivates = (element: Element | null): element is HTMLElement => element instanceof HTMLButtonElement || element instanceof HTMLInputElement && ['checkbox', 'radio', 'button', 'submit', 'reset'].includes(element.type);
+  function implicitSubmit(element: HTMLInputElement) {
+    const form = element.form;
+    if (!form) return;
+    const submitter = Array.from((form.getRootNode() as Document | ShadowRoot).querySelectorAll('button,input')).find(candidate =>
+      (candidate instanceof HTMLButtonElement && candidate.type === 'submit' || candidate instanceof HTMLInputElement && ['submit', 'image'].includes(candidate.type)) && candidate.form === form
+    ) as HTMLElement | undefined;
+    // A disabled default button blocks implicit submission; do not skip to another button.
+    if (submitter) { if (!disabled(submitter)) submitter.click(); return; }
+    const blockers = Array.from(form.elements).filter(candidate => candidate instanceof HTMLInputElement && ['text', 'search', 'url', 'tel', 'email', 'password', 'date', 'month', 'week', 'time', 'datetime-local', 'number'].includes(candidate.type));
+    if (blockers.length <= 1) form.requestSubmit();
+  }
+  function selectionKey(element: Element | null, key: string): boolean {
+    if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(key)) return false;
+    const backwards = key === 'ArrowLeft' || key === 'ArrowUp';
+    if (element instanceof HTMLInputElement && element.type === 'radio' && key.startsWith('Arrow')) {
+      const radios = Array.from((element.getRootNode() as Document | ShadowRoot).querySelectorAll<HTMLInputElement>('input[type="radio"]')).filter(radio =>
+        (radio === element || Boolean(element.name) && radio.name === element.name && radio.form === element.form) && !disabled(radio) && radio.getClientRects().length > 0
+      );
+      const index = radios.indexOf(element);
+      const next = radios[(index + (backwards ? -1 : 1) + radios.length) % radios.length];
+      if (next) { next.focus({ preventScroll: true }); next.click(); }
+      return true;
+    }
+    if (element instanceof HTMLSelectElement && !element.multiple) {
+      const options = Array.from(element.options).filter(option => !option.matches(':disabled') && !option.hidden && !option.parentElement?.hidden);
+      const selected = element.selectedOptions[0], index = options.indexOf(selected!);
+      const next = options[key === 'Home' ? 0 : key === 'End' ? options.length - 1 : Math.max(0, Math.min(options.length - 1, index + (backwards ? -1 : 1)))];
+      if (next && next !== selected) {
+        element.selectedIndex = next.index;
+        element.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+        element.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+      return true;
+    }
+    return false;
+  }
   function insert(text: string, inputType = 'insertText', start?: number, end?: number) {
     const element = focused();
     if (!(element instanceof HTMLElement)) throw new Error('Focus a text field before typing.');
     if (editable(element)) {
-      if (element.disabled || element.readOnly) throw new Error('This text field cannot be edited.');
+      if (disabled(element) || element.readOnly) throw new Error('This text field cannot be edited.');
       const from = start ?? element.selectionStart ?? element.value.length;
       const to = end ?? element.selectionEnd ?? from;
       if (!element.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, composed: true, cancelable: true, data: text, inputType }))) return;
@@ -104,6 +157,7 @@ export function installDomControl(captureId: string, generation: number, root = 
       down.dispatchEvent(new MouseEvent('mouseup', { ...downFields, buttons: 0 }));
     }
     down = null;
+    suppressMouse = false;
     for (const { element, fields } of keys.values()) element?.dispatchEvent(new KeyboardEvent('keyup', fields));
     keys.clear();
   }
@@ -113,21 +167,22 @@ export function installDomControl(captureId: string, generation: number, root = 
       if (!element) { if (command.event === 'up') release(); return; }
       const fields = { bubbles: true, cancelable: true, composed: true, clientX: command.x, clientY: command.y, detail: command.clickCount, button: command.button === 'left' ? 0 : command.button === 'middle' ? 1 : 2, buttons: command.buttons, ctrlKey: Boolean(command.modifiers & 2), shiftKey: Boolean(command.modifiers & 8), altKey: Boolean(command.modifiers & 1), metaKey: Boolean(command.modifiers & 4) };
       const name = command.event === 'down' ? 'down' : command.event === 'up' ? 'up' : 'move';
-      const recipient = command.event === 'up' && down ? down : element;
-      const allowed = recipient.dispatchEvent(new PointerEvent(`pointer${name}`, { ...fields, pointerId: 1, pointerType: 'mouse', isPrimary: true }));
-      const mouseAllowed = recipient.dispatchEvent(new MouseEvent(`mouse${name}`, fields));
+      const allowed = element.dispatchEvent(new PointerEvent(`pointer${name}`, { ...fields, pointerId: 1, pointerType: 'mouse', isPrimary: true }));
+      if (command.event === 'down') suppressMouse = !allowed;
+      const mouseAllowed = !suppressMouse && !disabled(element) && element.dispatchEvent(new MouseEvent(`mouse${name}`, fields));
       if (command.event === 'down') {
-        down = allowed && mouseAllowed ? element : null;
+        down = element;
         downFields = fields;
-        if (down) (down.closest('input,textarea,button,select,a,[tabindex],[contenteditable]') as HTMLElement | null)?.focus({ preventScroll: true });
+        if (mouseAllowed) (element.closest('input,textarea,button,select,a,[tabindex],[contenteditable]') as HTMLElement | null)?.focus({ preventScroll: true });
       }
       if (command.event === 'up') {
-        const clicked = down; down = null;
-        if (clicked === element && allowed && mouseAllowed) {
-          if (command.button === 'left' && !element.closest(':disabled')) {
-            element.dispatchEvent(new MouseEvent('click', fields));
-            if (command.clickCount === 2) element.dispatchEvent(new MouseEvent('dblclick', { ...fields, detail: 2 }));
-          } else if (command.button === 'right') element.dispatchEvent(new MouseEvent('contextmenu', fields));
+        const clicked = downFields.button === fields.button ? commonAncestor(down, element) : null;
+        down = null; suppressMouse = false;
+        if (clicked && !disabled(clicked) && !disabled(element)) {
+          if (command.button === 'left') {
+            clicked.dispatchEvent(new MouseEvent('click', fields));
+            if (command.clickCount === 2) clicked.dispatchEvent(new MouseEvent('dblclick', { ...fields, detail: 2 }));
+          } else if (command.button === 'right') clicked.dispatchEvent(new MouseEvent('contextmenu', fields));
           else throw new Error('Middle-click browser actions require the host.');
         }
       }
@@ -149,13 +204,22 @@ export function installDomControl(captureId: string, generation: number, root = 
       }
       window.scrollBy({ left: command.deltaX, top: command.deltaY, behavior: 'instant' }); return;
     }
-    if (command.type === 'text') { insert(command.text); return; }
+    if (command.type === 'text') { if (command.text !== ' ' || !spaceActivates(focused())) insert(command.text); return; }
     if (command.type !== 'key') throw new Error('This operation is handled by the extension.');
     const element = focused();
     const fields = { key: command.key, code: command.code, repeat: command.repeat, bubbles: true, cancelable: true, composed: true, ctrlKey: Boolean(command.modifiers & 2), shiftKey: Boolean(command.modifiers & 8), altKey: Boolean(command.modifiers & 1), metaKey: Boolean(command.modifiers & 4) };
-    if (command.event === 'up') { const held = keys.get(command.code); keys.delete(command.code); held?.element?.dispatchEvent(new KeyboardEvent('keyup', fields)); return; }
+    if (command.event === 'up') {
+      const held = keys.get(command.code); keys.delete(command.code);
+      const allowed = held?.element?.dispatchEvent(new KeyboardEvent('keyup', fields));
+      if (allowed && held?.space && held.element === element && element?.isConnected && !disabled(element) && spaceActivates(element)) element.click();
+      return;
+    }
     if (!keys.has(command.code)) keys.set(command.code, { element, fields });
     if (element && !element.dispatchEvent(new KeyboardEvent('keydown', fields))) return;
+    if (disabled(element)) return;
+    const plain = !fields.ctrlKey && !fields.metaKey && !fields.altKey;
+    if (plain && command.key === ' ' && spaceActivates(element)) { keys.get(command.code)!.space = true; return; }
+    if (plain && !fields.shiftKey && selectionKey(element, command.key)) return;
     if (command.key === 'Tab') {
       const elements = Array.from(document.querySelectorAll<HTMLElement>('a[href],button,input,textarea,select,[tabindex],[contenteditable="true"]')).filter(e => e.tabIndex >= 0 && !e.matches(':disabled,[hidden]') && e.getClientRects().length);
       const index = elements.indexOf(element as HTMLElement);
@@ -171,7 +235,7 @@ export function installDomControl(captureId: string, generation: number, root = 
       }
       if (command.key === 'Enter') {
         if (element instanceof HTMLTextAreaElement) insert('\n', 'insertLineBreak');
-        else element.form?.requestSubmit();
+        else implicitSubmit(element);
         return;
       }
       if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(command.key)) {
@@ -183,7 +247,10 @@ export function installDomControl(captureId: string, generation: number, root = 
       if (command.key === 'Backspace') document.execCommand('delete');
       if (command.key === 'Delete') document.execCommand('forwardDelete');
       if ((fields.ctrlKey || fields.metaKey) && command.key.toLowerCase() === 'a') document.execCommand('selectAll');
-    } else if (command.key === 'Enter' && element instanceof HTMLElement) element.click();
+    } else if (plain && command.key === 'Enter') {
+      if (element instanceof HTMLInputElement && ['checkbox', 'radio'].includes(element.type)) implicitSubmit(element);
+      else if (element instanceof HTMLElement && element.matches('button,input[type="button"],input[type="submit"],input[type="reset"],a[href],summary')) element.click();
+    }
   }
   const listener = (message: Record<string, any>, sender: chrome.runtime.MessageSender, respond: (result: unknown) => void) => {
     if (sender.id !== chrome.runtime.id || sender.tab || message?.target !== 'ghostpair.dom' || message.captureId !== context.captureId) return;
