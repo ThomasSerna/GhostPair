@@ -11,7 +11,7 @@ The repository generates separate Chrome Web Store and Edge Add-ons packages. Pr
 3. Complete publisher fields in `docs/privacy.html`. Caddy serves that page at `https://DOMAIN/privacy`.
 4. Run `npm ci`, `npm run typecheck`, `npm test`, browser checks, and `npm run package`.
 5. Register store listings and allow their final extension IDs in `ALLOWED_ORIGINS`. Test packages with those IDs before final submission.
-6. Upload `dist/packages/ghostpair-chrome-0.2.0.zip` and `ghostpair-edge-0.2.0.zip` to the appropriate accounts. Include real screenshots, privacy policy, and contact details.
+6. Upload `dist/packages/ghostpair-chrome-0.3.0.zip` and `ghostpair-edge-0.3.0.zip` to the appropriate accounts. Include real screenshots, privacy policy, and contact details. Both participants must update for peer protocol 3; saved addresses and settings survive the update.
 7. Give reviewers instructions for connecting two installations. Do not provide a permanent password or an unattended production session.
 
 ## Proposed listing
@@ -39,6 +39,8 @@ Video and interactions travel directly over WebRTC. Signaling and STUN help esta
 | HTTP/HTTPS host access (optional) | Access the signaling service and install DOM controls on authorized pages. Granting web access does not automatically authorize capture of other tabs. |
 
 The production extension does not request `debugger`. Browser test tooling may use a separate debugging connection to drive isolated browsers; that tooling is not packaged with the extension.
+
+Questionnaire compatibility covers tested DOM activation and keyboard defaults. Do not advertise trusted input, bypass of protected forms, native select menus or invisible browser capture. Sites requiring `Event.isTrusted` remain unsupported.
 
 ## Data disclosures
 

@@ -27,6 +27,7 @@ function Viewer() {
   const composing = useRef(false);
   const heldKeys = useRef(new Map<string, Omit<Extract<ControlCommand, { type: 'key' }>, 'type' | 'event' | 'tabId' | 'generation' | 'captureId' | 'documentId'>>());
   const heldPointer = useRef<Extract<ControlCommand, { type: 'pointer' }> | undefined>(undefined);
+  const canceledPointer = useRef(false);
   const peer = useRef<ReturnType<typeof createPeerSession> | undefined>(undefined);
   const [incoming, setIncoming] = useState<{ stream: MediaStream; meta: Presentation }>();
   const [duplicate, setDuplicate] = useState(false);
@@ -50,6 +51,7 @@ function Viewer() {
   function releaseInput() {
     const original = heldPointer.current ?? target();
     input.current?.discard();
+    if (heldPointer.current) canceledPointer.current = true;
     heldPointer.current = undefined; heldKeys.current.clear();
     lastClick.current.count = 0;
     if (original) send({ type: 'input.release', tabId: original.tabId, captureId: original.captureId, documentId: original.documentId, generation: original.generation });
@@ -140,6 +142,8 @@ function Viewer() {
   }
   function text(value: string) { const t = target(); if (t && value && new TextEncoder().encode(value).length <= MAX_CLIPBOARD_BYTES) send({ type: 'text', ...t, text: value }); }
   function pointer(event: React.PointerEvent<HTMLVideoElement>, kind: 'move' | 'down' | 'up') {
+    if (kind === 'down') canceledPointer.current = false;
+    else if (canceledPointer.current) { if (kind === 'up') canceledPointer.current = false; return; }
     const point = coordinates(event, kind !== 'down' && Boolean(heldPointer.current)); if (!point) return;
     event.preventDefault();
     if (kind === 'down') { keyboard.current?.focus({ preventScroll: true }); event.currentTarget.setPointerCapture(event.pointerId); }

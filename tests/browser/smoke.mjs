@@ -5,9 +5,13 @@ import { resolve } from 'node:path';
 import { createServer } from '../../apps/signaling/dist/server.js';
 import { launchExtension, closeBrowser, removeTestArtifact, poll, resizePage, artifactRoot } from './helpers.mjs';
 import { startStun } from './stun.mjs';
+import { questionnaireHtml } from './questionnaire-fixture.mjs';
+import { questionnaireWorkflow } from './questionnaire-workflow.mjs';
 
 const fixture = httpServer((request, response) => {
   response.setHeader('Content-Type', 'text/html; charset=utf-8');
+  if (request.url === '/questionnaire') { response.end(questionnaireHtml); return; }
+  if (request.url === '/questionnaire-frame') { response.end(`<!doctype html><title>Embedded questionnaire</title><style>body{margin:0}iframe{width:100%;height:720px;border:0}</style><iframe id="questionnaire" src="http://localhost:${fixture.address().port}/questionnaire"></iframe>`); return; }
   response.end(`<!doctype html><html><head><meta charset="utf-8"><title>Fixture ${request.url}</title><style>body{font:20px sans-serif;margin:30px;background:#f6f0df;color:#123638}input,textarea,button{display:block;font:inherit;padding:10px;margin:10px 0}#nested{height:90px;width:250px;overflow:auto}#nested>div{height:700px}#space{height:1800px}</style></head><body><h1>GhostPair video fixture</h1><button id="target" onclick="count.textContent=String(++window.clicks)">Click target</button><output id="count">0</output><input id="text"><textarea id="multiline"></textarea><div id="nested"><div>Scroll area</div></div><p id="clock"></p><div id="space"></div><script>window.clicks=0;setInterval(()=>clock.textContent=String(Date.now()),100)</script></body></html>`);
 });
 await new Promise(done => fixture.listen(0, done));
@@ -43,6 +47,8 @@ async function point(host, viewer, selector) {
 }
 async function click(host, viewer, selector) { await videoReady(viewer, host.url()); const xy = await point(host, viewer, selector); await viewer.mouse.click(xy.x, xy.y); }
 async function join(viewer, deviceId, password) {
+  await viewer.bringToFront();
+  await poll(() => viewer.evaluate(() => !document.hidden), 'connection page visible');
   await viewer.getByLabel('Host address', { exact: true }).fill(deviceId);
   await viewer.getByLabel('Session password', { exact: true }).fill(password);
   await viewer.getByRole('button', { name: 'Connect →', exact: true }).click();
@@ -52,7 +58,7 @@ try {
     let host, guest, signal;
     try {
       const [hostName, guestName] = pair.split(':');
-      host = await launchExtension(hostName, extensionPath); guest = await launchExtension(guestName, extensionPath);
+      host = await launchExtension(hostName, extensionPath); guest = await launchExtension(guestName, extensionPath, { nativeVisibility: true });
       const errors = [];
       for (const browser of [host, guest]) browser.context.on('page', page => page.on('pageerror', error => errors.push(error.message)));
       signal = createServer({ databasePath: ':memory:', port: 0, allowedOrigins: [`chrome-extension://${host.id}`, `chrome-extension://${guest.id}`] });
@@ -72,6 +78,13 @@ try {
       assert.equal((await state(viewer)).notification, undefined);
       await join(viewer, waiting.deviceId, 'Eight-42');
       await waitState(viewer, s => s.status === 'connected', 'direct session connected'); await videoReady(viewer);
+      for (const embedded of [false, true]) {
+        await page.goto(`${base}/${embedded ? 'questionnaire-frame' : 'questionnaire'}`);
+        await questionnaireWorkflow(page, viewer, () => videoReady(viewer, page.url()), { embedded });
+      }
+      const appearance = await host.worker.evaluate(async () => ({ badge: await chrome.action.getBadgeText({}), title: await chrome.action.getTitle({}) }));
+      assert.deepEqual(appearance, { badge: '', title: 'GhostPair' });
+      await page.goto(`${base}/one`); await videoReady(viewer, page.url());
       await click(page, viewer, '#target'); await poll(() => page.evaluate(() => window.clicks === 1), 'remote click');
       await click(page, viewer, '#text'); await viewer.keyboard.insertText('GhostPair á漢🙂'); await viewer.keyboard.press('Backspace');
       await poll(() => page.locator('#text').inputValue().then(v => v === 'GhostPair á漢'), 'Unicode text and codepoint deletion');
@@ -154,7 +167,7 @@ try {
       await poll(async () => !(await host.worker.evaluate(() => chrome.tabCapture.getCapturedTabs())).some(t => ['active', 'pending'].includes(t.status)), 'capture tracks released');
       assert.equal(guest.context.pages().filter(p => p.url() === `chrome-extension://${guest.id}/viewer.html`).length, 1);
       assert.deepEqual(errors, []);
-      results.push({ pair, host: host.version, guest: guest.version, nativeVideo: true, renderedFramesInThreeSeconds: renderedFrames, passed: true }); console.log(JSON.stringify(results.at(-1)));
+      results.push({ pair, host: host.version, guest: guest.version, nativeVideo: true, questionnaire: true, embeddedQuestionnaire: true, cancellation: true, toolbar: appearance, renderedFramesInThreeSeconds: renderedFrames, passed: true }); console.log(JSON.stringify(results.at(-1)));
     } finally { await signal?.close(); await closeBrowser(guest); await closeBrowser(host); }
   }
   await writeFile(resolve(artifactRoot, 'native-smoke-results.json'), JSON.stringify(results, null, 2));

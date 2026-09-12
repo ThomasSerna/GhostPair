@@ -41,6 +41,7 @@ export class JsonChannel {
     const transfer = String(++this.sequence);
     const count = Math.ceil(text.length / 4000);
     const packets = text.length <= 4000 ? [text] : Array.from({ length: count }, (_, index) => JSON.stringify({ transfer, index, count, data: text.slice(index * 4000, (index + 1) * 4000) }));
+    if (this.bytes + packets.reduce((size, packet) => size + packet.length, 0) > 1_000_000) return false;
     for (const packet of packets) { this.queue.push(packet); this.bytes += packet.length; }
     this.flush(); return !this.failed;
   }
@@ -100,12 +101,17 @@ let latestSnapshot: Snapshot | undefined;
 
 let commandsPerSecond = 0;
 let commandWindow = 0;
+let inputRevision = 0;
 
 
 const pendingCommands = new Map<string, { resolve: (value: { ok: boolean; error?: string }) => void; timer: ReturnType<typeof setTimeout> }>();
 
 
-function sendPeer(value: unknown) { return controlPipe?.send(value) ?? false; }
+function sendPeer(value: unknown) {
+  const sent = controlPipe?.send(value) ?? false;
+  if (!sent && connected && !ending) fail('The control connection is congested. Start a new session.');
+  return sent;
+}
 function sendSignal(payload: SignalPayload) {
   if (!socket || socket.readyState !== WebSocket.OPEN || !sessionId || isRelaySignal(payload)) return;
   socket.send(JSON.stringify({ type: 'signal', sessionId, payload }));
@@ -133,6 +139,7 @@ function cleanup(reason = 'Session ended.', inform = false, failed = false) {
   clipboardEnabled = false; remoteClipboardEnabled = false; paused = false;
   latestSnapshot = undefined; pendingIce = [];
   commandsPerSecond = 0; commandWindow = 0;
+  ++inputRevision;
   ending = false;
   if (inform) notify('transport.ended', { reason, failed });
 }
@@ -206,9 +213,17 @@ async function receiveControl(value: unknown) {
       if (role !== 'host' || paused) return;
       if (Date.now() - commandWindow >= 1000) { commandWindow = Date.now(); commandsPerSecond = 0; }
       if (message.command.type !== 'input.release' && ++commandsPerSecond > 250) { fail('The participant exceeded the input rate limit. Start a new session.'); return; }
-      const current = epoch;
-      const reply = await dispatch({ type: 'transport.command', command: message.command });
+      const current = epoch, revision = inputRevision;
+      let reply;
+      try { reply = await dispatch({ type: 'transport.command', command: message.command }); }
+      catch {
+        if (epoch === current && revision === inputRevision) { fail('The host input connection failed. Start a new session.'); return; }
+      }
       if (epoch !== current) return;
+      if (revision !== inputRevision && reply?.ok !== true) {
+        if (message.requestId) sendPeer({ type: 'command.result', requestId: message.requestId, ok: false, error: 'The input was canceled.' });
+        return;
+      }
       if (message.requestId) sendPeer({ type: 'command.result', requestId: message.requestId, ok: reply?.ok === true, ...(reply?.error ? { error: String(reply.error).slice(0, 512) } : {}) });
       else if (!reply?.ok) sendPeer({ type: 'notice', message: reply?.error ?? 'Could not apply the action.' });
       break;
@@ -232,7 +247,6 @@ function attachChannel(channel: RTCDataChannel, current: number) {
     controlChannel = channel;
     let controls: Promise<void> = Promise.resolve();
     let pendingControls = 0;
-    let inputRevision = 0;
     controlPipe = new JsonChannel(channel, value => {
       if (epoch !== current) return;
       if (connected && greeted && (value as any)?.type === 'media.reset') { void receiveControl(value); return; }
@@ -240,6 +254,11 @@ function attachChannel(channel: RTCDataChannel, current: number) {
       const parsed = PeerMessageSchema.safeParse(value);
       const message = parsed.success ? parsed.data : undefined;
       const command = message?.type === 'command' ? message.command : undefined;
+      if (command && connected && greeted && role === 'host' && (paused || latestSnapshot?.controlEnabled === false) && command.type !== 'input.release') {
+        --pendingControls;
+        if (message?.type === 'command' && message.requestId) sendPeer({ type: 'command.result', requestId: message.requestId, ok: false, error: 'Remote control is unavailable.' });
+        return;
+      }
       const p = latestSnapshot?.presentation;
       const cancels = connected && greeted && role === 'host' && command?.type === 'input.release' && p &&
         command.tabId === p.tabId && command.captureId === p.captureId && command.documentId === p.documentId && command.generation === p.generation;
@@ -386,6 +405,7 @@ async function onMessage(message: Record<string, any>) {
     case 'session.state': {
       if (role !== 'host' || !connected) break;
       const snapshot = SnapshotSchema.parse(message.snapshot);
+      if (snapshot.paused || !snapshot.controlEnabled || JSON.stringify(snapshot.presentation) !== JSON.stringify(latestSnapshot?.presentation)) ++inputRevision;
       paused = snapshot.paused; latestSnapshot = snapshot;
       sendPeer({ type: 'snapshot', snapshot }); syncClipboard();
       const key = JSON.stringify([snapshot.generation, snapshot.presentation, snapshot.paused]);

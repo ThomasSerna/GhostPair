@@ -14,6 +14,7 @@ node tests/browser/dom-probe.mjs
 node tests/browser/environment-check.mjs
 npm run test:browser
 npm run test:frames
+npm run test:questionnaires
 node tests/browser/benchmark.mjs
 node scripts/inspect-ui.mjs
 npm run package
@@ -22,6 +23,24 @@ npm run package
 Run a single pairing with `node tests/browser/smoke.mjs chrome:edge`. Override executable locations with `GHOSTPAIR_CHROME` and `GHOSTPAIR_EDGE`. Set `GHOSTPAIR_HEADED=1` for visible windows and optionally `GHOSTPAIR_INSPECT=1` to hold the synthetic session for one minute for inspection.
 
 The harness loads an unpacked extension using `Extensions.loadUnpacked`, enabled only for the isolated browser process with `--enable-unsafe-extension-debugging`. Inspection runs omit Playwright's opt-in `--enable-automation` argument to inspect the ordinary toolbar; they do not suppress native capture or extension debugging indicators. The capture probe invokes `Extensions.triggerAction` against a browser **tab target** to exercise local extension authorization; it first verifies rejection without invocation. These test APIs are separate from the extension runtime. See [the CDP extension testing API](https://chromedevtools.github.io/devtools-protocol/tot/Extensions/) and [Playwright extension testing](https://playwright.dev/docs/chrome-extensions).
+
+## Questionnaire control update: September 12, 2026
+
+Version **0.3.0**, peer protocol **3**. **111 unit tests in 13 files passed**, along with TypeScript checking, production compilation and packaging. The production ZIP checks still reject debugger permissions/calls, required test host grants, instrumentation, source maps and environment files. Both participants must update; installation identities and saved settings are preserved.
+
+The questionnaire comparison suite passed **40 cases** across Chrome 152.0.7977.78 and Edge 153.0.4234.32. It compares the production DOM controller with browser input on disposable local pages: checkbox labels, radio selection, nested button targets, canceled pointer/mouse/click events, the first-legend disabled-fieldset exception, Space activation, radio/select arrows, disabled options, canceled keyboard defaults, implicit submission with its default submitter, and native required-field validation. Its trusted-only fixture deliberately accepts browser input and rejects the extension's synthetic click.
+
+The session smoke suite includes the same questionnaire workflow at the top level and in an authorized cross-origin iframe. It exercises guest mouse and keyboard input over WebRTC, Unicode/repeated text, one commit per synthetic composition/paste sequence, a two-step questionnaire, nested-button gestures, and no submission on Escape, focus loss, pointer cancellation, lost capture or switching away from the viewer tab. The composition/paste cases do not access the system clipboard and do not establish real Windows IME compatibility.
+
+The final production build passed the complete smoke suite for **Chrome→Chrome, Edge→Edge and Chrome→Edge**, including these questionnaires and the existing capture, navigation, authorization, reconnect and signaling-loss regressions. The separate embedded-frame suite also passed on both browsers, including nested and replaced documents, canvas/SVG, scrolling, isolated controllers, and capture cleanup.
+
+Guest test browsers use the public `connectOverCDP({ noDefaults: true })` option with a new isolated profile to preserve actual tab focus and visibility; normal Playwright launches force pages to appear focused. The native process is closed at the end. This test-only connection does not add debugger access to the extension or suppress browser warnings. Explicit waits check that the viewer becomes hidden and that the host receives cancellation before continuing.
+
+An initial native guest run was interrupted by Edge automatically signing a fresh profile into the Windows account. That incomplete run is excluded from the results. The harness now disables browser sync and writes [sign-in preferences](https://chromium.googlesource.com/chromium/src/+/refs/heads/main/components/signin/public/base/signin_pref_names.cc) only in its new temporary profiles before launch, and uses bounded action timeouts. Existing user profiles and system policies are untouched.
+
+Unit tests cover release barriers, canceled queues, late failure after a replacement presentation, control withdrawal/restoration, successful tab creation that changes the presentation, move coalescing, repeated text, rate/queue overflow, failed channel writes, rejected delivery to the host and resetting counters between sessions. Browser suites also verify the static `GhostPair` action title, empty badge and retained native capture.
+
+Reports are written to `tests/browser/.artifacts/questionnaire-results.json`, `native-smoke-results.json`, and `frame-control-results.json`. These are local synthetic-page results, not evidence for an unspecified protected questionnaire. Sites requiring `Event.isTrusted`, native select popups and multiple-selection keyboard behavior remain unsupported. Native Windows toolbar visual inspection, real optional-permission prompts, and multi-computer checks remain on the publication checklist below.
 
 ## Embedded control update: September 8, 2026
 

@@ -4,8 +4,9 @@ import { createPeerSession, JsonChannel } from './peer-session';
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>(done => { resolve = done; });
-  return { promise, resolve };
+  let reject!: (reason: Error) => void;
+  const promise = new Promise<T>((done, fail) => { resolve = done; reject = fail; });
+  return { promise, resolve, reject };
 }
 async function settled() { for (let i = 0; i < 30; i++) await Promise.resolve(); }
 class Socket {
@@ -159,6 +160,63 @@ describe('peer session lifetime', () => {
     await h.session.handle({ type: 'session.state', snapshot });
     expect(h.notify.mock.calls.filter(([type]) => type === 'transport.ended')).toHaveLength(1);
     expect(first.pc.close).toHaveBeenCalled();
+  });
+
+  it('cancels queued input across control withdrawal and restoration', async () => {
+    const h = harness(), first = await h.start(); await first.greet(); first.pc.connect(); await settled();
+    await h.session.handle({ type: 'session.state', snapshot });
+    const slow = deferred<any>(); h.dispatch.mockReturnValueOnce(slow.promise);
+    const send = (text: string) => first.control.receive({ type: 'command', command: { type: 'text', ...target, text } });
+    send('in flight'); await settled(); send('queued before revoke');
+    await h.session.handle({ type: 'session.state', snapshot: { ...snapshot, controlEnabled: false } });
+    send('received while disabled');
+    await h.session.handle({ type: 'session.state', snapshot }); send('after restore');
+    slow.resolve({ ok: true }); await settled();
+    expect(h.dispatch.mock.calls.map(([message]) => message.command.text)).toEqual(['in flight', 'after restore']);
+    h.session.stop();
+  });
+
+  it('acknowledges a successful action that itself changes the presentation', async () => {
+    const h = harness(), first = await h.start(); await first.greet(); first.pc.connect(); await settled();
+    await h.session.handle({ type: 'session.state', snapshot });
+    const completion = deferred<any>(); h.dispatch.mockReturnValueOnce(completion.promise);
+    first.control.receive({ type: 'command', requestId: 'create-tab', command: { type: 'tab.create', url: 'https://example.com' } }); await settled();
+    await h.session.handle({ type: 'session.state', snapshot: { ...snapshot, presentation: undefined, generation: 4 } });
+    completion.resolve({ ok: true }); await settled();
+    expect(first.control.send.mock.calls.map(([value]) => JSON.parse(value))).toContainEqual({ type: 'command.result', requestId: 'create-tab', ok: true });
+    h.session.stop();
+  });
+
+  it('ends the session if outgoing control messages cannot be queued', async () => {
+    const h = harness(), first = await h.start(); await first.greet(); first.pc.connect(); await settled();
+    first.control.bufferedAmount = 100_000;
+    for (let i = 0; i < 2000; i++) await h.session.handle({ type: 'session.notice', message: 'x'.repeat(512) });
+    expect(h.notify.mock.calls.filter(([type]) => type === 'transport.ended')).toEqual([['transport.ended', expect.objectContaining({ failed: true, reason: expect.stringContaining('congested') })]]);
+    expect(first.pc.close).toHaveBeenCalled();
+  });
+
+  it('ends the session when delivery to the host fails and cancels queued input', async () => {
+    const h = harness(), first = await h.start(); await first.greet(); first.pc.connect(); await settled();
+    const delivery = deferred<any>(); h.dispatch.mockReturnValueOnce(delivery.promise);
+    first.control.receive({ type: 'command', command: { type: 'text', ...target, text: 'first' } }); await settled();
+    first.control.receive({ type: 'command', command: { type: 'text', ...target, text: 'queued' } });
+    delivery.reject(new Error('Extension connection lost')); await settled();
+    expect(h.dispatch).toHaveBeenCalledTimes(1);
+    expect(h.notify).toHaveBeenCalledWith('transport.ended', expect.objectContaining({ failed: true, reason: expect.stringContaining('host input connection failed') }));
+    expect(first.pc.close).toHaveBeenCalled();
+  });
+
+  it('does not let failed delivery from an old generation end current control', async () => {
+    const h = harness(), first = await h.start(); await first.greet(); first.pc.connect(); await settled();
+    await h.session.handle({ type: 'session.state', snapshot });
+    const delivery = deferred<any>(); h.dispatch.mockReturnValueOnce(delivery.promise);
+    first.control.receive({ type: 'command', requestId: 'old', command: { type: 'text', ...target, text: 'old' } }); await settled();
+    await h.session.handle({ type: 'session.state', snapshot: { ...snapshot, generation: 4, presentation: { ...presentation, generation: 4 } } });
+    first.control.receive({ type: 'command', command: { type: 'text', ...target, generation: 4, text: 'current' } });
+    delivery.reject(new Error('Obsolete connection')); await settled();
+    expect(h.dispatch.mock.calls.map(([message]) => message.command.text)).toEqual(['old', 'current']);
+    expect(first.control.send.mock.calls.map(([value]) => JSON.parse(value))).toContainEqual({ type: 'command.result', requestId: 'old', ok: false, error: 'The input was canceled.' });
+    expect(first.pc.close).not.toHaveBeenCalled(); h.session.stop();
   });
 });
 

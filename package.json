@@ -18,7 +18,8 @@
     "dev:extension": "npm run dev -w @ghostpair/extension",
     "package": "npm run build && node scripts/package.mjs",
     "test:browser": "node tests/browser/smoke.mjs",
-    "test:frames": "node tests/browser/frame-probe.mjs"
+    "test:frames": "node tests/browser/frame-probe.mjs",
+    "test:questionnaires": "node tests/browser/questionnaire-probe.mjs"
   },
   "devDependencies": {
     "@types/chrome": "^0.1.24",
