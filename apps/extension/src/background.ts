@@ -1,9 +1,10 @@
-import { PasswordSchema, SettingsSchema, validateSignalingUrl, type AppState, type Settings } from '@ghostpair/protocol';
+import { ControlModeSchema, VisualPreferencesSchema, PasswordSchema, SettingsSchema, validateSignalingUrl, type AppState, type Settings } from '@ghostpair/protocol';
 import { TabCapture } from './core/tab-capture';
 import { dismissNotification, patchState } from './core/notifications';
 
 const defaults: Settings = SettingsSchema.parse({ signalingUrl: import.meta.env.VITE_SIGNALING_URL || 'http://127.0.0.1:8787', stunUrls: (import.meta.env.VITE_STUN_URLS || 'stun:stun.l.google.com:19302').split(',').map((s: string) => s.trim()).filter(Boolean) });
 if (!validateSignalingUrl(defaults.signalingUrl)) throw new Error('Invalid build signaling URL.');
+let visualPreferences = VisualPreferencesSchema.parse({});
 let state: AppState = idle(defaults);
 let authorizedWindowId: number | undefined;
 let creatingOffscreen: Promise<void> | undefined;
@@ -14,7 +15,7 @@ let viewerTabId: number | undefined;
 let ownerPort: chrome.runtime.Port | undefined;
 const viewers = new Set<chrome.runtime.Port>();
 const pending = new Map<string, { resolve: (reply: any) => void; timer: ReturnType<typeof setTimeout> }>();
-function idle(settings: Settings, deviceId?: string): AppState { return { role: null, status: 'idle', deviceId, paused: false, controlEnabled: true, clipboardEnabled: false, remoteClipboardEnabled: false, tabs: [], generation: 0, settings }; }
+function idle(settings: Settings, deviceId?: string): AppState { return { role: null, status: 'idle', deviceId, paused: false, controlEnabled: true, controlMode: 'visual', controlRevision: 0, visualPreferences, clipboardEnabled: false, remoteClipboardEnabled: false, tabs: [], generation: 0, settings }; }
 const pageUrl = (url?: string) => url?.split(/[?#]/)[0];
 const isViewer = (sender: chrome.runtime.MessageSender) => pageUrl(sender.url) === chrome.runtime.getURL('viewer.html');
 async function openViewer() {
@@ -52,8 +53,8 @@ function broadcast() {
 function update(patch: Partial<AppState>) { state = patchState(state, patch); broadcast(); }
 function hostState() {
   if (state.role !== 'host' || !['connected', 'paused'].includes(state.status)) return;
-  const { paused, controlEnabled, clipboardEnabled, tabs, activeTabId, generation, presentation } = state;
-  void transport('session.state', { snapshot: { paused, controlEnabled, clipboardEnabled, tabs, activeTabId, generation, presentation } }).catch(() => undefined);
+  const { paused, controlEnabled, controlMode, controlRevision, clipboardEnabled, tabs, activeTabId, generation, presentation } = state;
+  void transport('session.state', { snapshot: { paused, controlEnabled, controlMode, controlRevision, clipboardEnabled, tabs, activeTabId, generation, presentation } }).catch(() => undefined);
 }
 const capture = new TabCapture({
   state: (tabs, activeTabId, generation, presentation) => { if (state.role === 'host') { update({ tabs, activeTabId, generation, presentation }); hostState(); } },
@@ -63,7 +64,9 @@ const capture = new TabCapture({
 });
 const ready = (async () => {
   await chrome.storage.local.setAccessLevel({ accessLevel: 'TRUSTED_CONTEXTS' });
-  const saved = await chrome.storage.local.get(['settings', 'identities']);
+  const saved = await chrome.storage.local.get(['settings', 'identities', 'visualPreferences']);
+  const preferences = VisualPreferencesSchema.safeParse(saved.visualPreferences);
+  visualPreferences = preferences.success ? preferences.data : VisualPreferencesSchema.parse({});
   const parsed = SettingsSchema.safeParse(saved.settings);
   const settings = parsed.success && validateSignalingUrl(parsed.data.signalingUrl) ? parsed.data : defaults;
   const identity = (saved.identities as Record<string, { deviceId: string }> | undefined)?.[settings.signalingUrl];
@@ -133,6 +136,7 @@ async function action(message: Record<string, any>, sender: chrome.runtime.Messa
           if (active?.id === undefined) throw new Error('Select the page to share.');
           if (!current()) return state;
           await capture.start(window.id); if (!current()) return state;
+          await capture.configure({ mode: state.controlMode, revision: state.controlRevision, preferences: visualPreferences }); if (!current()) return state;
           await capture.authorize(active.id); if (!current()) return state;
         }
         const owner = host ? await identity() : undefined; if (!current()) return state;
@@ -168,6 +172,21 @@ async function action(message: Record<string, any>, sender: chrome.runtime.Messa
       if (state.role !== 'host') throw new Error('Only the host can change control.');
       update({ controlEnabled: message.enabled === true }); await capture.setControl(state.controlEnabled); hostState(); return state;
     }
+    case 'ui.control.mode': case 'ui.visual.clear': {
+      if (state.role !== 'host') throw new Error('Only the host can change the simulation.');
+      const mode = message.type === 'ui.control.mode' ? ControlModeSchema.parse(message.mode) : state.controlMode;
+      const revision = state.controlRevision + 1;
+      try { await capture.configure({ mode, revision, preferences: visualPreferences }); }
+      catch (error) { update({ controlEnabled: false, controlMode: mode, controlRevision: revision }); await capture.setControl(false); hostState(); throw error; }
+      update({ controlMode: mode, controlRevision: revision }); hostState(); return state;
+    }
+    case 'ui.visual.preferences': {
+      if (state.role && state.role !== 'host') throw new Error('Only the host can change simulation preferences.');
+      const preferences = VisualPreferencesSchema.parse(message.preferences);
+      if (state.role === 'host') await capture.configure({ mode: state.controlMode, revision: state.controlRevision, preferences });
+      await chrome.storage.local.set({ visualPreferences: preferences });
+      visualPreferences = preferences; update({ visualPreferences }); return state;
+    }
     case 'ui.clipboard': {
       const enabled = message.enabled === true;
       if (enabled && !await chrome.permissions.contains({ permissions: ['clipboardRead', 'clipboardWrite'] })) throw new Error('Grant clipboard access on this device.');
@@ -187,7 +206,7 @@ async function fromTransport(message: Record<string, any>) {
     case 'transport.notice': update({ notice: String(message.message || '') }); break;
     case 'transport.clipboard': update({ remoteClipboardEnabled: message.remoteEnabled === true, ...(message.disabled ? { clipboardEnabled: false } : {}) }); break;
     case 'transport.stats': if (state.connection) update({ connection: { ...state.connection, latencyMs: message.latencyMs } }); break;
-    case 'transport.snapshot': if (state.role === 'guest') { const remote = message.snapshot; update({ tabs: remote.tabs, activeTabId: remote.activeTabId, generation: remote.generation, presentation: remote.presentation, paused: remote.paused, controlEnabled: remote.controlEnabled, remoteClipboardEnabled: remote.clipboardEnabled, status: remote.paused ? 'paused' : 'connected' }); } break;
+    case 'transport.snapshot': if (state.role === 'guest') { const remote = message.snapshot; update({ tabs: remote.tabs, activeTabId: remote.activeTabId, generation: remote.generation, presentation: remote.presentation, paused: remote.paused, controlEnabled: remote.controlEnabled, controlMode: remote.controlMode, controlRevision: remote.controlRevision, remoteClipboardEnabled: remote.clipboardEnabled, status: remote.paused ? 'paused' : 'connected' }); } break;
     case 'transport.command': {
       if (state.role !== 'host' || state.status !== 'connected' || state.paused) return { ok: false, error: 'Remote control is unavailable.' };
       try { await capture.execute(message.command); return { ok: true }; } catch (error) { return { ok: false, error: (error as Error).message }; }

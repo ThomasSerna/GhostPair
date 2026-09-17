@@ -1,6 +1,6 @@
 {
   "name": "ghostpair",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "type": "module",
   "workspaces": [
@@ -19,6 +19,7 @@
     "package": "npm run build && node scripts/package.mjs",
     "test:browser": "node tests/browser/smoke.mjs",
     "test:frames": "node tests/browser/frame-probe.mjs",
+    "test:visual": "node tests/browser/visual-probe.mjs",
     "test:questionnaires": "node tests/browser/questionnaire-probe.mjs"
   },
   "devDependencies": {

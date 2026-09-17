@@ -49,9 +49,10 @@ for (const name of process.argv.slice(2).length ? process.argv.slice(2) : ['chro
             await page.evaluate(() => {
               globalThis.chrome = { runtime: { id: 'fixture', onMessage: { addListener: fn => { globalThis.controller = fn; }, removeListener() {} }, sendMessage: async () => ({}) } };
             });
-            await page.evaluate(`(${installDomControl.toString()})('fixture',1)`);
+            await page.evaluate(`(${installDomControl.toString()})('fixture',1,true,{mode:'live',revision:0,preferences:{notices:false,duration:'persistent',seconds:3}})`);
           }
           const send = command => page.evaluate(command => {
+            command.controlRevision = 0;
             let result;
             controller({ target: 'ghostpair.dom', captureId: 'fixture', generation: 1, operation: 'command', command }, { id: 'fixture' }, value => { result = value; });
             if (!result?.ok) throw new Error(result?.error ?? 'Missing controller result');

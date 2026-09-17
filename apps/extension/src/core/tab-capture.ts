@@ -1,4 +1,4 @@
-import { ControlCommandSchema, PresentationSchema, isSupportedUrl, type ControlCommand, type Presentation, type TabInfo } from '@ghostpair/protocol';
+import { ControlCommandSchema, PresentationSchema, isSupportedUrl, type ControlConfiguration, type Presentation, type TabInfo } from '@ghostpair/protocol';
 import { installDomControl } from './dom-control';
 import { FrameControl } from './frame-control';
 
@@ -19,13 +19,15 @@ export class TabCapture {
   private inputRevision = 0;
   private paused = false;
   private control = true;
+  private configuring = false;
+  private configuration: ControlConfiguration = { mode: 'visual', revision: 0, preferences: { notices: false, duration: 'persistent', seconds: 3 } };
   private tabs: TabInfo[] = [];
   private sources = new Map<number, string>();
   private acquiring = new Map<number, { canceled: boolean }>();
   private presentation?: Presentation;
   private timer?: ReturnType<typeof setTimeout>;
   private serial: Promise<void> = Promise.resolve();
-  private frameControl = new FrameControl(p => this.presentation === p && this.windowId !== undefined && this.activeTabId === p.tabId && this.sources.get(p.tabId) === p.captureId && !this.paused && this.control);
+  private frameControl = new FrameControl(p => this.presentation === p && this.windowId !== undefined && this.activeTabId === p.tabId && this.sources.get(p.tabId) === p.captureId && !this.paused && this.control && !this.configuring);
 
   constructor(private hooks: Hooks) {
     chrome.webNavigation.onBeforeNavigate.addListener(info => {
@@ -42,10 +44,10 @@ export class TabCapture {
     chrome.tabs.onRemoved.addListener((id, info) => { if (info.windowId === this.windowId) void this.release(id); });
     chrome.tabs.onDetached.addListener((id, info) => { if (info.oldWindowId === this.windowId) void this.release(id); });
     chrome.tabs.onAttached.addListener((_id, info) => { if (info.newWindowId === this.windowId) this.schedule(); });
-    chrome.tabs.onZoomChange.addListener(info => { if (info.tabId === this.activeTabId) { this.invalidate(); this.schedule(); } });
+    chrome.tabs.onZoomChange.addListener(info => { if (info.tabId === this.activeTabId) { this.invalidate(true); this.schedule(); } });
     chrome.windows.onBoundsChanged.addListener(window => {
       if (window.id !== this.windowId) return;
-      this.invalidate();
+      this.invalidate(window.state !== 'minimized');
       if (window.state === 'minimized') { this.hooks.error('The shared window was minimized. Start a new session when it is visible.'); this.hooks.detached(); }
       else this.schedule();
     });
@@ -96,14 +98,22 @@ export class TabCapture {
     this.tabs = []; this.activeTabId = undefined; this.publish();
   }
   async setPaused(paused: boolean) { this.paused = paused; this.invalidate(); await this.refresh(); }
-  async setControl(enabled: boolean) { this.control = enabled; if (!enabled) await this.releaseInput(); }
+  async setControl(enabled: boolean) { this.control = enabled; if (!enabled) { this.invalidate(); await this.refresh(); } }
+  async configure(configuration: ControlConfiguration) {
+    this.configuring = true; ++this.inputRevision;
+    this.configuration = configuration;
+    try { await this.frameControl.configure(configuration); }
+    catch (error) { this.invalidate(); throw error; }
+    finally { this.configuring = false; }
+  }
   private releaseInput() {
     ++this.inputRevision;
     return this.frameControl.release();
   }
-  private invalidate() {
+  private invalidate(preserveVisual = false) {
     ++this.inputRevision;
-    void this.frameControl.clear(); this.presentation = undefined; ++this.generation; this.publish();
+    if (preserveVisual) void this.frameControl.release(); else void this.frameControl.clear();
+    this.presentation = undefined; ++this.generation; this.publish();
   }
   private publish() { this.hooks.state(this.tabs, this.activeTabId, this.generation, this.presentation); }
   private schedule() {
@@ -115,7 +125,7 @@ export class TabCapture {
     if (!current || sender.tab?.id !== current.tabId || sender.documentId !== current.documentId || message.captureId !== current.captureId || message.generation !== current.generation) return;
     const parsed = PresentationSchema.safeParse({ ...current, ...message.geometry });
     if (!parsed.success || JSON.stringify(parsed.data) === JSON.stringify(current)) return;
-    this.invalidate(); this.schedule();
+    this.invalidate(true); this.schedule();
   }
   refresh(): Promise<void> {
     const work = this.serial.then(() => this.refreshNow());
@@ -135,7 +145,7 @@ export class TabCapture {
     if (active.status === 'loading') { this.publish(); return; }
     const generation = this.generation;
     try {
-      const injection = (await chrome.scripting.executeScript({ target: { tabId: active.id, frameIds: [0] }, world: 'ISOLATED', func: installDomControl, args: [captureId, generation] }))[0];
+      const injection = (await chrome.scripting.executeScript({ target: { tabId: active.id, frameIds: [0] }, world: 'ISOLATED', func: installDomControl, args: [captureId, generation, true, this.configuration] }))[0];
       if (epoch !== this.epoch || generation !== this.generation || !injection?.documentId || !injection.result || this.sources.get(active.id) !== captureId) return;
       const now = await chrome.tabs.get(active.id);
       if (epoch !== this.epoch || generation !== this.generation || !now.active || now.windowId !== windowId || now.url !== active.url || now.status === 'loading') return;
@@ -153,13 +163,17 @@ export class TabCapture {
   }
   async execute(value: unknown) {
     const command = ControlCommandSchema.parse(value);
+    if (command.controlRevision !== this.configuration.revision) {
+      if (command.type === 'input.release') return;
+      throw new Error('The interaction mode changed. Try the action again.');
+    }
     if (command.type === 'input.release') {
       const p = this.presentation;
       if (p && command.tabId === p.tabId && command.captureId === p.captureId && command.documentId === p.documentId && command.generation === p.generation) await this.releaseInput();
       return;
     }
     const inputRevision = this.inputRevision;
-    if (this.windowId === undefined || this.paused || !this.control) throw new Error('Remote control is unavailable.');
+    if (this.windowId === undefined || this.paused || !this.control || this.configuring) throw new Error('Remote control is unavailable.');
     if (command.type === 'tab.create') {
       if (!isSupportedUrl(command.url)) throw new Error('Only HTTP and HTTPS pages can be opened.');
       await chrome.tabs.create({ windowId: this.windowId, url: command.url, active: true }); return;

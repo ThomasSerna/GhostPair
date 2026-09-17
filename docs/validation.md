@@ -24,6 +24,22 @@ Run a single pairing with `node tests/browser/smoke.mjs chrome:edge`. Override e
 
 The harness loads an unpacked extension using `Extensions.loadUnpacked`, enabled only for the isolated browser process with `--enable-unsafe-extension-debugging`. Inspection runs omit Playwright's opt-in `--enable-automation` argument to inspect the ordinary toolbar; they do not suppress native capture or extension debugging indicators. The capture probe invokes `Extensions.triggerAction` against a browser **tab target** to exercise local extension authorization; it first verifies rejection without invocation. These test APIs are separate from the extension runtime. See [the CDP extension testing API](https://chromedevtools.github.io/devtools-protocol/tot/Extensions/) and [Playwright extension testing](https://playwright.dev/docs/chrome-extensions).
 
+## Visual simulation update: September 17, 2026
+
+Version **0.4.0**, peer protocol **4**. **117 unit tests in 13 files passed**, as did all workspace TypeScript checks and production compilation. Packaging produces Chrome and Edge 0.4.0 ZIPs with the existing permission and bundle checks. Both participants must update; addresses, identities and connection settings remain valid.
+
+`npm run test:visual` runs the production isolated controller on disposable Chrome and Edge fixtures. It verifies that visual clicks, checkbox/radio selections, Unicode editing, selection replacement, multiline text, basic contenteditable and password masking leave original form markup, values, focus, selection and page interaction events unchanged. A trusted-only button remains unactivated. Checks also cover geometry rebinding, clipping/scroll alignment, removed targets, long-text scrolling restricted to the overlay, optional notice duration/throttling, cleanup and rejection of input or installations from an older mode/generation.
+
+The native WebRTC smoke suite passed for **Chrome→Chrome, Edge→Edge and Chrome→Edge**. It checks preview controls and text in received video pixels, confirms unchanged original fields and event counters, and exercises both root documents and cross-origin iframes. Manual clearing preserves the video presentation; temporary previews expire across frames. The existing form, navigation, clipboard-disabled, capture, interruption, reconnect and signaling-loss regressions explicitly select Live control.
+
+The embedded-frame suite passed on both browsers, including virtual focus through nested frames, unchanged real focus/values and previews preserved through browser zoom. Existing frame permissions, replacement, reordering, scaling, cancellation and cleanup cases also passed. The separate Live-control probes passed their DOM checks and **40 questionnaire comparisons**.
+
+The UI inspection produced six screenshots without page errors and exercised the new menu: Visual only is selected initially, notices are initially off, and temporary duration plus notice preferences can be changed. Screenshots of the host and received video were inspected. Reports and images are under `tests/browser/.artifacts`, including `visual-results.json`, `frame-control-results.json`, the smoke report and `visual-*-host.png` / `visual-*-viewer.png`.
+
+An initial Edge integration run exited during startup, before any product assertion. Inspection showed that Edge's compatibility layer successfully exits the bootstrap process and relaunches the browser with the same disposable profile. The harness now waits for that profile's debugging endpoint after a successful bootstrap exit, retains nonzero-exit errors and allows additional bounded cleanup retries. Reruns passed; personal browser profiles are never attached to or changed.
+
+These are controlled fixture results, not a guarantee of visual fidelity for arbitrary custom widgets or advanced editors. Visual only does not bypass trusted-input checks or invent application outcomes. Existing manual permission, native-indicator and multi-computer publication checks remain applicable.
+
 ## Questionnaire control update: September 12, 2026
 
 Version **0.3.0**, peer protocol **3**. **111 unit tests in 13 files passed**, along with TypeScript checking, production compilation and packaging. The production ZIP checks still reject debugger permissions/calls, required test host grants, instrumentation, source maps and environment files. Both participants must update; installation identities and saved settings are preserved.

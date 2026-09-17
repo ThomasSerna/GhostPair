@@ -120,6 +120,14 @@ function Popup() {
         </section>
         {connected && <button className="secondary" disabled={busy} onClick={() => void run(async () => setState(await request('ui.pause', { paused: !state.paused })))}>{state.paused ? 'Resume session' : 'Pause session'}</button>}
         <label className="check"><input type="checkbox" checked={state.controlEnabled} disabled={busy} onChange={e => void run(async () => setState(await request('ui.control', { enabled: e.target.checked })))}/><span>Allow remote control</span></label>
+        <section className="simulation-settings" aria-label="Simulation settings">
+          <label>Interaction mode<select value={state.controlMode} disabled={busy} onChange={e => void run(async () => setState(await request('ui.control.mode', { mode: e.target.value })))}><option value="visual">Visual only</option><option value="live">Live control</option></select></label>
+          <p className="helper">Visual only previews clicks and typing. Scrolling, navigation and tab management remain live.</p>
+          <label>Simulation duration<select value={state.visualPreferences.duration} disabled={busy} onChange={e => void run(async () => setState(await request('ui.visual.preferences', { preferences: { ...state.visualPreferences, duration: e.target.value } })))}><option value="persistent">Until cleared</option><option value="temporary">Temporary</option></select></label>
+          {state.visualPreferences.duration === 'temporary' && <label>Seconds without interaction<input type="number" min={1} max={30} step={1} defaultValue={state.visualPreferences.seconds} key={state.visualPreferences.seconds} disabled={busy} onBlur={e => { const seconds = e.target.valueAsNumber; if (!Number.isInteger(seconds) || seconds < 1 || seconds > 30) { e.target.value = String(state.visualPreferences.seconds); return; } if (seconds !== state.visualPreferences.seconds) void run(async () => setState(await request('ui.visual.preferences', { preferences: { ...state.visualPreferences, seconds } }))); }}/></label>}
+          <label className="check"><input type="checkbox" checked={state.visualPreferences.notices} disabled={busy} onChange={e => void run(async () => setState(await request('ui.visual.preferences', { preferences: { ...state.visualPreferences, notices: e.target.checked } })))}/><span>Simulation notices<small>Briefly label simulated clicks and typing on the shared page.</small></span></label>
+          <button className="secondary" disabled={busy || state.controlMode !== 'visual'} onClick={() => void run(async () => setState(await request('ui.visual.clear')))}>Clear simulation</button>
+        </section>
       </> : <button className="primary" disabled={busy} onClick={openViewer}>Open remote viewer ↗</button>}
       <label className="check"><input type="checkbox" checked={state.clipboardEnabled} disabled={busy} onChange={e => {
         const enabled = e.target.checked;
@@ -141,7 +149,7 @@ function Popup() {
       {state?.deviceId && <p className="saved-id">Your address: <code>{formatDeviceId(state.deviceId)}</code></p>}
     </section>}
     <Notifications state={state} error={error} onError={setError}/>
-    <footer><span className="connection-dot"/>Direct connection · No relay<span>v0.2</span></footer>
+    <footer><span className="connection-dot"/>Direct connection · No relay<span>v0.4</span></footer>
   </main>;
 }
 

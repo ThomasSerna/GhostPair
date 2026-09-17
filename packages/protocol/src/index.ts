@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-export const PROTOCOL_VERSION = 3;
+export const PROTOCOL_VERSION = 4;
 export const MAX_CLIPBOARD_BYTES = 256 * 1024;
 
 export const MAX_SIGNAL_BYTES = 64 * 1024;
@@ -43,6 +43,15 @@ export const SettingsSchema = z.object({
   stunUrls: z.array(z.string().regex(/^stuns?:[^\s]+$/i, 'Only STUN servers are supported.')).min(1).max(5),
 }).strict();
 export type Settings = z.infer<typeof SettingsSchema>;
+export const VisualPreferencesSchema = z.object({
+  notices: z.boolean().default(false),
+  duration: z.enum(['persistent', 'temporary']).default('persistent'),
+  seconds: z.number().int().min(1).max(30).default(3),
+}).strict();
+export type VisualPreferences = z.infer<typeof VisualPreferencesSchema>;
+export const ControlModeSchema = z.enum(['visual', 'live']);
+export type ControlMode = z.infer<typeof ControlModeSchema>;
+export interface ControlConfiguration { mode: ControlMode; revision: number; preferences: VisualPreferences }
 export const PresentationSchema = z.object({
   captureId: z.string().min(1).max(128), tabId: z.number().int().nonnegative(), documentId: z.string().min(1).max(128), generation: z.number().int().nonnegative(),
   viewportWidth: z.number().finite().positive().max(32768), viewportHeight: z.number().finite().positive().max(32768),
@@ -66,6 +75,9 @@ export interface AppState {
   presentation?: Presentation;
   paused: boolean;
   controlEnabled: boolean;
+  controlMode: ControlMode;
+  controlRevision: number;
+  visualPreferences: VisualPreferences;
   clipboardEnabled: boolean;
   remoteClipboardEnabled: boolean;
   tabs: TabInfo[];
@@ -75,7 +87,8 @@ export interface AppState {
   connection?: { direct: boolean; latencyMs?: number; framesPerSecond?: number };
 }
 
-const target = { tabId: z.number().int().min(0), generation: z.number().int().min(0), captureId: z.string().min(1).max(128), documentId: z.string().min(1).max(128) };
+const revision = { controlRevision: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER) };
+const target = { ...revision, tabId: z.number().int().min(0), generation: z.number().int().min(0), captureId: z.string().min(1).max(128), documentId: z.string().min(1).max(128) };
 const coords = { x: z.number().finite().min(0).max(32768), y: z.number().finite().min(0).max(32768) };
 export const ControlCommandSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('input.release'), ...target }).strict(),
@@ -83,9 +96,9 @@ export const ControlCommandSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('wheel'), ...target, ...coords, deltaX: z.number().finite().min(-10000).max(10000), deltaY: z.number().finite().min(-10000).max(10000), modifiers: z.number().int().min(0).max(15).default(0) }).strict(),
   z.object({ type: z.literal('key'), ...target, event: z.enum(['down', 'up']), key: z.string().max(64), code: z.string().max(64), keyCode: z.number().int().min(0).max(65535), modifiers: z.number().int().min(0).max(15).default(0), repeat: z.boolean().default(false) }).strict(),
   z.object({ type: z.literal('text'), ...target, text: z.string().max(MAX_CLIPBOARD_BYTES) }).strict(),
-  z.object({ type: z.literal('tab.create'), url: z.string().max(8192) }).strict(),
-  z.object({ type: z.literal('tab.activate'), tabId: z.number().int().min(0) }).strict(),
-  z.object({ type: z.literal('tab.close'), tabId: z.number().int().min(0) }).strict(),
+  z.object({ type: z.literal('tab.create'), ...revision, url: z.string().max(8192) }).strict(),
+  z.object({ type: z.literal('tab.activate'), ...revision, tabId: z.number().int().min(0) }).strict(),
+  z.object({ type: z.literal('tab.close'), ...revision, tabId: z.number().int().min(0) }).strict(),
   z.object({ type: z.literal('navigate'), ...target, url: z.string().max(8192) }).strict(),
   z.object({ type: z.literal('history'), ...target, direction: z.enum(['back', 'forward']) }).strict(),
   z.object({ type: z.literal('reload'), ...target }).strict(),

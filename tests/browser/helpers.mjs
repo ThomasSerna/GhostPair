@@ -13,7 +13,7 @@ export async function removeTestArtifact(profile) {
   const target = resolve(profile);
   const within = relative(artifactRoot, target);
   if (!within || within.startsWith('..') || isAbsolute(within)) throw new Error('Refusing to delete a profile outside the test artifact directory.');
-  await rm(target, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+  await rm(target, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
 }
 
 export async function closeBrowser(launched) {
@@ -51,8 +51,10 @@ export async function launchExtension(name, extensionPath, { nativeVisibility = 
     try {
       const port = await poll(async () => {
         if (launchError) throw launchError;
-        if (nativeProcess.exitCode !== null) throw new Error('Isolated browser exited before CDP was available.');
         const text = await readFile(resolve(profile, 'DevToolsActivePort'), 'utf8').catch(() => '');
+        // Edge can relaunch itself through its compatibility layer, exiting the
+        // bootstrap process successfully before the replacement writes this file.
+        if (!text && nativeProcess.exitCode !== null && nativeProcess.exitCode !== 0) throw new Error(`Isolated browser exited before CDP was available (${nativeProcess.exitCode}).`);
         return Number(text.split('\n')[0]) || false;
       }, 'isolated native browser endpoint');
       const browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`, { noDefaults: true });

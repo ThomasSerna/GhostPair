@@ -7,6 +7,7 @@ import { launchExtension, closeBrowser, removeTestArtifact, poll, resizePage, ar
 import { startStun } from './stun.mjs';
 import { questionnaireHtml } from './questionnaire-fixture.mjs';
 import { questionnaireWorkflow } from './questionnaire-workflow.mjs';
+import { visualWorkflow } from './visual-workflow.mjs';
 
 const fixture = httpServer((request, response) => {
   response.setHeader('Content-Type', 'text/html; charset=utf-8');
@@ -78,6 +79,13 @@ try {
       assert.equal((await state(viewer)).notification, undefined);
       await join(viewer, waiting.deviceId, 'Eight-42');
       await waitState(viewer, s => s.status === 'connected', 'direct session connected'); await videoReady(viewer);
+      assert.equal((await state(viewer)).controlMode, 'visual');
+      for (const embedded of [false, true]) {
+        await page.goto(`${base}/${embedded ? 'questionnaire-frame' : 'questionnaire'}`);
+        await visualWorkflow(page, viewer, hostUi, call, () => videoReady(viewer, page.url()), { embedded, pair });
+      }
+      await call(hostUi, 'ui.control.mode', { mode: 'live' });
+      await waitState(viewer, s => s.controlMode === 'live', 'live mode');
       for (const embedded of [false, true]) {
         await page.goto(`${base}/${embedded ? 'questionnaire-frame' : 'questionnaire'}`);
         await questionnaireWorkflow(page, viewer, () => videoReady(viewer, page.url()), { embedded });
@@ -117,10 +125,10 @@ try {
       const second = await poll(() => host.context.pages().find(p => p.url() === `${base}/two`), 'new host page');
       await authorize(host, second); await call(hostUi, 'ui.host.authorize'); await videoReady(viewer);
       await click(second, viewer, '#target'); await poll(() => second.evaluate(() => window.clicks === 1), 'second authorized tab');
-      await call(viewer, 'ui.command', { command: { type: 'tab.activate', tabId: original.tabId } }); await videoReady(viewer, page.url());
+      await call(viewer, 'ui.command', { command: { controlRevision: (await state(viewer)).controlRevision, type: 'tab.activate', tabId: original.tabId } }); await videoReady(viewer, page.url());
       await click(page, viewer, '#target'); await poll(() => page.evaluate(() => window.clicks === 3), 'return to first authorized tab');
       const secondId = pending.tabs.find(t => t.url === `${base}/two`).id;
-      await call(viewer, 'ui.command', { command: { type: 'tab.activate', tabId: secondId } }); await videoReady(viewer, second.url());
+      await call(viewer, 'ui.command', { command: { controlRevision: (await state(viewer)).controlRevision, type: 'tab.activate', tabId: secondId } }); await videoReady(viewer, second.url());
       await call(hostUi, 'ui.host.release', { tabId: original.tabId });
       await poll(async () => !(await host.worker.evaluate(() => chrome.tabCapture.getCapturedTabs())).some(t => t.tabId === original.tabId && ['active', 'pending'].includes(t.status)), 'released inactive source');
       await second.goto(`http://localhost:${fixture.address().port}/cross-origin`); await videoReady(viewer);
@@ -139,6 +147,8 @@ try {
         await join(viewer, next.deviceId, 'Eight-42');
         await waitState(viewer, s => s.status === 'connected', 'guest reconnected');
         await videoReady(viewer, second.url());
+        await call(hostUi, 'ui.control.mode', { mode: 'live' });
+        await waitState(viewer, s => s.controlMode === 'live', 'live mode restored');
       };
       await call(hostUi, 'ui.stop'); await reconnect();
       await viewer.getByRole('button', { name: 'Disconnect', exact: true }).click(); await reconnect();

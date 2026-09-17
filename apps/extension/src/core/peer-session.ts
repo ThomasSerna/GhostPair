@@ -1,11 +1,12 @@
 import { z } from 'zod';
-import { ControlCommandSchema, PresentationSchema, MediaSignalSchema, SettingsSchema, ServerSignalMessageSchema, isRelaySignal, validateSignalingUrl, PROTOCOL_VERSION, MAX_CLIPBOARD_BYTES, type ControlCommand, type Settings, type SignalPayload, type Presentation, type MediaSignal } from '@ghostpair/protocol';
+import { ControlModeSchema, ControlCommandSchema, PresentationSchema, MediaSignalSchema, SettingsSchema, ServerSignalMessageSchema, isRelaySignal, validateSignalingUrl, PROTOCOL_VERSION, MAX_CLIPBOARD_BYTES, type ControlCommand, type Settings, type SignalPayload, type Presentation, type MediaSignal } from '@ghostpair/protocol';
 import { MediaSession } from './media-session';
 import { ClipboardSync, type ClipboardAdapter, type ClipboardUpdate } from './clipboard';
 
 
 type Role = 'host' | 'guest';
 export const SnapshotSchema = z.object({
+  controlMode: ControlModeSchema, controlRevision: z.number().int().nonnegative(),
   presentation: PresentationSchema.optional(), paused: z.boolean(), controlEnabled: z.boolean(), clipboardEnabled: z.boolean(),
   activeTabId: z.number().int().nonnegative().optional(), generation: z.number().int().nonnegative(),
   tabs: z.array(z.object({ id: z.number().int().nonnegative(), title: z.string().max(4096), url: z.string().max(8192), active: z.boolean(), supported: z.boolean(), authorized: z.boolean().optional(), captureState: z.enum(['pending', 'ready', 'unavailable']).optional() }).strict()).max(500),
@@ -211,6 +212,10 @@ async function receiveControl(value: unknown) {
       break;
     case 'command': {
       if (role !== 'host' || paused) return;
+      if (latestSnapshot && message.command.controlRevision !== latestSnapshot.controlRevision) {
+        if (message.requestId) sendPeer({ type: 'command.result', requestId: message.requestId, ok: false, error: 'The interaction mode changed.' });
+        return;
+      }
       if (Date.now() - commandWindow >= 1000) { commandWindow = Date.now(); commandsPerSecond = 0; }
       if (message.command.type !== 'input.release' && ++commandsPerSecond > 250) { fail('The participant exceeded the input rate limit. Start a new session.'); return; }
       const current = epoch, revision = inputRevision;
@@ -261,7 +266,7 @@ function attachChannel(channel: RTCDataChannel, current: number) {
       }
       const p = latestSnapshot?.presentation;
       const cancels = connected && greeted && role === 'host' && command?.type === 'input.release' && p &&
-        command.tabId === p.tabId && command.captureId === p.captureId && command.documentId === p.documentId && command.generation === p.generation;
+        command.tabId === p.tabId && command.captureId === p.captureId && command.documentId === p.documentId && command.generation === p.generation && command.controlRevision === latestSnapshot?.controlRevision;
       if ((connected && greeted && message?.type === 'stop') || cancels) {
         ++inputRevision;
         // Cancel in-flight host input immediately, without waiting behind a slow route.
@@ -405,7 +410,7 @@ async function onMessage(message: Record<string, any>) {
     case 'session.state': {
       if (role !== 'host' || !connected) break;
       const snapshot = SnapshotSchema.parse(message.snapshot);
-      if (snapshot.paused || !snapshot.controlEnabled || JSON.stringify(snapshot.presentation) !== JSON.stringify(latestSnapshot?.presentation)) ++inputRevision;
+      if (snapshot.controlRevision !== latestSnapshot?.controlRevision || snapshot.paused || !snapshot.controlEnabled || JSON.stringify(snapshot.presentation) !== JSON.stringify(latestSnapshot?.presentation)) ++inputRevision;
       paused = snapshot.paused; latestSnapshot = snapshot;
       sendPeer({ type: 'snapshot', snapshot }); syncClipboard();
       const key = JSON.stringify([snapshot.generation, snapshot.presentation, snapshot.paused]);

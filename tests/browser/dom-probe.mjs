@@ -37,6 +37,7 @@ const results = [];
 const controlSource = `(${installDomControl.toString()})`;
 
 async function send(page, command, { generation = 1, operation = 'command', sender = { id: 'synthetic-extension' }, targetCaptureId = captureId } = {}) {
+  if (command) command = { ...command, controlRevision: 0 };
   return page.evaluate(({ command, generation, operation, sender, captureId }) => {
     let response;
     for (const listener of globalThis.runtimeProbe.listeners) listener({ target: 'ghostpair.dom', captureId, generation, operation, command }, sender, value => { response = value; });
@@ -85,7 +86,7 @@ try {
           sendMessage: async message => { runtimeProbe.sent.push(message); },
         } };
       });
-      await page.addScriptTag({ content: `globalThis.installedGeometry = ${controlSource}('synthetic-capture', 1);` });
+      await page.addScriptTag({ content: `globalThis.installedGeometry = ${controlSource}('synthetic-capture', 1, true, {mode:'live',revision:0,preferences:{notices:false,duration:'persistent',seconds:3}});` });
       assert.deepEqual(await page.evaluate(() => globalThis.installedGeometry), { viewportWidth: 1000, viewportHeight: 760, offsetLeft: 0, offsetTop: 0, scale: 1 });
 
       await click(page, '#button span');
@@ -138,7 +139,7 @@ try {
 
       const beforeRelease = await page.evaluate(() => probe.releases);
       await execute(page, { type: 'pointer', ...button, event: 'down', button: 'left', buttons: 1, modifiers: 0, clickCount: 1 });
-      await page.addScriptTag({ content: `${controlSource}('synthetic-capture', 2);` });
+      await page.addScriptTag({ content: `${controlSource}('synthetic-capture', 2, true, {mode:'live',revision:0,preferences:{notices:false,duration:'persistent',seconds:3}});` });
       assert.equal(await page.evaluate(() => runtimeProbe.listeners.size), 1, 'reinstallation updates rather than duplicates the listener');
       assert.equal(await page.evaluate(() => probe.releases), beforeRelease + 1, 'generation transition releases a held pointer');
       await click(page, '#button', { generation: 2 });

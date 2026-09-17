@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 const capture = vi.hoisted(() => ({
   start: vi.fn(async (_windowId: number) => {}), stop: vi.fn(async () => {}),
   authorize: vi.fn(async (_tabId: number) => {}), release: vi.fn(async (_tabId: number) => {}),
-  setControl: vi.fn(async () => {}), setPaused: vi.fn(async () => {}), execute: vi.fn(async () => {}), geometry: vi.fn(),
+  configure: vi.fn(async () => {}), setControl: vi.fn(async () => {}), setPaused: vi.fn(async () => {}), execute: vi.fn(async () => {}), geometry: vi.fn(),
 }));
 vi.mock('./core/tab-capture', () => ({ TabCapture: class { constructor() { return capture; } } }));
 
@@ -17,10 +17,9 @@ function event() {
   return { addListener, emit: (...args: any[]) => { for (const [listener] of addListener.mock.calls) listener(...args); } };
 }
 async function settled() { for (let i = 0; i < 35; i++) await Promise.resolve(); }
-async function harness() {
+async function harness(stored: Record<string, unknown> = {}) {
   vi.resetModules(); vi.clearAllMocks();
   capture.stop.mockImplementation(async () => {}); capture.start.mockImplementation(async () => {}); capture.authorize.mockImplementation(async () => {});
-  const stored: Record<string, unknown> = {};
   const registered = { deviceId: 'a'.repeat(32), ownerToken: 'b'.repeat(64) };
   const runtime = {
     id: 'test-extension', getURL: (path: string) => `chrome-extension://test-extension/${path}`,
@@ -57,11 +56,28 @@ async function harness() {
   };
   await send('ui.status');
   const hasOffscreenMessage = (type: string) => runtime.sendMessage.mock.calls.some(([message]) => message.type === type);
-  return { browser, runtime, send, connectViewer, registered, hasOffscreenMessage };
+  return { stored, browser, runtime, send, connectViewer, registered, hasOffscreenMessage };
 }
 afterEach(() => vi.unstubAllGlobals());
 
 describe('background connection ownership and settings', () => {
+  it('persists preview preferences independently and starts each new session in visual mode', async () => {
+    const h = await harness();
+    expect((await h.send('ui.status')).state).toMatchObject({ controlMode: 'visual', visualPreferences: { notices: false, duration: 'persistent', seconds: 3 } });
+    await h.send('ui.host.start', { password: 'Eight-42' });
+    const preferences = { notices: true, duration: 'temporary', seconds: 12 };
+    const saved = await h.send('ui.visual.preferences', { preferences });
+    expect(saved.state.status).toBe('starting');
+    expect(saved.state.visualPreferences).toEqual(preferences);
+    const mode = await h.send('ui.control.mode', { mode: 'live' });
+    expect(mode.state).toMatchObject({ controlMode: 'live', controlRevision: 1 });
+    expect(capture.configure).toHaveBeenLastCalledWith({ mode: 'live', revision: 1, preferences });
+    const cleared = await h.send('ui.visual.clear'); expect(cleared.state.controlRevision).toBe(2);
+    await h.send('ui.stop');
+    expect((await h.send('ui.status')).state).toMatchObject({ controlMode: 'visual', controlRevision: 0, visualPreferences: preferences });
+    await h.send('ui.settings.reset'); expect(h.stored.visualPreferences).toEqual(preferences);
+    const restarted = await harness(h.stored); expect((await restarted.send('ui.status')).state.visualPreferences).toEqual(preferences);
+  });
   it('preserves manual settings until build defaults are explicitly restored', async () => {
     const h = await harness(); const defaults = (await h.send('ui.status')).state.settings;
     const settings = { signalingUrl: 'https://signal.example.com', stunUrls: ['stun:example.com:3478'] };
@@ -145,7 +161,7 @@ describe('background cancellation', () => {
       else queueMicrotask(() => port.onMessage.emit({ type: 'transport.reply', requestId: message.requestId, reply: { ok: true } }));
     });
     let commandComplete = false;
-    const command = h.send('ui.command', { command: { type: 'tab.create', url: 'https://example.com' } }, 'viewer').then(result => { commandComplete = true; return result; });
+    const command = h.send('ui.command', { command: { type: 'tab.create', controlRevision: 0, url: 'https://example.com' } }, 'viewer').then(result => { commandComplete = true; return result; });
     await settled(); expect(commandRequest).toBeDefined(); const stopped = await h.send('ui.stop');
     expect(stopped.state.status).toBe('idle'); expect(commandComplete).toBe(false);
     port.onMessage.emit({ type: 'transport.reply', requestId: commandRequest.requestId, reply: { ok: true } }); await command;

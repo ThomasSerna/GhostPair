@@ -57,6 +57,7 @@ try {
       await call(menu, 'ui.settings.save', { settings }); await call(viewer, 'ui.settings.save', { settings });
       const page = await host.context.newPage(); await page.goto(base); await authorize(host, page);
       const start = await call(menu, 'ui.host.start', { password: 'Frames-42', clipboard: false }); assert.notEqual(start.status, 'error');
+      await call(menu, 'ui.control.mode', { mode: 'live' });
       const waiting = await poll(async () => { const s = await call(menu, 'ui.status'); return s.status === 'waiting' && s; }, 'host waiting');
       await viewer.getByLabel('Host address', { exact: true }).fill(waiting.deviceId);
       await viewer.getByLabel('Session password', { exact: true }).fill('Frames-42');
@@ -67,7 +68,7 @@ try {
         return s.status === 'connected' && s.presentation && Number(playing) === s.generation && s;
       }, 'current frame video', 30000);
       await ready();
-      const command = async fields => { const s = await call(viewer, 'ui.status'); assert.ok(s.presentation); await call(viewer, 'ui.command', { command: { tabId: s.presentation.tabId, generation: s.generation, captureId: s.presentation.captureId, documentId: s.presentation.documentId, ...fields } }); };
+      const command = async fields => { const s = await call(viewer, 'ui.status'); assert.ok(s.presentation); await call(viewer, 'ui.command', { command: { controlRevision: s.controlRevision, tabId: s.presentation.tabId, generation: s.generation, captureId: s.presentation.captureId, documentId: s.presentation.documentId, ...fields } }); };
       const point = async locator => { const box = await locator.boundingBox(); assert.ok(box); return { x: box.x + box.width / 2, y: box.y + box.height / 2 }; };
       const pointer = async (locator, event, extra = {}) => command({ type: 'pointer', ...await point(locator), event, button: 'left', buttons: event === 'up' ? 0 : 1, modifiers: 0, clickCount: 1, ...extra });
       const click = async (locator, extra) => { await pointer(locator, 'down', extra); await pointer(locator, 'up', extra); };
@@ -127,6 +128,24 @@ try {
       await pointer(b.locator('#button'), 'down'); await call(menu, 'ui.pause', { paused: true });
       await call(menu, 'ui.pause', { paused: false }); await ready();
       await click(b.locator('#button')); assert.equal(await count(b.locator('#button')), 3);
+      // Visual focus must follow the nested route even though real focus stays in b.
+      await call(menu, 'ui.control.mode', { mode: 'visual' });
+      await poll(async () => (await call(viewer, 'ui.status')).controlMode === 'visual', 'visual mode received');
+      const originalNested = await nested.locator('#text').inputValue();
+      const originalFocus = await page.evaluate(() => document.activeElement.id);
+      await click(nested.locator('#text')); await command({ type: 'text', text: ' — visual only' });
+      assert.equal(await nested.locator('#text').inputValue(), originalNested);
+      assert.equal(await page.evaluate(() => document.activeElement.id), originalFocus);
+      assert.equal(await nested.locator('[data-ghostpair-visual]').count(), 1);
+      const visualGeneration = (await call(viewer, 'ui.status')).generation;
+      await host.worker.evaluate(tabId => chrome.tabs.setZoom(tabId, 1.1), waiting.presentation.tabId);
+      await poll(async () => (await call(viewer, 'ui.status')).generation > visualGeneration, 'visual zoom generation'); await ready();
+      await command({ type: 'text', text: ' after zoom' });
+      assert.equal(await nested.locator('#text').inputValue(), originalNested);
+      assert.equal(await nested.locator('[data-ghostpair-visual]').count(), 1, 'nested previews survive geometry-only rebind');
+      await viewer.screenshot({ path: resolve(artifactRoot, `frames-visual-${name}.png`) });
+      await call(menu, 'ui.visual.clear');
+      assert.equal(await nested.locator('[data-ghostpair-visual]').count(), 0);
       const visual = await host.worker.evaluate(async () => ({ badge: await chrome.action.getBadgeText({}), title: await chrome.action.getTitle({}), capture: (await chrome.tabCapture.getCapturedTabs()).some(t => t.status === 'active') }));
       assert.deepEqual(visual, { badge: '', title: 'GhostPair', capture: true });
       await viewer.screenshot({ path: resolve(artifactRoot, `frames-${name}.png`) });
@@ -137,7 +156,7 @@ try {
         return Promise.all(frames.filter(frame => /^https?:/.test(frame.url)).map(async frame => (await chrome.scripting.executeScript({ target: { tabId, documentIds: [frame.documentId] }, world: 'ISOLATED', func: () => Boolean(globalThis.__ghostpairControl) }))[0].result));
       }, waiting.presentation.tabId);
       assert.ok(controllers.every(value => value === false), 'all document controllers disposed');
-      results.push({ browser: name, version: host.version, isolatedWorlds: true, crossOriginSiblings: true, nested: true, canvas: true, scaledBorders: true, dynamic: true, navigationAndReordering: true, nativeVideo: true, badge: '', passed: true });
+      results.push({ browser: name, version: host.version, isolatedWorlds: true, crossOriginSiblings: true, nested: true, visualNestedFocus: true, visualZoom: true, canvas: true, scaledBorders: true, dynamic: true, navigationAndReordering: true, nativeVideo: true, badge: '', passed: true });
       console.log(JSON.stringify(results.at(-1)));
     } finally { await signal?.close(); await closeBrowser(guest); await closeBrowser(host); }
   }

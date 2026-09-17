@@ -11,7 +11,7 @@ it('rejects stale generations and untrusted senders before touching the document
   vi.stubGlobal('chrome', { runtime: { id: 'extension', onMessage: { addListener: (value: any) => { listener = value; }, removeListener: vi.fn() } } });
   expect(installDomControl('capture', 3).viewportWidth).toBe(800);
   const respond = vi.fn();
-  const message = { target: 'ghostpair.dom', captureId: 'capture', generation: 2, command: { type: 'pointer', event: 'down', x: 1, y: 1 } };
+  const message = { target: 'ghostpair.dom', captureId: 'capture', generation: 2, command: { type: 'pointer', controlRevision: 0, event: 'down', x: 1, y: 1 } };
   listener(message, { id: 'extension' }, respond);
   expect(respond).toHaveBeenCalledWith({ ok: false, error: expect.stringContaining('changed') });
   respond.mockClear(); listener({ ...message, generation: 3 }, { id: 'another-extension' }, respond);

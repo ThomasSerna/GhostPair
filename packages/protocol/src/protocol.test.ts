@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { PasswordSchema, ClientSignalMessageSchema, ControlCommandSchema, ClipboardUpdateSchema, isRelaySignal, isSupportedUrl, validateSignalingUrl } from './index';
+import { VisualPreferencesSchema, PasswordSchema, ClientSignalMessageSchema, ControlCommandSchema, ClipboardUpdateSchema, isRelaySignal, isSupportedUrl, validateSignalingUrl } from './index';
 describe('network boundaries', () => {
+  it('defaults to silent persistent previews and bounds their configurable lifetime', () => {
+    expect(VisualPreferencesSchema.parse({})).toEqual({ notices: false, duration: 'persistent', seconds: 3 });
+    for (const seconds of [0, 1.5, 31, Infinity]) expect(VisualPreferencesSchema.safeParse({ seconds }).success).toBe(false);
+    expect(ControlCommandSchema.safeParse({ type: 'tab.create', url: 'https://example.com' }).success).toBe(false);
+  });
   it('accepts passwords of 8 through 256 characters in both roles', () => {
     for (const length of [7, 8, 12, 256, 257]) {
       const password = 'x'.repeat(length);
@@ -12,13 +17,13 @@ describe('network boundaries', () => {
   });
   it('accepts only specific control operations and finite coordinates', () => {
     expect(ControlCommandSchema.safeParse({ type: 'Runtime.evaluate', expression: 'alert(1)' }).success).toBe(false);
-    expect(ControlCommandSchema.safeParse({ type: 'pointer', event: 'down', x: Infinity, y: 0, tabId: 1, generation: 1 }).success).toBe(false);
-    expect(ControlCommandSchema.safeParse({ type: 'tab.create', url: 'https://example.com', extra: true }).success).toBe(false);
+    expect(ControlCommandSchema.safeParse({ type: 'pointer', controlRevision: 0, event: 'down', x: Infinity, y: 0, tabId: 1, generation: 1 }).success).toBe(false);
+    expect(ControlCommandSchema.safeParse({ type: 'tab.create', controlRevision: 0, url: 'https://example.com', extra: true }).success).toBe(false);
   });
   it('requires a complete document-scoped release command', () => {
-    const release = { type: 'input.release', tabId: 1, captureId: 'capture', documentId: 'document', generation: 3 };
+    const release = { type: 'input.release', controlRevision: 0, tabId: 1, captureId: 'capture', documentId: 'document', generation: 3 };
     expect(ControlCommandSchema.safeParse(release).success).toBe(true);
-    expect(ControlCommandSchema.safeParse({ type: 'input.release', tabId: 1 }).success).toBe(false);
+    expect(ControlCommandSchema.safeParse({ type: 'input.release', controlRevision: 0, tabId: 1 }).success).toBe(false);
     expect(ControlCommandSchema.safeParse({ ...release, x: 0 }).success).toBe(false);
   });
   it('enforces UTF-8 clipboard size, not just code unit count', () => {

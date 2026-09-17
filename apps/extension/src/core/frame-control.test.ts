@@ -33,11 +33,50 @@ function harness() {
   vi.stubGlobal('chrome', { webNavigation: navigation, tabs: { sendMessage }, scripting });
   let usable = true;
   const control = new FrameControl(() => usable);
-  const input = (type = 'pointer', extras: object = {}): any => type === 'pointer' ? { ...p, type, event: 'down', x: 450, y: 175, button: 'left', buttons: 1, modifiers: 0, clickCount: 1, ...extras } : { ...p, type, text: 'hello', ...extras };
-  const key = (event: 'down' | 'up', extras: object = {}): Extract<ControlCommand, { type: 'key' }> => ({ ...p, type: 'key', event, key: 'Shift', code: 'ShiftLeft', keyCode: 16, modifiers: 8, repeat: false, ...extras });
+  const input = (type = 'pointer', extras: object = {}): any => type === 'pointer' ? { ...p, controlRevision: 0, type, event: 'down', x: 450, y: 175, button: 'left', buttons: 1, modifiers: 0, clickCount: 1, ...extras } : { ...p, controlRevision: 0, type, text: 'hello', ...extras };
+  const key = (event: 'down' | 'up', extras: object = {}): Extract<ControlCommand, { type: 'key' }> => ({ ...p, type: 'key', controlRevision: 0, event, key: 'Shift', code: 'ShiftLeft', keyCode: 16, modifiers: 8, repeat: false, ...extras });
+  const live = { mode: 'live' as const, revision: 0, preferences: { notices: false, duration: 'persistent' as const, seconds: 3 } };
+  void control.configure(live);
   return { control, topology, frame, routes, indices, operations, committed, sendMessage, scripting, navigation, input, key, disable: () => { usable = false; } };
 }
 afterEach(() => vi.unstubAllGlobals());
+
+it('cancels an in-flight route and queued or delayed input before changing mode', async () => {
+  const h = harness(); await h.control.bind(p); h.routes.clear();
+  const gate = deferred<any>(), entered = deferred<void>(), original = h.sendMessage.getMockImplementation()!;
+  h.sendMessage.mockImplementation(async (...args) => {
+    if (args[1].operation === 'prepare' && args[1].controlRevision === 0) { entered.resolve(); return gate.promise; }
+    return original(...args);
+  });
+  const first = h.control.execute(h.input()).catch(error => error);
+  await entered.promise;
+  const queued = h.control.execute(h.input('text')).catch(error => error);
+  await h.control.configure({ mode: 'visual', revision: 1, preferences: { notices: false, duration: 'persistent', seconds: 3 } });
+  gate.resolve({ ok: true, token: 'old' });
+  expect(await first).toBeInstanceOf(Error); expect(await queued).toBeInstanceOf(Error);
+  await expect(h.control.execute(h.input('text'))).rejects.toThrow('mode changed');
+  expect(h.committed).toEqual([]);
+  await h.control.execute({ ...h.input('text'), controlRevision: 1 }); expect(h.committed).toHaveLength(1);
+  expect(h.committed[0]!.command.controlRevision).toBe(1);
+});
+
+it('tracks virtual iframe focus and expires the entire preview after inactivity', async () => {
+  vi.useFakeTimers();
+  try {
+    const h = harness(); await h.control.bind(p);
+    await h.control.configure({ mode: 'visual', revision: 1, preferences: { notices: true, duration: 'temporary', seconds: 2 } });
+    const original = h.sendMessage.getMockImplementation()!;
+    h.sendMessage.mockImplementation(async (...args) => ({ ...await original(...args), ...(args[1].operation === 'commit' ? { visualActivity: 'click' } : {}) }));
+    await h.control.execute({ ...h.input(), controlRevision: 1 });
+    expect(h.operations.filter(e => e.message.operation === 'virtual.focus').map(e => e.id)).toEqual(['root', 'b']);
+    expect(h.operations.filter(e => e.message.operation === 'visual.notice').map(e => e.id)).toEqual(['root']);
+    await vi.advanceTimersByTimeAsync(1500);
+    await h.control.execute({ ...h.input('text'), controlRevision: 1 });
+    await vi.advanceTimersByTimeAsync(1500); expect(h.operations.some(e => e.message.operation === 'visual.clear')).toBe(false);
+    await vi.advanceTimersByTimeAsync(500); expect(h.operations.filter(e => e.message.operation === 'visual.clear')).toHaveLength(4);
+    await h.control.clear(); expect(vi.getTimerCount()).toBe(0);
+  } finally { vi.useRealTimers(); }
+});
 
 it('routes identical-URL siblings and nested documents by browser identities and window indices', async () => {
   const h = harness(); await h.control.bind(p); await h.control.execute(h.input());

@@ -1,12 +1,17 @@
-import type { ControlCommand } from '@ghostpair/protocol';
+import type { ControlCommand, ControlConfiguration } from '@ghostpair/protocol';
 
 /** Self-contained: Chrome serializes this function into the page's ISOLATED world. */
-export function installDomControl(captureId: string, generation: number, root = true) {
-  type Context = { captureId: string; generation: number; ready: boolean; geometry: string; dispose: () => void; release: () => void };
+export function installDomControl(captureId: string, generation: number, root = true, configuration: ControlConfiguration = { mode: 'visual', revision: 0, preferences: { notices: false, duration: 'persistent', seconds: 3 } }) {
+  type Context = { captureId: string; generation: number; ready: boolean; geometry: string; dispose: () => void; release: () => void; configure: (value: ControlConfiguration) => void };
   const scope = globalThis as typeof globalThis & { __ghostpairControl?: Context };
   const geometry = () => ({ viewportWidth: innerWidth, viewportHeight: innerHeight, offsetLeft: visualViewport?.offsetLeft ?? 0, offsetTop: visualViewport?.offsetTop ?? 0, scale: visualViewport?.scale ?? 1 });
   if (scope.__ghostpairControl) {
+    if (scope.__ghostpairControl.captureId !== captureId) scope.__ghostpairControl.dispose();
+  }
+  if (scope.__ghostpairControl) {
+    if (scope.__ghostpairControl.captureId === captureId && scope.__ghostpairControl.generation > generation) throw new Error('The shared page changed. Wait for the current view.');
     scope.__ghostpairControl.release();
+    scope.__ghostpairControl.configure(configuration);
     scope.__ghostpairControl.captureId = captureId;
     scope.__ghostpairControl.generation = generation;
     scope.__ghostpairControl.ready = true;
@@ -19,8 +24,226 @@ export function installDomControl(captureId: string, generation: number, root = 
   const keys = new Map<string, { element: Element | null; fields: KeyboardEventInit; space?: boolean }>();
   type Prepared = { token: string; command: ControlCommand; element: Element | null; child?: { index: number; x?: number; y?: number }; childWindow?: Window | null };
   let prepared: Prepared | undefined;
-  const context: Context = { captureId, generation, ready: true, geometry: JSON.stringify(geometry()), dispose, release };
+  const context: Context = { captureId, generation, ready: true, geometry: JSON.stringify(geometry()), dispose, release, configure };
   scope.__ghostpairControl = context;
+
+  // All preview data and nodes belong to the extension, never to a page control.
+  type Preview = { node: HTMLDivElement; cursor?: HTMLSpanElement; value?: string; anchor: number; caret: number; checked?: boolean; until?: number };
+  const previews = new Map<HTMLElement, Preview>();
+  let virtualFocus: Element | null = null;
+  let visualDown: Element | null = null;
+  let visualButton = 'left';
+  const visualKeys = new Map<string, Element | null>();
+  let layer: HTMLDivElement | undefined, shadow: ShadowRoot | undefined, focusMark: HTMLDivElement | undefined, notice: HTMLDivElement | undefined;
+  let drawing: number | undefined, drawnAt = 0, noticeUntil = 0, lastNotice = -Infinity;
+  const halos: { node: HTMLDivElement; x: number; y: number; until: number }[] = [];
+
+  function configure(value: ControlConfiguration) {
+    if (value.revision < configuration.revision) throw new Error('The interaction mode changed.');
+    if (value.revision !== configuration.revision || value.mode !== configuration.mode) { release(); clearVisual(); }
+    configuration = value;
+    if (!value.preferences.notices) { notice?.remove(); notice = undefined; noticeUntil = 0; }
+  }
+  function ensureLayer() {
+    if (layer) { if (!layer.isConnected) document.documentElement.append(layer); return; }
+    layer = document.createElement('div');
+    layer.dataset.ghostpairVisual = '';
+    layer.setAttribute('aria-hidden', 'true');
+    layer.style.cssText = 'all:initial!important;position:fixed!important;inset:0!important;width:100vw!important;height:100vh!important;z-index:2147483647!important;pointer-events:none!important;overflow:hidden!important;contain:strict!important;';
+    shadow = layer.attachShadow({ mode: 'closed' });
+    const style = document.createElement('style');
+    style.textContent = ':host{pointer-events:none!important}*{box-sizing:border-box;pointer-events:none!important;user-select:none}div{position:absolute;margin:0}';
+    shadow.append(style);
+    document.documentElement.append(layer);
+  }
+  function node() { ensureLayer(); const result = document.createElement('div'); shadow!.append(result); return result; }
+  function scheduleDraw() { if (drawing === undefined) drawing = requestAnimationFrame(draw); }
+  function clearVisual() {
+    if (drawing !== undefined) cancelAnimationFrame(drawing);
+    drawing = undefined; layer?.remove(); layer = undefined; shadow = undefined; focusMark = undefined; notice = undefined;
+    previews.clear(); halos.length = 0; virtualFocus = null; visualDown = null; visualKeys.clear(); noticeUntil = 0; lastNotice = -Infinity;
+  }
+  function rectStyle(element: HTMLElement, overlay: HTMLDivElement) {
+    const box = element.getBoundingClientRect(), style = getComputedStyle(element);
+    let left = Math.max(0, box.left), top = Math.max(0, box.top), right = Math.min(innerWidth, box.right), bottom = Math.min(innerHeight, box.bottom);
+    let visible = element.getClientRects().length > 0 && style.visibility !== 'hidden' && style.display !== 'none' && Number(style.opacity) !== 0;
+    for (let ancestor = parent(element); ancestor; ancestor = parent(ancestor)) {
+      const css = getComputedStyle(ancestor), clip = ancestor.getBoundingClientRect();
+      if (css.visibility === 'hidden' || Number(css.opacity) === 0) visible = false;
+      if (/(auto|scroll|hidden|clip)/.test(css.overflowX)) { left = Math.max(left, clip.left); right = Math.min(right, clip.right); }
+      if (/(auto|scroll|hidden|clip)/.test(css.overflowY)) { top = Math.max(top, clip.top); bottom = Math.min(bottom, clip.bottom); }
+    }
+    Object.assign(overlay.style, { left: `${box.left}px`, top: `${box.top}px`, width: `${box.width}px`, height: `${box.height}px`, display: visible && right > left && bottom > top ? 'block' : 'none', clipPath: `inset(${Math.max(0, top - box.top)}px ${Math.max(0, box.right - right)}px ${Math.max(0, box.bottom - bottom)}px ${Math.max(0, left - box.left)}px)` });
+    return { box, style };
+  }
+  function draw(time: number) {
+    drawing = undefined;
+    if (!layer) return;
+    if (time - drawnAt < 32) { scheduleDraw(); return; }
+    drawnAt = time; ensureLayer();
+    if (virtualFocus && !virtualFocus.isConnected) virtualFocus = null;
+    for (const [element, preview] of previews) {
+      if (!element.isConnected || preview.until !== undefined && time >= preview.until) { preview.node.remove(); previews.delete(element); continue; }
+      const { box, style } = rectStyle(element, preview.node);
+      if (preview.value !== undefined) {
+        const scale = element.offsetWidth ? box.width / element.offsetWidth : 1;
+        Object.assign(preview.node.style, { background: style.backgroundColor === 'rgba(0, 0, 0, 0)' ? '#fff' : style.backgroundColor, color: style.color, border: `${style.borderTopWidth} ${style.borderTopStyle} ${style.borderTopColor}`, borderRadius: style.borderRadius, padding: style.padding, font: style.font, fontSize: `${parseFloat(style.fontSize) * scale}px`, lineHeight: style.lineHeight, letterSpacing: style.letterSpacing, textAlign: style.textAlign, direction: style.direction, whiteSpace: element instanceof HTMLInputElement ? 'pre' : 'pre-wrap', overflowWrap: 'anywhere', overflow: 'hidden' });
+        // Scroll only the extension's text surface, never the real field/page.
+        if (preview.cursor && virtualFocus === element) {
+          const cursor = preview.cursor.getBoundingClientRect(), inset = 4;
+          if (cursor.right > box.right - inset) preview.node.scrollLeft += cursor.right - box.right + inset;
+          else if (cursor.left < box.left + inset) preview.node.scrollLeft -= box.left + inset - cursor.left;
+          if (cursor.bottom > box.bottom - inset) preview.node.scrollTop += cursor.bottom - box.bottom + inset;
+          else if (cursor.top < box.top + inset) preview.node.scrollTop -= box.top + inset - cursor.top;
+        }
+      }
+    }
+    const paintFocus = virtualFocus instanceof HTMLElement && !(virtualFocus instanceof HTMLIFrameElement || virtualFocus instanceof HTMLFrameElement) && !disabled(virtualFocus);
+    if (paintFocus && virtualFocus instanceof HTMLElement) {
+      focusMark ??= node(); rectStyle(virtualFocus, focusMark);
+      Object.assign(focusMark.style, { border: '2px solid #7871e8', borderRadius: '3px', background: 'transparent' });
+    } else { focusMark?.remove(); focusMark = undefined; }
+    for (let i = halos.length - 1; i >= 0; i--) {
+      const halo = halos[i]!;
+      if (time >= halo.until) { halo.node.remove(); halos.splice(i, 1); }
+      else { const progress = 1 - (halo.until - time) / 500; halo.node.style.transform = `scale(${0.6 + progress * 0.7})`; halo.node.style.opacity = String(1 - progress); }
+    }
+    if (notice && time >= noticeUntil) { notice.remove(); notice = undefined; }
+    if (previews.size || paintFocus || halos.length || notice) scheduleDraw();
+    else { layer.remove(); layer = undefined; shadow = undefined; }
+  }
+  function showNotice(kind: string) {
+    const now = performance.now();
+    if (!root || !configuration.preferences.notices || now - lastNotice < 3000 || !['click', 'typing'].includes(kind)) return;
+    notice ??= node(); notice.textContent = kind === 'typing' ? 'Simulated typing' : 'Simulated click';
+    notice.style.cssText = 'position:fixed;right:12px;bottom:12px;max-width:220px;padding:5px 8px;border-radius:5px;background:rgba(30,30,38,.82);color:#fff;font:11px/14px system-ui;white-space:nowrap;';
+    noticeUntil = now + 1500; lastNotice = now; scheduleDraw();
+  }
+  function halo(x: number, y: number) {
+    const dot = node(); dot.style.cssText = `left:${x - 15}px;top:${y - 15}px;width:30px;height:30px;border:2px solid #7871e8;border-radius:50%;background:rgba(120,113,232,.12);`;
+    halos.push({ node: dot, x, y, until: performance.now() + 500 }); scheduleDraw();
+  }
+  function previewFor(element: HTMLElement) {
+    let preview = previews.get(element);
+    if (!preview) {
+      if (previews.size >= 256) throw new Error('Clear the simulation before adding more fields.');
+      preview = { node: node(), anchor: 0, caret: 0 }; previews.set(element, preview);
+    }
+    scheduleDraw(); return preview;
+  }
+  function textPreview(element: HTMLElement) {
+    const preview = previewFor(element);
+    if (preview.value === undefined) { preview.value = editable(element) ? element.value : element.innerText; preview.anchor = preview.caret = preview.value.length; }
+    return preview;
+  }
+  function paintText(element: HTMLElement, preview: Preview) {
+    const value = preview.value ?? '', start = Math.min(preview.anchor, preview.caret), end = Math.max(preview.anchor, preview.caret);
+    const masked = element instanceof HTMLInputElement && element.type === 'password';
+    const display = (text: string) => masked ? '•'.repeat(Array.from(text).length) : text;
+    const selection = document.createElement('span'); selection.textContent = display(value.slice(start, end)); selection.style.cssText = 'background:#c9c5ff;color:inherit';
+    const caret = document.createElement('span'); caret.style.cssText = 'border-left:1px solid currentColor;height:1em';
+    preview.cursor = element === virtualFocus ? caret : undefined;
+    preview.node.replaceChildren(document.createTextNode(display(value.slice(0, start))),
+      ...(preview.cursor && preview.caret === start ? [caret] : []), ...(start !== end ? [selection] : []),
+      ...(preview.cursor && preview.caret !== start ? [caret] : []), document.createTextNode(display(value.slice(end))));
+  }
+  function semantic(element: Element | null): HTMLElement | null {
+    for (let current = element; current; current = parent(current)) {
+      if (current instanceof HTMLLabelElement && current.control) return current.control;
+      if (current instanceof HTMLElement && (current.matches('input,textarea,button,select,a[href],[tabindex],[role="button"],[role="checkbox"],[role="radio"]') || current.hasAttribute('contenteditable') && current.isContentEditable)) return current;
+    }
+    return null;
+  }
+  function setVirtualFocus(element: Element | null) {
+    const previous = virtualFocus;
+    virtualFocus = element && !disabled(element) ? element : null;
+    if (previous instanceof HTMLElement && previous !== virtualFocus) { const preview = previews.get(previous); if (preview?.value !== undefined) paintText(previous, preview); }
+    if (virtualFocus instanceof HTMLElement && (editable(virtualFocus) || virtualFocus.isContentEditable)) paintText(virtualFocus, textPreview(virtualFocus));
+    if (virtualFocus && !(virtualFocus instanceof HTMLIFrameElement || virtualFocus instanceof HTMLFrameElement)) { ensureLayer(); scheduleDraw(); }
+  }
+  function markChecked(element: HTMLElement, checked: boolean, radio: boolean) {
+    const preview = previewFor(element); preview.checked = checked;
+    preview.node.textContent = checked ? radio ? '●' : '✓' : '';
+    preview.node.style.cssText = `border:1px solid #7871e8;border-radius:${radio ? '50%' : '3px'};background:#fff;color:#635bcd;font:bold 14px/1 system-ui;text-align:center;overflow:hidden;`;
+  }
+  function activateVisual(element: HTMLElement) {
+    if (disabled(element)) return;
+    const radio = element instanceof HTMLInputElement && element.type === 'radio';
+    const checkbox = element instanceof HTMLInputElement && element.type === 'checkbox';
+    if (radio || checkbox) {
+      if (radio && element.name) for (const other of (element.getRootNode() as Document | ShadowRoot).querySelectorAll<HTMLInputElement>('input[type="radio"]')) {
+        if (other !== element && other.name === element.name && other.form === element.form) markChecked(other, false, true);
+      }
+      markChecked(element, radio || !(previews.get(element)?.checked ?? element.checked), radio);
+    } else if (element.matches('[role="checkbox"],[role="radio"]')) {
+      const isRadio = element.getAttribute('role') === 'radio';
+      markChecked(element, isRadio || !(previews.get(element)?.checked ?? element.getAttribute('aria-checked') === 'true'), isRadio);
+    } else if (element.matches('button,a[href],input[type="button"],input[type="submit"],input[type="reset"],[role="button"]')) {
+      const preview = previewFor(element); preview.until = performance.now() + 180;
+      preview.node.style.cssText = 'background:rgba(120,113,232,.22);border:2px solid #7871e8;border-radius:4px;';
+    }
+  }
+  function insertVisual(text: string) {
+    const element = virtualFocus;
+    if (!(element instanceof HTMLElement) || !(editable(element) || element.isContentEditable)) return;
+    if (disabled(element) || editable(element) && element.readOnly) return;
+    const preview = textPreview(element), value = preview.value!;
+    const start = Math.min(preview.anchor, preview.caret), end = Math.max(preview.anchor, preview.caret);
+    const next = value.slice(0, start) + text + value.slice(end);
+    if (new TextEncoder().encode(next).length > 256 * 1024) throw new Error('Simulated text exceeds the limit.');
+    preview.value = next; preview.anchor = preview.caret = start + text.length; paintText(element, preview); return 'typing';
+  }
+  function executeVisual(command: ControlCommand): string | undefined {
+    if (command.type === 'pointer') {
+      if (command.event === 'move') return;
+      const hit = targetAt(command.x, command.y);
+      if (command.event === 'down') { visualDown = hit; visualButton = command.button; setVirtualFocus(semantic(hit)); return 'focus'; }
+      const clicked = hit && visualButton === command.button ? commonAncestor(visualDown, hit) : null; visualDown = null;
+      if (!hit || !clicked) return;
+      halo(command.x, command.y);
+      const element = semantic(clicked);
+      if (element && command.button === 'left') activateVisual(element);
+      return 'click';
+    }
+    if (command.type === 'text') { if (command.text === ' ' && spaceActivates(virtualFocus)) return; return insertVisual(command.text); }
+    if (command.type !== 'key') return;
+    const element = virtualFocus;
+    if (command.event === 'up') {
+      const held = visualKeys.get(command.code); visualKeys.delete(command.code);
+      if (command.key === ' ' && held === element && spaceActivates(element) && !disabled(element)) { activateVisual(element); return 'click'; }
+      return;
+    }
+    if (!visualKeys.has(command.code)) visualKeys.set(command.code, element);
+    if (command.key === 'Tab') {
+      const tree = (element?.getRootNode() ?? document) as Document | ShadowRoot;
+      const elements = Array.from(tree.querySelectorAll<HTMLElement>('a[href],button,input,textarea,select,[tabindex],[contenteditable]:not([contenteditable="false"])')).filter(e => e.tabIndex >= 0 && !disabled(e) && e.getClientRects().length > 0);
+      const index = elements.indexOf(element as HTMLElement); setVirtualFocus(elements[(index + (command.modifiers & 8 ? -1 : 1) + elements.length) % elements.length] ?? null); return 'focus';
+    }
+    if (!(element instanceof HTMLElement) || disabled(element)) return;
+    if (element instanceof HTMLInputElement && element.type === 'radio' && command.key.startsWith('Arrow')) {
+      const radios = Array.from((element.getRootNode() as Document | ShadowRoot).querySelectorAll<HTMLInputElement>('input[type="radio"]')).filter(e => (e === element || Boolean(element.name) && e.name === element.name && e.form === element.form) && !disabled(e) && e.getClientRects().length > 0);
+      const next = radios[(radios.indexOf(element) + (['ArrowLeft', 'ArrowUp'].includes(command.key) ? -1 : 1) + radios.length) % radios.length];
+      if (next) { setVirtualFocus(next); activateVisual(next); return 'click'; } return;
+    }
+    if (!(editable(element) || element.isContentEditable)) { if (command.key === 'Enter') { activateVisual(element); return 'click'; } return; }
+    const preview = textPreview(element), value = preview.value!;
+    if (command.modifiers & 6 && command.key.toLowerCase() === 'a') { preview.anchor = 0; preview.caret = value.length; paintText(element, preview); return 'focus'; }
+    if (command.modifiers & 7) return;
+    if (command.key === 'Backspace' || command.key === 'Delete') {
+      if (preview.anchor === preview.caret) {
+        if (command.key === 'Backspace') preview.anchor -= Array.from(value.slice(0, preview.caret)).at(-1)?.length ?? 0;
+        else preview.caret += Array.from(value.slice(preview.caret))[0]?.length ?? 0;
+      }
+      return insertVisual('');
+    }
+    if (command.key === 'Enter') return element instanceof HTMLInputElement ? undefined : insertVisual('\n');
+    if (['ArrowLeft', 'ArrowRight', 'Home', 'End', 'ArrowUp', 'ArrowDown'].includes(command.key)) {
+      const start = Math.min(preview.anchor, preview.caret), end = Math.max(preview.anchor, preview.caret), shift = Boolean(command.modifiers & 8);
+      const left = command.key === 'ArrowLeft', right = command.key === 'ArrowRight';
+      const position = left ? !shift && start !== end ? start : Math.max(0, preview.caret - (Array.from(value.slice(0, preview.caret)).at(-1)?.length ?? 0)) : right ? !shift && start !== end ? end : preview.caret + (Array.from(value.slice(preview.caret))[0]?.length ?? 0) : ['Home', 'ArrowUp'].includes(command.key) ? 0 : value.length;
+      preview.caret = position; if (!shift) preview.anchor = position; paintText(element, preview); return 'focus';
+    }
+  }
 
   function targetAt(x: number, y: number): Element | null {
     let element = document.elementFromPoint(x, y);
@@ -32,6 +255,7 @@ export function installDomControl(captureId: string, generation: number, root = 
     return element;
   }
   function focused(): Element | null {
+    if (configuration.mode === 'visual') return virtualFocus?.isConnected ? virtualFocus : null;
     let element = document.activeElement;
     while (element?.shadowRoot?.activeElement) element = element.shadowRoot.activeElement;
     return element;
@@ -152,6 +376,7 @@ export function installDomControl(captureId: string, generation: number, root = 
   }
   function release() {
     prepared = undefined;
+    visualDown = null; visualKeys.clear();
     if (down) {
       down.dispatchEvent(new PointerEvent('pointercancel', { ...downFields, cancelable: false, buttons: 0, pointerId: 1, pointerType: 'mouse' }));
     }
@@ -161,6 +386,8 @@ export function installDomControl(captureId: string, generation: number, root = 
     keys.clear();
   }
   function execute(command: ControlCommand) {
+    if (command.controlRevision !== configuration.revision) throw new Error('The interaction mode changed.');
+    if (configuration.mode === 'visual' && command.type !== 'wheel') return executeVisual(command);
     if (command.type === 'pointer') {
       const element = targetAt(command.x, command.y);
       if (!element) { if (command.event === 'up') release(); return; }
@@ -255,9 +482,14 @@ export function installDomControl(captureId: string, generation: number, root = 
     if (sender.id !== chrome.runtime.id || sender.tab || message?.target !== 'ghostpair.dom' || message.captureId !== context.captureId) return;
     try {
       if (message.generation !== undefined && message.generation !== context.generation) throw new Error('The shared page changed. Wait for the current view.');
+      if (message.operation === 'configure') { configure(message.configuration); respond({ ok: true }); return; }
+      if (message.controlRevision !== undefined && message.controlRevision !== configuration.revision) throw new Error('The interaction mode changed.');
       if (message.operation === 'dispose') { dispose(); respond({ ok: true }); return; }
       if (message.operation === 'release') { release(); respond({ ok: true }); return; }
+      if (message.operation === 'visual.clear') { release(); clearVisual(); respond({ ok: true }); return; }
       if (!context.ready || message.generation !== context.generation) throw new Error('The shared page changed. Wait for the current view.');
+      if (message.operation === 'visual.notice') { showNotice(message.kind); respond({ ok: true }); return; }
+      if (message.operation === 'virtual.focus') { const pending = verify(message.token); setVirtualFocus(pending.element); respond({ ok: true }); return; }
       if (message.operation === 'describe') { respond({ ok: true, index: root ? -1 : frameIndex(window.parent, window), ...geometry() }); return; }
       if (message.operation === 'prepare') { respond({ ok: true, ...prepare(message.command) }); return; }
       if (message.operation === 'verify') { verify(message.token); respond({ ok: true }); return; }
@@ -272,10 +504,10 @@ export function installDomControl(captureId: string, generation: number, root = 
         }
         const pending = verify(message.token); prepared = undefined;
         if (pending.child) throw new Error('The embedded page is not ready for control.');
-        execute(pending.command); respond({ ok: true }); return;
+        const visualActivity = execute(pending.command); respond({ ok: true, visualActivity }); return;
       }
       if (message.operation !== 'command') throw new Error('Unknown page control operation.');
-      execute(message.command); respond({ ok: true });
+      const visualActivity = execute(message.command); respond({ ok: true, visualActivity });
     } catch (error) { respond({ ok: false, error: (error as Error).message }); }
   };
   function changed() {
@@ -287,7 +519,7 @@ export function installDomControl(captureId: string, generation: number, root = 
     }
   }
   function dispose() {
-    release(); chrome.runtime.onMessage.removeListener(listener);
+    release(); clearVisual(); chrome.runtime.onMessage.removeListener(listener);
     window.removeEventListener('resize', changed); visualViewport?.removeEventListener('resize', changed); visualViewport?.removeEventListener('scroll', changed);
     delete scope.__ghostpairControl;
   }

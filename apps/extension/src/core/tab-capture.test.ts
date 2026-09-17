@@ -55,15 +55,15 @@ describe('TabCapture authorization and scoped control', () => {
   it('releases current input without activation and ignores old release targets', async () => {
     const h = harness(); await h.share();
     const original = h.target();
-    await h.capture.execute({ type: 'input.release', ...original });
+    await h.capture.execute({ type: 'input.release', controlRevision: 0, ...original });
     expect(h.browser.tabs.sendMessage.mock.calls.some(([, message]) => message.operation === 'release')).toBe(true);
     expect(h.commands()).toHaveLength(0);
     h.browser.tabs.onZoomChange.emit({ tabId: 12 }); await h.capture.refresh();
     h.browser.tabs.sendMessage.mockClear();
-    await h.capture.execute({ type: 'input.release', ...original });
+    await h.capture.execute({ type: 'input.release', controlRevision: 0, ...original });
     expect(h.browser.tabs.sendMessage).not.toHaveBeenCalled();
-    await h.capture.execute({ type: 'input.release', ...h.target() });
-    await h.capture.execute({ type: 'input.release', ...h.target() });
+    await h.capture.execute({ type: 'input.release', controlRevision: 0, ...h.target() });
+    await h.capture.execute({ type: 'input.release', controlRevision: 0, ...h.target() });
     expect(h.commands()).toHaveLength(0);
     await h.capture.stop();
   });
@@ -72,10 +72,10 @@ describe('TabCapture authorization and scoped control', () => {
     const h = harness(); h.add(13); await h.share();
     expect(h.browser.tabCapture.getMediaStreamId).toHaveBeenCalledExactlyOnceWith({ targetTabId: 12 });
     expect(h.hooks.acquire).toHaveBeenCalledExactlyOnceWith(12, h.current()!.captureId, 'stream-12');
-    expect(h.browser.scripting.executeScript).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ target: { tabId: 12, frameIds: [0] }, world: 'ISOLATED', args: [h.current()!.captureId, h.current()!.generation] }));
+    expect(h.browser.scripting.executeScript).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ target: { tabId: 12, frameIds: [0] }, world: 'ISOLATED', args: [h.current()!.captureId, h.current()!.generation, true, expect.objectContaining({ mode: 'visual' })] }));
     expect(h.current()).toMatchObject({ tabId: 12, documentId: 'document-one', ...h.geometry });
     expect(h.hooks.state.mock.lastCall![0].find(tab => tab.id === 13)).toMatchObject({ authorized: false, captureState: 'pending' });
-    await h.capture.execute({ type: 'text', ...h.target(), text: '日本語 🐈' });
+    await h.capture.execute({ type: 'text', controlRevision: 0, ...h.target(), text: '日本語 🐈' });
     expect(h.commands()[0]).toEqual([12, expect.objectContaining({ operation: 'prepare', captureId: h.current()!.captureId, generation: h.current()!.generation, command: expect.objectContaining({ text: '日本語 🐈' }) }), { documentId: 'document-one' }]);
     await h.capture.authorize(12); expect(h.browser.tabCapture.getMediaStreamId).toHaveBeenCalledTimes(1); await h.capture.stop();
   });
@@ -91,14 +91,14 @@ describe('TabCapture authorization and scoped control', () => {
 
   it('requires local authorization for a remotely opened tab and retains the shared window scope', async () => {
     const h = harness(); await h.share();
-    await h.capture.execute({ type: 'tab.create', url: 'https://other.example.com' });
+    await h.capture.execute({ type: 'tab.create', controlRevision: 0, url: 'https://other.example.com' });
     expect(h.browser.tabs.create).toHaveBeenCalledWith({ windowId: 4, url: 'https://other.example.com', active: true });
     h.add(13); h.activate(13); await h.capture.refresh();
     expect(h.current()).toBeUndefined(); expect(h.hooks.state.mock.lastCall![0].find(tab => tab.id === 13)).toMatchObject({ authorized: false, captureState: 'pending' });
     expect(h.browser.tabCapture.getMediaStreamId).toHaveBeenCalledTimes(1);
     h.add(14, { windowId: 7 });
-    await expect(h.capture.execute({ type: 'tab.activate', tabId: 14 })).rejects.toThrow('outside the shared session');
-    await expect(h.capture.execute({ type: 'tab.close', tabId: 14 })).rejects.toThrow('outside the shared session');
+    await expect(h.capture.execute({ type: 'tab.activate', controlRevision: 0, tabId: 14 })).rejects.toThrow('outside the shared session');
+    await expect(h.capture.execute({ type: 'tab.close', controlRevision: 0, tabId: 14 })).rejects.toThrow('outside the shared session');
     expect(h.browser.tabs.remove).not.toHaveBeenCalled(); await h.capture.stop();
   });
 
@@ -116,10 +116,10 @@ describe('TabCapture authorization and scoped control', () => {
   it('rejects input from another document, capture, generation, or viewport', async () => {
     const h = harness(); await h.share(); const target = h.target();
     for (const overrides of [{ documentId: 'old-document' }, { captureId: 'another-capture' }, { generation: target.generation - 1 }]) {
-      await expect(h.capture.execute({ type: 'text', ...target, ...overrides, text: 'stale' })).rejects.toThrow('shared page changed');
+      await expect(h.capture.execute({ type: 'text', controlRevision: 0, ...target, ...overrides, text: 'stale' })).rejects.toThrow('shared page changed');
     }
-    await expect(h.capture.execute({ type: 'pointer', ...target, event: 'down', x: 1281, y: 2 })).rejects.toThrow('outside the shared viewport');
-    await expect(h.capture.execute({ type: 'navigate', ...target, url: 'javascript:alert(1)' })).rejects.toThrow('HTTP and HTTPS');
+    await expect(h.capture.execute({ type: 'pointer', controlRevision: 0, ...target, event: 'down', x: 1281, y: 2 })).rejects.toThrow('outside the shared viewport');
+    await expect(h.capture.execute({ type: 'navigate', controlRevision: 0, ...target, url: 'javascript:alert(1)' })).rejects.toThrow('HTTP and HTTPS');
     expect(h.commands()).toHaveLength(0); await h.capture.stop();
   });
 
@@ -128,10 +128,10 @@ describe('TabCapture authorization and scoped control', () => {
     Object.assign(h.tabs.get(12), { status: 'loading', url: 'https://second.example.com' });
     h.browser.tabs.onUpdated.emit(12, { status: 'loading', url: 'https://second.example.com' }, h.tabs.get(12));
     expect(h.current()).toBeUndefined();
-    await expect(h.capture.execute({ type: 'text', ...old, text: 'old' })).rejects.toThrow('shared page changed');
+    await expect(h.capture.execute({ type: 'text', controlRevision: 0, ...old, text: 'old' })).rejects.toThrow('shared page changed');
     h.tabs.get(12).status = 'complete'; h.document('document-two'); await h.capture.refresh();
     expect(h.current()!.generation).toBeGreaterThan(old.generation); expect(h.current()!.documentId).toBe('document-two');
-    await h.capture.execute({ type: 'text', ...h.target(), text: 'new' });
+    await h.capture.execute({ type: 'text', controlRevision: 0, ...h.target(), text: 'new' });
     expect(h.commands()).toHaveLength(1); expect(h.commands()[0][2]).toEqual({ documentId: 'document-two' });
     expect(h.browser.tabCapture.getMediaStreamId).toHaveBeenCalledTimes(1); await h.capture.stop();
   });
@@ -142,7 +142,7 @@ describe('TabCapture authorization and scoped control', () => {
     h.browser.webNavigation.onBeforeNavigate.emit({ tabId: 12, frameId: 9 });
     h.browser.tabs.onUpdated.emit(12, { status: 'loading' }, h.tabs.get(12));
     await h.capture.refresh(); expect(h.current()).toBe(original);
-    await h.capture.execute({ type: 'text', ...h.target(), text: 'still usable' });
+    await h.capture.execute({ type: 'text', controlRevision: 0, ...h.target(), text: 'still usable' });
     h.browser.webNavigation.onBeforeNavigate.emit({ tabId: 12, frameId: 0 });
     expect(h.current()).toBeUndefined(); await h.capture.stop();
   });
@@ -150,9 +150,22 @@ describe('TabCapture authorization and scoped control', () => {
   it('rejects a pending action if control is withdrawn and restored while resolving its tab', async () => {
     const h = harness(); await h.share(); const waiting = deferred<any>();
     h.browser.tabs.get.mockReturnValueOnce(waiting.promise);
-    const operation = h.capture.execute({ type: 'text', ...h.target(), text: 'stale' });
+    const operation = h.capture.execute({ type: 'text', controlRevision: 0, ...h.target(), text: 'stale' });
     await h.capture.setControl(false); await h.capture.setControl(true); waiting.resolve(h.tabs.get(12));
     await expect(operation).rejects.toThrow('outside'); expect(h.commands()).toHaveLength(0); await h.capture.stop();
+  });
+
+  it('changes interaction modes without changing presentation and rejects stale input or navigation', async () => {
+    const h = harness(); await h.share(); const presentation = h.current(), target = h.target();
+    const waiting = deferred<any>(); h.browser.tabs.get.mockReturnValueOnce(waiting.promise);
+    const pending = h.capture.execute({ type: 'text', controlRevision: 0, ...target, text: 'old preview' });
+    await h.capture.configure({ mode: 'live', revision: 1, preferences: { notices: false, duration: 'persistent', seconds: 3 } });
+    waiting.resolve(h.tabs.get(12)); await expect(pending).rejects.toThrow('outside');
+    expect(h.current()).toBe(presentation); expect(h.commands()).toHaveLength(0);
+    await expect(h.capture.execute({ type: 'text', ...target, controlRevision: 0, text: 'late' })).rejects.toThrow('mode changed');
+    await expect(h.capture.execute({ type: 'tab.close', tabId: 12, controlRevision: 0 })).rejects.toThrow('mode changed');
+    await h.capture.execute({ type: 'text', ...target, controlRevision: 1, text: 'current' }); expect(h.commands()).toHaveLength(1);
+    await h.capture.stop();
   });
 
   it('authenticates geometry reports and blocks old coordinates immediately on resize and zoom', async () => {
@@ -161,19 +174,19 @@ describe('TabCapture authorization and scoped control', () => {
     h.capture.geometry(message, { tab: h.tabs.get(12), documentId: 'wrong' }); expect(h.target()).toEqual(old);
     h.geometry.viewportWidth = 800; h.capture.geometry(message, { tab: h.tabs.get(12), documentId: old.documentId });
     expect(h.current()).toBeUndefined();
-    await expect(h.capture.execute({ type: 'text', ...old, text: 'old' })).rejects.toThrow('shared page changed');
+    await expect(h.capture.execute({ type: 'text', controlRevision: 0, ...old, text: 'old' })).rejects.toThrow('shared page changed');
     await h.capture.refresh(); const resized = h.target(); expect(resized.generation).toBeGreaterThan(old.generation);
     h.browser.tabs.onZoomChange.emit({ tabId: 12, newZoomFactor: 1.25 }); expect(h.current()).toBeUndefined();
-    await expect(h.capture.execute({ type: 'text', ...resized, text: 'old' })).rejects.toThrow('shared page changed'); await h.capture.stop();
+    await expect(h.capture.execute({ type: 'text', controlRevision: 0, ...resized, text: 'old' })).rejects.toThrow('shared page changed'); await h.capture.stop();
   });
 
   it('releases input before pause/control revocation and rejects subsequent commands', async () => {
     const h = harness(); await h.share(); const old = h.target();
     await h.capture.setControl(false);
-    expect(h.browser.tabs.sendMessage).toHaveBeenCalledWith(12, { target: 'ghostpair.dom', operation: 'release', captureId: old.captureId, generation: old.generation }, { documentId: old.documentId });
-    await expect(h.capture.execute({ type: 'text', ...old, text: 'blocked' })).rejects.toThrow('unavailable');
+    expect(h.browser.tabs.sendMessage).toHaveBeenCalledWith(12, { target: 'ghostpair.dom', operation: 'release', controlRevision: 0, captureId: old.captureId, generation: old.generation }, { documentId: old.documentId });
+    await expect(h.capture.execute({ type: 'text', controlRevision: 0, ...old, text: 'blocked' })).rejects.toThrow('unavailable');
     await h.capture.setControl(true); await h.capture.setPaused(true); expect(h.current()).toBeUndefined();
-    await expect(h.capture.execute({ type: 'tab.create', url: 'https://example.com' })).rejects.toThrow('unavailable');
+    await expect(h.capture.execute({ type: 'tab.create', controlRevision: 0, url: 'https://example.com' })).rejects.toThrow('unavailable');
     await h.capture.setPaused(false); expect(h.current()!.generation).toBeGreaterThan(old.generation); await h.capture.stop();
   });
 
@@ -191,7 +204,7 @@ describe('TabCapture authorization and scoped control', () => {
     const h = harness(); await h.share(); const old = h.target();
     h.tabs.get(12).windowId = 7; h.browser.tabs.onDetached.emit(12, { oldWindowId: 4 }); await settled();
     expect(h.current()).toBeUndefined(); expect(h.hooks.release).toHaveBeenCalledWith(old.captureId);
-    await expect(h.capture.execute({ type: 'tab.close', tabId: 12 })).rejects.toThrow('outside the shared session'); await h.capture.stop();
+    await expect(h.capture.execute({ type: 'tab.close', controlRevision: 0, tabId: 12 })).rejects.toThrow('outside the shared session'); await h.capture.stop();
   });
 
   it('does not consume an expired startup after Stop while the stream id is pending', async () => {

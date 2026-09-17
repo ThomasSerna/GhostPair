@@ -50,7 +50,7 @@ class Peer {
 const id = 'a'.repeat(32);
 const presentation = { tabId: 1, captureId: 'capture', documentId: 'document', generation: 3, viewportWidth: 800, viewportHeight: 600, offsetLeft: 0, offsetTop: 0, scale: 1 };
 const target = { tabId: 1, captureId: 'capture', documentId: 'document', generation: 3 };
-const snapshot = { presentation, generation: 3, activeTabId: 1, tabs: [], paused: false, controlEnabled: true, clipboardEnabled: false };
+const snapshot = { controlMode: 'live', controlRevision: 0, presentation, generation: 3, activeTabId: 1, tabs: [], paused: false, controlEnabled: true, clipboardEnabled: false };
 function harness() {
   const notify = vi.fn(), dispatch = vi.fn(async (_message: any): Promise<any> => ({ ok: true }));
   const session = createPeerSession(notify, dispatch, { read: async () => '', write: async () => {} });
@@ -98,7 +98,7 @@ describe('peer session lifetime', () => {
   it('does not acknowledge a completed old command on a new connection', async () => {
     const h = harness(), first = await h.start(); await first.greet(); first.pc.connect(); await settled();
     const reply = deferred<any>(); h.dispatch.mockReturnValueOnce(reply.promise);
-    first.control.receive({ type: 'command', requestId: 'old-command', command: { type: 'tab.create', url: 'https://example.com' } }); await settled();
+    first.control.receive({ type: 'command', requestId: 'old-command', command: { type: 'tab.create', controlRevision: 0, url: 'https://example.com' } }); await settled();
     expect(h.dispatch).toHaveBeenCalled();
     const second = await h.start('c'.repeat(32)); await second.greet(); second.pc.connect(); await settled();
     reply.resolve({ ok: true }); await settled();
@@ -110,11 +110,11 @@ describe('peer session lifetime', () => {
     const h = harness(), first = await h.start(); await first.greet(); first.pc.connect(); await settled();
     await h.session.handle({ type: 'session.state', snapshot });
     const slow = deferred<any>(); h.dispatch.mockReturnValueOnce(slow.promise);
-    first.control.receive({ type: 'command', command: { type: 'text', ...target, text: 'in flight' } }); await settled();
-    first.control.receive({ type: 'command', requestId: 'canceled', command: { type: 'text', ...target, text: 'queued' } });
-    first.control.receive({ type: 'command', command: { type: 'input.release', ...target } }); await settled();
+    first.control.receive({ type: 'command', command: { type: 'text', controlRevision: 0, ...target, text: 'in flight' } }); await settled();
+    first.control.receive({ type: 'command', requestId: 'canceled', command: { type: 'text', controlRevision: 0, ...target, text: 'queued' } });
+    first.control.receive({ type: 'command', command: { type: 'input.release', controlRevision: 0, ...target } }); await settled();
     expect(h.dispatch.mock.calls.map(([message]) => message.command.type)).toEqual(['text', 'input.release']);
-    first.control.receive({ type: 'command', command: { type: 'text', ...target, text: 'after release' } });
+    first.control.receive({ type: 'command', command: { type: 'text', controlRevision: 0, ...target, text: 'after release' } });
     slow.resolve({ ok: false }); await settled();
     expect(h.dispatch.mock.calls.map(([message]) => message.command.text).filter(Boolean)).toEqual(['in flight', 'after release']);
     expect(first.control.send.mock.calls.map(([value]) => JSON.parse(value))).toContainEqual({ type: 'command.result', requestId: 'canceled', ok: false, error: 'The input was canceled.' });
@@ -124,8 +124,8 @@ describe('peer session lifetime', () => {
   it('does not let an old release cancel commands for the current presentation', async () => {
     const h = harness(), first = await h.start(); await first.greet(); first.pc.connect(); await settled();
     await h.session.handle({ type: 'session.state', snapshot });
-    first.control.receive({ type: 'command', command: { type: 'text', ...target, text: 'current' } });
-    first.control.receive({ type: 'command', command: { type: 'input.release', ...target, generation: 2 } });
+    first.control.receive({ type: 'command', command: { type: 'text', controlRevision: 0, ...target, text: 'current' } });
+    first.control.receive({ type: 'command', command: { type: 'input.release', controlRevision: 0, ...target, generation: 2 } });
     await settled();
     expect(h.dispatch.mock.calls[0][0].command.text).toBe('current');
     h.session.stop();
@@ -134,19 +134,19 @@ describe('peer session lifetime', () => {
   it('ends the session instead of silently dropping a discrete command at the rate limit', async () => {
     const h = harness(), first = await h.start(); await first.greet(); first.pc.connect(); await settled();
     for (let i = 0; i < 251; i++) {
-      first.control.receive({ type: 'command', command: { type: 'text', ...target, text: 'x' } }); await settled();
+      first.control.receive({ type: 'command', command: { type: 'text', controlRevision: 0, ...target, text: 'x' } }); await settled();
     }
     expect(h.dispatch).toHaveBeenCalledTimes(250);
     expect(h.notify.mock.calls.filter(([type]) => type === 'transport.ended')).toEqual([['transport.ended', expect.objectContaining({ failed: true, reason: expect.stringContaining('rate limit') })]]);
     const second = await h.start(); await second.greet(); second.pc.connect(); await settled();
-    second.control.receive({ type: 'command', command: { type: 'text', ...target, text: 'new session' } }); await settled();
+    second.control.receive({ type: 'command', command: { type: 'text', controlRevision: 0, ...target, text: 'new session' } }); await settled();
     expect(h.dispatch).toHaveBeenCalledTimes(251); h.session.stop();
   });
 
   it('ends a congested receive queue and never executes its pending actions', async () => {
     const h = harness(), first = await h.start(); await first.greet(); first.pc.connect(); await settled();
     const slow = deferred<any>(); h.dispatch.mockReturnValueOnce(slow.promise);
-    const command = { type: 'command', command: { type: 'text', ...target, text: 'x' } };
+    const command = { type: 'command', command: { type: 'text', controlRevision: 0, ...target, text: 'x' } };
     first.control.receive(command); await settled();
     for (let i = 0; i < 256; i++) first.control.receive(command);
     expect(h.notify).toHaveBeenCalledWith('transport.ended', expect.objectContaining({ failed: true, reason: expect.stringContaining('pending commands') }));
@@ -166,7 +166,7 @@ describe('peer session lifetime', () => {
     const h = harness(), first = await h.start(); await first.greet(); first.pc.connect(); await settled();
     await h.session.handle({ type: 'session.state', snapshot });
     const slow = deferred<any>(); h.dispatch.mockReturnValueOnce(slow.promise);
-    const send = (text: string) => first.control.receive({ type: 'command', command: { type: 'text', ...target, text } });
+    const send = (text: string) => first.control.receive({ type: 'command', command: { type: 'text', controlRevision: 0, ...target, text } });
     send('in flight'); await settled(); send('queued before revoke');
     await h.session.handle({ type: 'session.state', snapshot: { ...snapshot, controlEnabled: false } });
     send('received while disabled');
@@ -180,7 +180,7 @@ describe('peer session lifetime', () => {
     const h = harness(), first = await h.start(); await first.greet(); first.pc.connect(); await settled();
     await h.session.handle({ type: 'session.state', snapshot });
     const completion = deferred<any>(); h.dispatch.mockReturnValueOnce(completion.promise);
-    first.control.receive({ type: 'command', requestId: 'create-tab', command: { type: 'tab.create', url: 'https://example.com' } }); await settled();
+    first.control.receive({ type: 'command', requestId: 'create-tab', command: { type: 'tab.create', controlRevision: 0, url: 'https://example.com' } }); await settled();
     await h.session.handle({ type: 'session.state', snapshot: { ...snapshot, presentation: undefined, generation: 4 } });
     completion.resolve({ ok: true }); await settled();
     expect(first.control.send.mock.calls.map(([value]) => JSON.parse(value))).toContainEqual({ type: 'command.result', requestId: 'create-tab', ok: true });
@@ -198,8 +198,8 @@ describe('peer session lifetime', () => {
   it('ends the session when delivery to the host fails and cancels queued input', async () => {
     const h = harness(), first = await h.start(); await first.greet(); first.pc.connect(); await settled();
     const delivery = deferred<any>(); h.dispatch.mockReturnValueOnce(delivery.promise);
-    first.control.receive({ type: 'command', command: { type: 'text', ...target, text: 'first' } }); await settled();
-    first.control.receive({ type: 'command', command: { type: 'text', ...target, text: 'queued' } });
+    first.control.receive({ type: 'command', command: { type: 'text', controlRevision: 0, ...target, text: 'first' } }); await settled();
+    first.control.receive({ type: 'command', command: { type: 'text', controlRevision: 0, ...target, text: 'queued' } });
     delivery.reject(new Error('Extension connection lost')); await settled();
     expect(h.dispatch).toHaveBeenCalledTimes(1);
     expect(h.notify).toHaveBeenCalledWith('transport.ended', expect.objectContaining({ failed: true, reason: expect.stringContaining('host input connection failed') }));
@@ -210,12 +210,26 @@ describe('peer session lifetime', () => {
     const h = harness(), first = await h.start(); await first.greet(); first.pc.connect(); await settled();
     await h.session.handle({ type: 'session.state', snapshot });
     const delivery = deferred<any>(); h.dispatch.mockReturnValueOnce(delivery.promise);
-    first.control.receive({ type: 'command', requestId: 'old', command: { type: 'text', ...target, text: 'old' } }); await settled();
+    first.control.receive({ type: 'command', requestId: 'old', command: { type: 'text', controlRevision: 0, ...target, text: 'old' } }); await settled();
     await h.session.handle({ type: 'session.state', snapshot: { ...snapshot, generation: 4, presentation: { ...presentation, generation: 4 } } });
-    first.control.receive({ type: 'command', command: { type: 'text', ...target, generation: 4, text: 'current' } });
+    first.control.receive({ type: 'command', command: { type: 'text', controlRevision: 0, ...target, generation: 4, text: 'current' } });
     delivery.reject(new Error('Obsolete connection')); await settled();
     expect(h.dispatch.mock.calls.map(([message]) => message.command.text)).toEqual(['old', 'current']);
     expect(first.control.send.mock.calls.map(([value]) => JSON.parse(value))).toContainEqual({ type: 'command.result', requestId: 'old', ok: false, error: 'The input was canceled.' });
+    expect(first.pc.close).not.toHaveBeenCalled(); h.session.stop();
+  });
+
+  it('rejects queued and late commands from an old interaction revision without renegotiating video', async () => {
+    const h = harness(), first = await h.start(); await first.greet(); first.pc.connect(); await settled();
+    await h.session.handle({ type: 'session.state', snapshot });
+    const delivery = deferred<any>(); h.dispatch.mockReturnValueOnce(delivery.promise);
+    const send = (text: string, controlRevision = 0) => first.control.receive({ type: 'command', command: { type: 'text', controlRevision, ...target, text } });
+    send('in flight'); await settled(); send('queued');
+    const peers = Peer.instances.length;
+    await h.session.handle({ type: 'session.state', snapshot: { ...snapshot, controlMode: 'visual', controlRevision: 1 } });
+    send('late'); send('fresh', 1); delivery.resolve({ ok: false, error: 'mode changed' }); await settled();
+    expect(h.dispatch.mock.calls.map(([message]) => message.command.text)).toEqual(['in flight', 'fresh']);
+    expect(Peer.instances).toHaveLength(peers);
     expect(first.pc.close).not.toHaveBeenCalled(); h.session.stop();
   });
 });

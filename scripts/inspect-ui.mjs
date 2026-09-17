@@ -1,3 +1,4 @@
+import assert from 'node:assert/strict';
 import { createServer } from 'vite';
 import { chromium } from 'playwright';
 import { mkdirSync } from 'node:fs';
@@ -13,10 +14,12 @@ try {
   browser = await chromium.launch({ executablePath: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe', headless: true });
   const context = await browser.newContext({ viewport: { width: 398, height: 790 } });
   await context.addInitScript(() => {
-    const state = { role: null, status: 'idle', paused: false, controlEnabled: true, clipboardEnabled: false, remoteClipboardEnabled: false, tabs: [], generation: 0, settings: { signalingUrl: 'http://127.0.0.1:8787', stunUrls: ['stun:stun.example.com:3478'] } };
+    const state = { role: null, status: 'idle', paused: false, controlEnabled: true, controlMode: 'visual', controlRevision: 0, visualPreferences: { notices: false, duration: 'persistent', seconds: 3 }, clipboardEnabled: false, remoteClipboardEnabled: false, tabs: [], generation: 0, settings: { signalingUrl: 'http://127.0.0.1:8787', stunUrls: ['stun:stun.example.com:3478'] } };
+    if (location.search === '?host') { state.role = 'host'; state.status = 'connected'; }
+    globalThis.uiState = state;
     const noEvent = { addListener() {}, removeListener() {} };
     globalThis.chrome = {
-      runtime: { id: 'a'.repeat(32), onMessage: noEvent, sendMessage: async () => ({ ok: true, state }), getURL: p => `http://127.0.0.1:5193/${p}`, connect: () => ({ onMessage: noEvent, onDisconnect: noEvent, postMessage() {}, disconnect() {} }) },
+      runtime: { id: 'a'.repeat(32), onMessage: noEvent, sendMessage: async message => { if (message.type === 'ui.control.mode') state.controlMode = message.mode; if (message.type === 'ui.visual.preferences') state.visualPreferences = message.preferences; return { ok: true, state: structuredClone(state) }; }, getURL: p => `http://127.0.0.1:5193/${p}`, connect: () => ({ onMessage: noEvent, onDisconnect: noEvent, postMessage() {}, disconnect() {} }) },
       permissions: { request: async () => true }, tabs: { create: async () => ({}) },
     };
   });
@@ -27,6 +30,17 @@ try {
   await page.screenshot({ path: resolve(output, 'popup.png'), fullPage: true });
   await page.getByRole('button', { name: 'Open settings' }).click();
   await page.screenshot({ path: resolve(output, 'settings.png'), fullPage: true });
+  await page.goto('http://127.0.0.1:5193/popup.html?host');
+  await page.getByLabel('Interaction mode').waitFor();
+  assert.equal(await page.getByLabel('Interaction mode').inputValue(), 'visual');
+  assert.equal(await page.getByLabel('Simulation notices').isChecked(), false);
+  await page.screenshot({ path: resolve(output, 'simulation-default.png'), fullPage: true });
+  await page.getByLabel('Simulation duration').selectOption('temporary');
+  await page.getByLabel('Seconds without interaction').fill('12');
+  await page.getByLabel('Seconds without interaction').blur();
+  await page.getByLabel('Simulation notices').check();
+  await page.screenshot({ path: resolve(output, 'simulation-temporary.png'), fullPage: true });
+  assert.deepEqual(await page.evaluate(() => uiState.visualPreferences), { notices: true, duration: 'temporary', seconds: 12 });
   await page.setViewportSize({ width: 1365, height: 850 });
   await page.goto('http://127.0.0.1:5193/viewer.html');
   await page.getByText('Connect with your host.').waitFor();
@@ -34,5 +48,5 @@ try {
   await page.setViewportSize({ width: 398, height: 790 });
   await page.screenshot({ path: resolve(output, 'viewer-mobile.png'), fullPage: true });
   if (errors.length) throw new Error(errors.join('\n'));
-  process.stdout.write(`Visual QA: 4 screenshots, no page errors. ${output}\n`);
+  process.stdout.write(`Visual QA: 6 screenshots, no page errors. ${output}\n`);
 } finally { await browser?.close(); await server.close(); }

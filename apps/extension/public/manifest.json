@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "GhostPair",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Share and control authorized browser tabs over a direct peer-to-peer connection.",
   "minimum_chrome_version": "125",
   "permissions": [

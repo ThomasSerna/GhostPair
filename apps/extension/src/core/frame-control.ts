@@ -1,4 +1,4 @@
-import { isSupportedUrl, type ControlCommand, type Presentation } from '@ghostpair/protocol';
+import { isSupportedUrl, type ControlCommand, type ControlConfiguration, type Presentation } from '@ghostpair/protocol';
 import { installDomControl } from './dom-control';
 
 type Input = Extract<ControlCommand, { type: 'pointer' | 'wheel' | 'key' | 'text' }>;
@@ -20,6 +20,39 @@ export class FrameControl {
   private canceledPointer = false;
   private keys = new Map<string, Owner>();
   private canceledKeys = new Set<string>();
+  private configuration: ControlConfiguration = { mode: 'visual', revision: 0, preferences: { notices: false, duration: 'persistent', seconds: 3 } };
+  private expiry?: ReturnType<typeof setTimeout>;
+  private lastActivity = 0;
+
+  async configure(configuration: ControlConfiguration) {
+    const reset = configuration.revision !== this.configuration.revision || configuration.mode !== this.configuration.mode;
+    if (reset) { await this.release(); clearTimeout(this.expiry); this.lastActivity = 0; }
+    this.configuration = configuration;
+    const p = this.presentation;
+    if (p) {
+      const results = await Promise.allSettled([...this.frames.values()].map(frame => this.message(p, frame, 'configure', { configuration })));
+      if (results.some(result => result.status === 'rejected' || !result.value?.ok)) throw new Error('Could not configure the shared page. Try again.');
+    }
+    this.scheduleExpiry();
+  }
+
+  private scheduleExpiry() {
+    clearTimeout(this.expiry);
+    if (!this.lastActivity || this.configuration.mode !== 'visual' || this.configuration.preferences.duration !== 'temporary') return;
+    this.expiry = setTimeout(() => { void this.clearVisual(); }, Math.max(0, this.configuration.preferences.seconds * 1000 - (Date.now() - this.lastActivity)));
+  }
+  private async clearVisual() {
+    const p = this.presentation, configuration = this.configuration;
+    this.lastActivity = 0; clearTimeout(this.expiry);
+    await this.release();
+    if (p && this.presentation === p && this.configuration === configuration) await Promise.allSettled([...this.frames.values()].map(frame => this.message(p, frame, 'visual.clear')));
+  }
+  private activity(kind?: string) {
+    if (!kind || this.configuration.mode !== 'visual') return;
+    this.lastActivity = Date.now(); this.scheduleExpiry();
+    const p = this.presentation, root = p && this.frames.get(p.documentId);
+    if (p && root && this.configuration.preferences.notices) void this.message(p, root, 'visual.notice', { kind }).catch(() => undefined);
+  }
 
   constructor(private usable: (presentation: Presentation) => boolean) {
     chrome.webNavigation.onBeforeNavigate.addListener(event => {
@@ -37,8 +70,15 @@ export class FrameControl {
   }
 
   async bind(presentation: Presentation) {
+    const previous = this.presentation;
     this.presentation = presentation; this.blocked.clear(); this.failures.clear();
     this.frames.set(presentation.documentId, { frameId: 0, documentId: presentation.documentId, parentFrameId: -1 });
+    if (previous && previous.generation !== presentation.generation) {
+      await Promise.all([...this.frames.values()].filter(frame => frame.frameId !== 0).map(async frame => {
+        try { await chrome.scripting.executeScript({ target: { tabId: presentation.tabId, documentIds: [frame.documentId] }, world: 'ISOLATED', func: installDomControl, args: [presentation.captureId, presentation.generation, false, this.configuration] }); }
+        catch { this.frames.delete(frame.documentId); }
+      }));
+    }
     await this.sync();
   }
 
@@ -52,6 +92,7 @@ export class FrameControl {
   }
 
   clear() {
+    clearTimeout(this.expiry); this.lastActivity = 0;
     const p = this.presentation, frames = [...this.frames.values()];
     void this.release(); this.presentation = undefined; this.frames.clear(); this.failures.clear(); this.blocked.clear();
     // Generation-scoped disposal cannot remove a newer installation in the same document.
@@ -75,7 +116,7 @@ export class FrameControl {
   }
 
   private message(p: Presentation, frame: Frame, operation: string, fields: object = {}): Promise<any> {
-    return chrome.tabs.sendMessage(p.tabId, { target: 'ghostpair.dom', captureId: p.captureId, generation: p.generation, operation, ...fields }, { documentId: frame.documentId });
+    return chrome.tabs.sendMessage(p.tabId, { target: 'ghostpair.dom', captureId: p.captureId, generation: p.generation, controlRevision: this.configuration.revision, operation, ...fields }, { documentId: frame.documentId });
   }
   private check(p: Presentation, revision: number) {
     if (this.presentation !== p || this.revision !== revision || !this.usable(p)) throw changed();
@@ -118,7 +159,7 @@ export class FrameControl {
       const related = /^(about:(blank|srcdoc)|blob:)/.test(frame.url);
       if (!isSupportedUrl(frame.url) && !related) { this.failures.set(frame.documentId, 'Chrome does not allow control of this embedded surface.'); return; }
       try {
-        const result = (await chrome.scripting.executeScript({ target: { tabId: p.tabId, documentIds: [frame.documentId] }, world: 'ISOLATED', injectImmediately: true, func: installDomControl, args: [p.captureId, p.generation, false] }))[0];
+        const result = (await chrome.scripting.executeScript({ target: { tabId: p.tabId, documentIds: [frame.documentId] }, world: 'ISOLATED', injectImmediately: true, func: installDomControl, args: [p.captureId, p.generation, false, this.configuration] }))[0];
         if (this.presentation !== p || this.revision !== revision || this.blocked.has(frame.frameId)) {
           await this.message(p, frame, 'dispose').catch(() => undefined); return;
         }
@@ -135,6 +176,7 @@ export class FrameControl {
     const work = this.queue.then(async () => {
       if (!p) throw changed();
       this.check(p, revision);
+      if (command.controlRevision !== this.configuration.revision) throw new Error('The interaction mode changed.');
       try { await this.executeNow(p, revision, command); }
       catch (error) {
         // A late failure belongs to its original operation, never a replacement view.
@@ -148,7 +190,7 @@ export class FrameControl {
   private async executeNow(p: Presentation, revision: number, command: Input) {
     if (command.type === 'key' && command.event === 'up') {
       const owner = this.keys.get(command.code); this.keys.delete(command.code); this.canceledKeys.delete(command.code);
-      if (owner && this.frames.has(owner.frame.documentId)) await this.request(p, revision, owner.frame, 'command', { command });
+      if (owner && this.frames.has(owner.frame.documentId)) this.activity((await this.request(p, revision, owner.frame, 'command', { command })).visualActivity);
       return;
     }
     if (command.type === 'key' && this.canceledKeys.has(command.code)) {
@@ -195,7 +237,11 @@ export class FrameControl {
     // Validate the same connected iframe elements and hit/focus chain again before committing.
     for (const step of steps) await this.request(p, revision, step.frame, 'verify', { token: step.token });
     const last = steps.at(-1)!;
-    await this.request(p, revision, frame, 'commit', { token: last.token, indices: steps.slice(0, -1).map(step => step.index) });
+    const result = await this.request(p, revision, frame, 'commit', { token: last.token, indices: steps.slice(0, -1).map(step => step.index) });
+    if (this.configuration.mode === 'visual' && command.type === 'pointer' && command.event === 'down') {
+      for (const step of steps.slice(0, -1)) await this.request(p, revision, step.frame, 'virtual.focus', { token: step.token });
+    }
+    this.activity(result.visualActivity);
     if (command.type === 'pointer') {
       if (command.event === 'down') this.pointer = { frame, path };
       if (command.event === 'up') this.pointer = undefined;
