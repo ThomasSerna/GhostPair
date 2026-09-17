@@ -53,7 +53,7 @@ export async function visualWorkflow(page, viewer, menu, call, ready, { embedded
   await call(menu, 'ui.visual.clear');
   await poll(async () => await content.locator('[data-ghostpair-visual]').count() === 0, 'manual preview cleanup');
   assert.deepEqual((await call(menu, 'ui.status')).presentation, presentation, 'clearing previews does not restart media');
-  const prefs = { notices: true, duration: 'temporary', seconds: 1 };
+  const prefs = { notices: true, duration: 'temporary', seconds: 0.5 };
   await call(menu, 'ui.visual.preferences', { preferences: prefs });
   await poll(async () => (await call(viewer, 'ui.status')).controlRevision > state.controlRevision, 'clear revision received');
   await click('#text'); await viewer.keyboard.insertText('Temporary');

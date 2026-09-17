@@ -3,7 +3,8 @@ import { VisualPreferencesSchema, PasswordSchema, ClientSignalMessageSchema, Con
 describe('network boundaries', () => {
   it('defaults to silent persistent previews and bounds their configurable lifetime', () => {
     expect(VisualPreferencesSchema.parse({})).toEqual({ notices: false, duration: 'persistent', seconds: 3 });
-    for (const seconds of [0, 1.5, 31, Infinity]) expect(VisualPreferencesSchema.safeParse({ seconds }).success).toBe(false);
+    for (let tenths = 1; tenths <= 300; tenths++) expect(VisualPreferencesSchema.safeParse({ seconds: tenths / 10 }).success).toBe(true);
+    for (const seconds of [-1, 0, 0.01, 0.25, 30.1, 31, Infinity, NaN]) expect(VisualPreferencesSchema.safeParse({ seconds }).success).toBe(false);
     expect(ControlCommandSchema.safeParse({ type: 'tab.create', url: 'https://example.com' }).success).toBe(false);
   });
   it('accepts passwords of 8 through 256 characters in both roles', () => {

@@ -64,16 +64,16 @@ it('tracks virtual iframe focus and expires the entire preview after inactivity'
   vi.useFakeTimers();
   try {
     const h = harness(); await h.control.bind(p);
-    await h.control.configure({ mode: 'visual', revision: 1, preferences: { notices: true, duration: 'temporary', seconds: 2 } });
+    await h.control.configure({ mode: 'visual', revision: 1, preferences: { notices: true, duration: 'temporary', seconds: 0.5 } });
     const original = h.sendMessage.getMockImplementation()!;
     h.sendMessage.mockImplementation(async (...args) => ({ ...await original(...args), ...(args[1].operation === 'commit' ? { visualActivity: 'click' } : {}) }));
     await h.control.execute({ ...h.input(), controlRevision: 1 });
     expect(h.operations.filter(e => e.message.operation === 'virtual.focus').map(e => e.id)).toEqual(['root', 'b']);
     expect(h.operations.filter(e => e.message.operation === 'visual.notice').map(e => e.id)).toEqual(['root']);
-    await vi.advanceTimersByTimeAsync(1500);
+    await vi.advanceTimersByTimeAsync(300);
     await h.control.execute({ ...h.input('text'), controlRevision: 1 });
-    await vi.advanceTimersByTimeAsync(1500); expect(h.operations.some(e => e.message.operation === 'visual.clear')).toBe(false);
-    await vi.advanceTimersByTimeAsync(500); expect(h.operations.filter(e => e.message.operation === 'visual.clear')).toHaveLength(4);
+    await vi.advanceTimersByTimeAsync(499); expect(h.operations.some(e => e.message.operation === 'visual.clear')).toBe(false);
+    await vi.advanceTimersByTimeAsync(1); expect(h.operations.filter(e => e.message.operation === 'visual.clear')).toHaveLength(4);
     await h.control.clear(); expect(vi.getTimerCount()).toBe(0);
   } finally { vi.useRealTimers(); }
 });

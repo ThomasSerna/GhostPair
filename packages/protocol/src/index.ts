@@ -43,10 +43,11 @@ export const SettingsSchema = z.object({
   stunUrls: z.array(z.string().regex(/^stuns?:[^\s]+$/i, 'Only STUN servers are supported.')).min(1).max(5),
 }).strict();
 export type Settings = z.infer<typeof SettingsSchema>;
+export const VisualSecondsSchema = z.number().finite().min(0.1).max(30).multipleOf(0.1);
 export const VisualPreferencesSchema = z.object({
   notices: z.boolean().default(false),
   duration: z.enum(['persistent', 'temporary']).default('persistent'),
-  seconds: z.number().int().min(1).max(30).default(3),
+  seconds: VisualSecondsSchema.default(3),
 }).strict();
 export type VisualPreferences = z.infer<typeof VisualPreferencesSchema>;
 export const ControlModeSchema = z.enum(['visual', 'live']);

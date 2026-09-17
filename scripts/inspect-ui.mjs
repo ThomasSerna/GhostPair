@@ -36,11 +36,16 @@ try {
   assert.equal(await page.getByLabel('Simulation notices').isChecked(), false);
   await page.screenshot({ path: resolve(output, 'simulation-default.png'), fullPage: true });
   await page.getByLabel('Simulation duration').selectOption('temporary');
-  await page.getByLabel('Seconds without interaction').fill('12');
+  await page.getByLabel('Seconds without interaction').fill('0.5');
   await page.getByLabel('Seconds without interaction').blur();
   await page.getByLabel('Simulation notices').check();
   await page.screenshot({ path: resolve(output, 'simulation-temporary.png'), fullPage: true });
-  assert.deepEqual(await page.evaluate(() => uiState.visualPreferences), { notices: true, duration: 'temporary', seconds: 12 });
+  assert.deepEqual(await page.evaluate(() => uiState.visualPreferences), { notices: true, duration: 'temporary', seconds: 0.5 });
+  for (const invalid of ['0', '0.25', '31', '']) {
+    await page.getByLabel('Seconds without interaction').fill(invalid);
+    await page.getByLabel('Seconds without interaction').blur();
+    assert.equal(await page.getByLabel('Seconds without interaction').inputValue(), '0.5');
+  }
   await page.setViewportSize({ width: 1365, height: 850 });
   await page.goto('http://127.0.0.1:5193/viewer.html');
   await page.getByText('Connect with your host.').waitFor();
