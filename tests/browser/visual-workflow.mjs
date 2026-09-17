@@ -14,16 +14,18 @@ export async function visualWorkflow(page, viewer, menu, call, ready, { embedded
     assert.ok(box && video);
     await viewer.mouse.click(video.x + (box.x + box.width / 2) / viewport.width * video.width, video.y + (box.y + box.height / 2) / viewport.height * video.height);
   };
-  const violetPixels = () => viewer.locator('video').evaluate(video => {
+  const accentPixels = (accent = 'violet') => viewer.locator('video').evaluate((video, accent) => {
     const canvas = document.createElement('canvas'); canvas.width = video.videoWidth; canvas.height = video.videoHeight;
     const ctx = canvas.getContext('2d'); ctx.drawImage(video, 0, 0);
     const pixels = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
     let total = 0;
-    for (let i = 0; i < pixels.length; i += 4) if (pixels[i + 2] > pixels[i] + 35 && pixels[i + 2] > pixels[i + 1] + 35) total++;
+    for (let i = 0; i < pixels.length; i += 4) if (accent === 'violet'
+      ? pixels[i + 2] > pixels[i] + 35 && pixels[i + 2] > pixels[i + 1] + 35
+      : pixels[i + 1] > pixels[i] + 60 && pixels[i + 2] > pixels[i] + 60) total++;
     return total;
-  });
+  }, accent);
   await call(menu, 'ui.visual.preferences', { preferences: { notices: false, duration: 'persistent', seconds: 3 } });
-  const basePixels = await violetPixels();
+  const basePixels = await accentPixels();
   await click('#choice-label'); await click('#r2'); await click('#text');
   const bounds = await content.locator('#text').boundingBox(), viewport = await page.evaluate(() => ({ width: innerWidth, height: innerHeight }));
   const textPixels = () => viewer.locator('video').evaluate((video, { bounds, viewport }) => {
@@ -36,7 +38,7 @@ export async function visualWorkflow(page, viewer, menu, call, ready, { embedded
   }, { bounds, viewport });
   const beforeText = await textPixels();
   await viewer.keyboard.insertText('Visual á漢🙂');
-  await poll(async () => await violetPixels() > basePixels + 20, 'simulated states visible in the received video');
+  await poll(async () => await accentPixels() > basePixels + 20, 'simulated states visible in the received video');
   // A delivery barrier ensures assertions include all preceding page input.
   const state = await call(viewer, 'ui.status');
   await call(viewer, 'ui.command', { command: { type: 'key', event: 'up', key: '', code: 'Barrier', keyCode: 0, modifiers: 0, repeat: false, tabId: state.activeTabId, captureId: state.presentation.captureId, documentId: state.presentation.documentId, generation: state.generation, controlRevision: state.controlRevision } });
@@ -47,6 +49,10 @@ export async function visualWorkflow(page, viewer, menu, call, ready, { embedded
   assert.deepEqual(await form.evaluate(() => quizProbe.events), []);
   assert.deepEqual(await form.evaluate(() => quizProbe.changes), []);
   assert.deepEqual(await form.evaluate(() => quizProbe.submits), []);
+  const beforeCyan = await accentPixels('cyan');
+  await call(menu, 'ui.visual.preferences', { preferences: { notices: false, duration: 'persistent', seconds: 3, accentColor: '#12abcd' } });
+  await poll(async () => await accentPixels('cyan') > beforeCyan + 20, 'updated custom color visible in the received video');
+  assert.ok(await textPixels() > beforeText + 20, 'changing color preserves the simulated text');
   await page.screenshot({ path: resolve(artifactRoot, `visual-${pair.replace(':', '-')}-${embedded ? 'frame' : 'root'}-host.png`) });
   await viewer.screenshot({ path: resolve(artifactRoot, `visual-${pair.replace(':', '-')}-${embedded ? 'frame' : 'root'}-viewer.png`) });
   const presentation = (await call(menu, 'ui.status')).presentation;

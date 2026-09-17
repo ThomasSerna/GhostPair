@@ -28,7 +28,7 @@ export function installDomControl(captureId: string, generation: number, root = 
   scope.__ghostpairControl = context;
 
   // All preview data and nodes belong to the extension, never to a page control.
-  type Preview = { node: HTMLDivElement; cursor?: HTMLSpanElement; value?: string; anchor: number; caret: number; checked?: boolean; until?: number };
+  type Preview = { node: HTMLDivElement; marker?: HTMLDivElement; cursor?: HTMLSpanElement; value?: string; anchor: number; caret: number; checked?: boolean; radio?: boolean; until?: number };
   const previews = new Map<HTMLElement, Preview>();
   let virtualFocus: Element | null = null;
   let visualDown: Element | null = null;
@@ -81,6 +81,116 @@ export function installDomControl(captureId: string, generation: number, root = 
     Object.assign(overlay.style, { left: `${box.left}px`, top: `${box.top}px`, width: `${box.width}px`, height: `${box.height}px`, display: visible && right > left && bottom > top ? 'block' : 'none', clipPath: `inset(${Math.max(0, top - box.top)}px ${Math.max(0, box.right - right)}px ${Math.max(0, box.bottom - bottom)}px ${Math.max(0, left - box.left)}px)` });
     return { box, style };
   }
+  function scaled(value: string, scale: number) {
+    return value.replace(/(-?[\d.]+)px/g, (_, number) => `${Number(number) * scale}px`);
+  }
+  function surfaceStyle(element: HTMLElement, box: DOMRect, style: CSSStyleDeclaration) {
+    const width = parseFloat(style.width) + (style.boxSizing === 'border-box' ? 0 : parseFloat(style.paddingLeft) + parseFloat(style.paddingRight) + parseFloat(style.borderLeftWidth) + parseFloat(style.borderRightWidth));
+    const height = parseFloat(style.height) + (style.boxSizing === 'border-box' ? 0 : parseFloat(style.paddingTop) + parseFloat(style.paddingBottom) + parseFloat(style.borderTopWidth) + parseFloat(style.borderBottomWidth));
+    const sx = box.width / (width || element.offsetWidth || box.width || 1);
+    const sy = box.height / (height || element.offsetHeight || box.height || 1);
+    const radius = (value: string) => {
+      const [x, y = x] = value.split(' ');
+      return `${scaled(x!, sx)} ${scaled(y!, sy)}`;
+    };
+    return {
+      borderTop: `${scaled(style.borderTopWidth, sy)} ${style.borderTopStyle} ${style.borderTopColor}`,
+      borderRight: `${scaled(style.borderRightWidth, sx)} ${style.borderRightStyle} ${style.borderRightColor}`,
+      borderBottom: `${scaled(style.borderBottomWidth, sy)} ${style.borderBottomStyle} ${style.borderBottomColor}`,
+      borderLeft: `${scaled(style.borderLeftWidth, sx)} ${style.borderLeftStyle} ${style.borderLeftColor}`,
+      borderTopLeftRadius: radius(style.borderTopLeftRadius), borderTopRightRadius: radius(style.borderTopRightRadius),
+      borderBottomLeftRadius: radius(style.borderBottomLeftRadius), borderBottomRightRadius: radius(style.borderBottomRightRadius),
+      paddingTop: scaled(style.paddingTop, sy), paddingRight: scaled(style.paddingRight, sx),
+      paddingBottom: scaled(style.paddingBottom, sy), paddingLeft: scaled(style.paddingLeft, sx),
+      fontFamily: style.fontFamily, fontSize: scaled(style.fontSize, sy), fontWeight: style.fontWeight,
+      fontStyle: style.fontStyle, fontVariant: style.fontVariant, lineHeight: scaled(style.lineHeight, sy),
+      letterSpacing: scaled(style.letterSpacing, sx), wordSpacing: scaled(style.wordSpacing, sx),
+      textAlign: style.textAlign, textTransform: style.textTransform, textIndent: scaled(style.textIndent, sx),
+      direction: style.direction, color: style.color,
+    };
+  }
+  // Composite translucent solid backgrounds without copying page DOM or fetching images.
+  function effectiveBackground(element: HTMLElement) {
+    const layers: string[] = [];
+    for (let current: Element | null = element; current; current = parent(current)) {
+      const color = getComputedStyle(current).backgroundColor;
+      const alpha = color === 'transparent' ? 0 : color.startsWith('rgba(') ? parseFloat(color.split(',')[3]!) : color.includes('/') ? parseFloat(color.split('/')[1]!) : 1;
+      if (alpha >= 1) return { backgroundColor: color, backgroundImage: layers.join(',') || 'none' };
+      if (alpha > 0) layers.push(`linear-gradient(${color},${color})`);
+    }
+    const scheme = getComputedStyle(element).colorScheme;
+    const dark = scheme.includes('dark') && (!scheme.includes('light') || matchMedia('(prefers-color-scheme: dark)').matches);
+    return { backgroundColor: dark ? '#121212' : '#fff', backgroundImage: layers.join(',') || 'none' };
+  }
+  function visibleSurface(element: HTMLElement) {
+    const box = element.getBoundingClientRect();
+    if (box.width < 3 || box.height < 3 || !element.getClientRects().length) return false;
+    for (let current: Element | null = element; current; current = parent(current)) {
+      const css = getComputedStyle(current);
+      if (css.visibility === 'hidden' || css.display === 'none' || Number(css.opacity) === 0 || css.clipPath === 'inset(50%)') return false;
+    }
+    return true;
+  }
+  const choices = 'input[type="checkbox"],input[type="radio"],[role="checkbox"],[role="radio"]';
+  function choiceSurface(element: HTMLElement): HTMLElement {
+    if (element instanceof HTMLInputElement) {
+      const label = Array.from(element.labels ?? []).find(label => visibleSurface(label) && label.querySelectorAll(choices).length <= 1);
+      if (label) return label;
+    }
+    // Only adopt a nearby option with one control, never a form or a group.
+    if (element.matches('[role="checkbox"],[role="radio"]') && element.textContent?.trim()) return element;
+    let candidate = parent(element);
+    for (let depth = 0; candidate instanceof HTMLElement && depth < 3; depth++, candidate = parent(candidate)) {
+      if (candidate.matches('form,fieldset,body,html,[role="group"],[role="radiogroup"]')) break;
+      if (candidate.querySelectorAll('input,textarea,select,button,a[href],[role="checkbox"],[role="radio"]').length !== 1) break;
+      if (candidate.textContent?.trim() && visibleSurface(candidate)) return candidate;
+    }
+    return element;
+  }
+  function choiceIndicator(element: HTMLElement, surface: HTMLElement) {
+    const small = (target: HTMLElement) => {
+      const box = target.getBoundingClientRect();
+      return box.width <= 48 && box.height <= 48 && box.width / box.height >= 0.6 && box.width / box.height <= 1.6 && visibleSurface(target);
+    };
+    if ((element instanceof HTMLInputElement || !element.textContent?.trim()) && small(element)) return element;
+    const candidates = Array.from(surface.querySelectorAll<HTMLElement>('span[aria-hidden="true"],i[aria-hidden="true"],span:empty,i:empty')).filter(target => {
+      if (!small(target) || target.textContent?.trim()) return false;
+      const css = getComputedStyle(target), box = target.getBoundingClientRect(), bounds = surface.getBoundingClientRect();
+      return box.left >= bounds.left && box.right <= bounds.right && box.top >= bounds.top && box.bottom <= bounds.bottom && (parseFloat(css.borderTopWidth) > 0 || css.backgroundColor !== 'rgba(0, 0, 0, 0)');
+    });
+    return candidates.length === 1 ? candidates[0] : undefined;
+  }
+  function paintOutline(element: HTMLElement, overlay: HTMLDivElement, selected: boolean, tint: number) {
+    const { box, style } = rectStyle(element, overlay);
+    const profile = surfaceStyle(element, box, style);
+    Object.assign(overlay.style, {
+      borderTopLeftRadius: profile.borderTopLeftRadius, borderTopRightRadius: profile.borderTopRightRadius,
+      borderBottomLeftRadius: profile.borderBottomLeftRadius, borderBottomRightRadius: profile.borderBottomRightRadius,
+      border: selected ? '2px solid var(--gp-accent)' : '0',
+      background: selected ? `color-mix(in srgb,var(--gp-accent) ${tint}%,transparent)` : 'transparent',
+      boxShadow: selected ? `inset 0 0 0 1px color-mix(in srgb,${style.color} 20%,transparent)` : 'none',
+    });
+  }
+  function paintChoice(element: HTMLElement, preview: Preview) {
+    const surface = choiceSurface(element), indicator = choiceIndicator(element, surface);
+    paintOutline(surface, preview.node, Boolean(preview.checked), 10);
+    if (!indicator) { preview.marker?.remove(); preview.marker = undefined; return; }
+    preview.marker ??= node();
+    const { box, style } = rectStyle(indicator, preview.marker);
+    const profile = surfaceStyle(indicator, box, style);
+    Object.assign(preview.marker.style, profile, effectiveBackground(indicator), {
+      padding: '0', border: '2px solid var(--gp-accent)',
+      boxShadow: `inset 0 0 0 1px color-mix(in srgb,${style.color} 20%,transparent)`,
+    });
+    if (preview.radio) preview.marker.style.borderRadius = '50%';
+    else if (![style.borderTopLeftRadius, style.borderTopRightRadius, style.borderBottomLeftRadius, style.borderBottomRightRadius].some(value => parseFloat(value))) preview.marker.style.borderRadius = '3px';
+    let mark = preview.marker.firstElementChild as HTMLSpanElement | null;
+    if (!mark) { mark = document.createElement('span'); preview.marker.append(mark); }
+    mark.style.cssText = preview.radio
+      ? 'position:absolute;inset:22%;border-radius:50%;background:var(--gp-accent)'
+      : 'position:absolute;left:30%;top:10%;width:32%;height:60%;border:solid var(--gp-accent);border-width:0 2px 2px 0;transform:rotate(45deg)';
+    mark.style.display = preview.checked ? 'block' : 'none';
+  }
   function draw(time: number) {
     drawing = undefined;
     if (!layer) return;
@@ -88,11 +198,11 @@ export function installDomControl(captureId: string, generation: number, root = 
     drawnAt = time; ensureLayer();
     if (virtualFocus && !virtualFocus.isConnected) virtualFocus = null;
     for (const [element, preview] of previews) {
-      if (!element.isConnected || preview.until !== undefined && time >= preview.until) { preview.node.remove(); previews.delete(element); continue; }
-      const { box, style } = rectStyle(element, preview.node);
+      if (!element.isConnected || preview.until !== undefined && time >= preview.until) { preview.node.remove(); preview.marker?.remove(); previews.delete(element); continue; }
+      if (preview.checked !== undefined) { paintChoice(element, preview); continue; }
       if (preview.value !== undefined) {
-        const scale = element.offsetWidth ? box.width / element.offsetWidth : 1;
-        Object.assign(preview.node.style, { background: style.backgroundColor === 'rgba(0, 0, 0, 0)' ? '#fff' : style.backgroundColor, color: style.color, border: `${style.borderTopWidth} ${style.borderTopStyle} ${style.borderTopColor}`, borderRadius: style.borderRadius, padding: style.padding, font: style.font, fontSize: `${parseFloat(style.fontSize) * scale}px`, lineHeight: style.lineHeight, letterSpacing: style.letterSpacing, textAlign: style.textAlign, direction: style.direction, whiteSpace: element instanceof HTMLInputElement ? 'pre' : 'pre-wrap', overflowWrap: 'anywhere', overflow: 'hidden' });
+        const { box, style } = rectStyle(element, preview.node);
+        Object.assign(preview.node.style, surfaceStyle(element, box, style), effectiveBackground(element), { whiteSpace: element instanceof HTMLInputElement ? 'pre' : 'pre-wrap', overflowWrap: 'anywhere', overflow: 'hidden' });
         // Scroll only the extension's text surface, never the real field/page.
         if (preview.cursor && virtualFocus === element) {
           const cursor = preview.cursor.getBoundingClientRect(), inset = 4;
@@ -101,12 +211,12 @@ export function installDomControl(captureId: string, generation: number, root = 
           if (cursor.bottom > box.bottom - inset) preview.node.scrollTop += cursor.bottom - box.bottom + inset;
           else if (cursor.top < box.top + inset) preview.node.scrollTop -= box.top + inset - cursor.top;
         }
-      }
+      } else paintOutline(element, preview.node, true, 18);
     }
     const paintFocus = virtualFocus instanceof HTMLElement && !(virtualFocus instanceof HTMLIFrameElement || virtualFocus instanceof HTMLFrameElement) && !disabled(virtualFocus);
     if (paintFocus && virtualFocus instanceof HTMLElement) {
-      focusMark ??= node(); rectStyle(virtualFocus, focusMark);
-      Object.assign(focusMark.style, { border: '2px solid var(--gp-accent)', borderRadius: '3px', background: 'transparent' });
+      focusMark ??= node();
+      paintOutline(virtualFocus.matches(choices) ? choiceSurface(virtualFocus) : virtualFocus, focusMark, true, 0);
     } else { focusMark?.remove(); focusMark = undefined; }
     for (let i = halos.length - 1; i >= 0; i--) {
       const halo = halos[i]!;
@@ -167,9 +277,7 @@ export function installDomControl(captureId: string, generation: number, root = 
     if (virtualFocus && !(virtualFocus instanceof HTMLIFrameElement || virtualFocus instanceof HTMLFrameElement)) { ensureLayer(); scheduleDraw(); }
   }
   function markChecked(element: HTMLElement, checked: boolean, radio: boolean) {
-    const preview = previewFor(element); preview.checked = checked;
-    preview.node.textContent = checked ? radio ? '●' : '✓' : '';
-    preview.node.style.cssText = `border:1px solid var(--gp-accent);border-radius:${radio ? '50%' : '3px'};background:#fff;color:var(--gp-accent);font:bold 14px/1 system-ui;text-align:center;overflow:hidden;`;
+    const preview = previewFor(element); preview.checked = checked; preview.radio = radio;
   }
   function activateVisual(element: HTMLElement) {
     if (disabled(element)) return;
@@ -182,10 +290,13 @@ export function installDomControl(captureId: string, generation: number, root = 
       markChecked(element, radio || !(previews.get(element)?.checked ?? element.checked), radio);
     } else if (element.matches('[role="checkbox"],[role="radio"]')) {
       const isRadio = element.getAttribute('role') === 'radio';
+      const group = isRadio && element.closest('[role="radiogroup"]');
+      if (group) for (const other of group.querySelectorAll<HTMLElement>('[role="radio"]')) {
+        if (other !== element && other.closest('[role="radiogroup"]') === group) markChecked(other, false, true);
+      }
       markChecked(element, isRadio || !(previews.get(element)?.checked ?? element.getAttribute('aria-checked') === 'true'), isRadio);
     } else if (element.matches('button,a[href],input[type="button"],input[type="submit"],input[type="reset"],[role="button"]')) {
       const preview = previewFor(element); preview.until = performance.now() + 180;
-      preview.node.style.cssText = 'background:color-mix(in srgb,var(--gp-accent) 22%,transparent);border:2px solid var(--gp-accent);border-radius:4px;';
     }
   }
   function insertVisual(text: string) {

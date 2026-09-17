@@ -4,6 +4,7 @@ import { resolve } from 'node:path';
 import { chromium } from 'playwright';
 import { installDomControl } from '../../apps/extension/src/core/dom-control.ts';
 import { artifactRoot, browsers } from './helpers.mjs';
+import { visualStyles } from './visual-styles.mjs';
 
 const fixture = `<!doctype html><meta charset="utf-8"><title>Visual simulation fixture</title>
 <style>body{font:18px system-ui;margin:30px;background:#fff;color:#222}input,textarea,button{font:inherit;padding:8px;margin:10px}label{display:block}#scroll{height:100px;overflow:auto;border:1px solid #aaa}#spacer{height:500px}</style>
@@ -94,7 +95,8 @@ for (const name of process.argv.slice(2).length ? process.argv.slice(2) : ['chro
     assert.equal(stale.ok, false); assert.deepEqual(await page.evaluate(() => events), []);
     await send(undefined, { operation: 'dispose', controlRevision: 1 });
     assert.equal(await page.locator('[data-ghostpair-visual]').count(), 0);
-    results.push({ browser: name, nonMutation: true, editing: true, geometry: true, notices: true, staleInputRejected: true });
+    await visualStyles(page, name);
+    results.push({ browser: name, nonMutation: true, editing: true, geometry: true, notices: true, adaptiveStyles: true, liveColors: true, staleInputRejected: true });
   } finally { await browser.close(); }
 }
 await writeFile(resolve(artifactRoot, 'visual-results.json'), JSON.stringify(results, null, 2));
