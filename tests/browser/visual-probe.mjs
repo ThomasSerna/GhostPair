@@ -29,7 +29,7 @@ for (const name of process.argv.slice(2).length ? process.argv.slice(2) : ['chro
       Element.prototype.attachShadow = function (options) { const shadow = attach.call(this, options); if (this.hasAttribute('data-ghostpair-visual')) globalThis.preview = shadow; return shadow; };
       globalThis.chrome = { runtime: { id: 'fixture', onMessage: { addListener: fn => { globalThis.controller = fn; }, removeListener() {} }, sendMessage: async () => ({}) } };
     });
-    const config = { mode: 'visual', revision: 0, preferences: { notices: false, duration: 'persistent', seconds: 3 } };
+    const config = { mode: 'visual', revision: 0, preferences: { notices: false, duration: 'persistent', seconds: 3, accentColor: '#7871e8' } };
     const install = async (generation = 1) => page.evaluate(`(${installDomControl.toString()})('fixture',${generation},true,${JSON.stringify(config)})`);
     await install();
     const send = async (command, extra = {}) => {
@@ -56,6 +56,13 @@ for (const name of process.argv.slice(2).length ? process.argv.slice(2) : ['chro
     const after = await page.evaluate(() => ({ html: document.querySelector('form').outerHTML, focus: document.activeElement.tagName, values: [...document.querySelectorAll('input,textarea')].map(e => [e.value,e.checked,e.selectionStart,e.selectionEnd]), editable: document.querySelector('#editable').innerHTML }));
     assert.deepEqual(after, original); assert.deepEqual(await page.evaluate(() => events), []); assert.equal(await page.evaluate(() => accepted), 0);
     assert.ok(!(await contents()).some(t => t.startsWith('Simulated')));
+    const oldContents = (await contents()).filter(Boolean);
+    config.preferences.accentColor = '#12abcd';
+    await send(undefined, { operation: 'configure', configuration: config });
+    assert.deepEqual((await contents()).filter(Boolean), oldContents);
+    assert.ok(await page.evaluate(() => [...preview.querySelectorAll('div')].some(e => getComputedStyle(e).borderTopColor === 'rgb(18, 171, 205)')));
+    config.preferences.accentColor = '#7871e8';
+    await send(undefined, { operation: 'configure', configuration: config });
     assert.equal(await page.locator('[data-ghostpair-visual]').evaluate(e => getComputedStyle(e).pointerEvents), 'none');
     await page.screenshot({ path: resolve(artifactRoot, `visual-${name}-host.png`) });
     await send(undefined, { operation: 'release' }); assert.ok((await contents()).includes('Visual á字'));

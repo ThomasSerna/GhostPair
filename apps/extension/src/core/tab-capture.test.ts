@@ -159,7 +159,7 @@ describe('TabCapture authorization and scoped control', () => {
     const h = harness(); await h.share(); const presentation = h.current(), target = h.target();
     const waiting = deferred<any>(); h.browser.tabs.get.mockReturnValueOnce(waiting.promise);
     const pending = h.capture.execute({ type: 'text', controlRevision: 0, ...target, text: 'old preview' });
-    await h.capture.configure({ mode: 'live', revision: 1, preferences: { notices: false, duration: 'persistent', seconds: 3 } });
+    await h.capture.configure({ mode: 'live', revision: 1, preferences: { notices: false, duration: 'persistent', seconds: 3, accentColor: '#7871e8' } });
     waiting.resolve(h.tabs.get(12)); await expect(pending).rejects.toThrow('outside');
     expect(h.current()).toBe(presentation); expect(h.commands()).toHaveLength(0);
     await expect(h.capture.execute({ type: 'text', ...target, controlRevision: 0, text: 'late' })).rejects.toThrow('mode changed');

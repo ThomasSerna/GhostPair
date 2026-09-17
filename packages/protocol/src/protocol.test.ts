@@ -2,10 +2,17 @@ import { describe, expect, it } from 'vitest';
 import { VisualPreferencesSchema, PasswordSchema, ClientSignalMessageSchema, ControlCommandSchema, ClipboardUpdateSchema, isRelaySignal, isSupportedUrl, validateSignalingUrl } from './index';
 describe('network boundaries', () => {
   it('defaults to silent persistent previews and bounds their configurable lifetime', () => {
-    expect(VisualPreferencesSchema.parse({})).toEqual({ notices: false, duration: 'persistent', seconds: 3 });
+    expect(VisualPreferencesSchema.parse({})).toEqual({ notices: false, duration: 'persistent', seconds: 3, accentColor: '#7871e8' });
     for (let tenths = 1; tenths <= 300; tenths++) expect(VisualPreferencesSchema.safeParse({ seconds: tenths / 10 }).success).toBe(true);
     for (const seconds of [-1, 0, 0.01, 0.25, 30.1, 31, Infinity, NaN]) expect(VisualPreferencesSchema.safeParse({ seconds }).success).toBe(false);
     expect(ControlCommandSchema.safeParse({ type: 'tab.create', url: 'https://example.com' }).success).toBe(false);
+  });
+  it('defaults legacy preferences to purple and accepts only opaque hex accents', () => {
+    expect(VisualPreferencesSchema.parse({ notices: true, duration: 'temporary', seconds: 0.5 }).accentColor).toBe('#7871e8');
+    for (const accentColor of ['#7871e8', '#3b82f6', '#22c55e', '#f97316', '#ec4899', '#ABCDEF']) {
+      expect(VisualPreferencesSchema.parse({ accentColor }).accentColor).toBe(accentColor.toLowerCase());
+    }
+    for (const accentColor of ['', 'red', '#fff', '#00000000', 'var(--page-color)']) expect(VisualPreferencesSchema.safeParse({ accentColor }).success).toBe(false);
   });
   it('accepts passwords of 8 through 256 characters in both roles', () => {
     for (const length of [7, 8, 12, 256, 257]) {

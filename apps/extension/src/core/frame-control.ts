@@ -20,7 +20,7 @@ export class FrameControl {
   private canceledPointer = false;
   private keys = new Map<string, Owner>();
   private canceledKeys = new Set<string>();
-  private configuration: ControlConfiguration = { mode: 'visual', revision: 0, preferences: { notices: false, duration: 'persistent', seconds: 3 } };
+  private configuration: ControlConfiguration = { mode: 'visual', revision: 0, preferences: { notices: false, duration: 'persistent', seconds: 3, accentColor: '#7871e8' } };
   private expiry?: ReturnType<typeof setTimeout>;
   private lastActivity = 0;
 

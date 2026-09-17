@@ -14,7 +14,7 @@ try {
   browser = await chromium.launch({ executablePath: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe', headless: true });
   const context = await browser.newContext({ viewport: { width: 398, height: 790 } });
   await context.addInitScript(() => {
-    const state = { role: null, status: 'idle', paused: false, controlEnabled: true, controlMode: 'visual', controlRevision: 0, visualPreferences: { notices: false, duration: 'persistent', seconds: 3 }, clipboardEnabled: false, remoteClipboardEnabled: false, tabs: [], generation: 0, settings: { signalingUrl: 'http://127.0.0.1:8787', stunUrls: ['stun:stun.example.com:3478'] } };
+    const state = { role: null, status: 'idle', paused: false, controlEnabled: true, controlMode: 'visual', controlRevision: 0, visualPreferences: { notices: false, duration: 'persistent', seconds: 3, accentColor: '#7871e8' }, clipboardEnabled: false, remoteClipboardEnabled: false, tabs: [], generation: 0, settings: { signalingUrl: 'http://127.0.0.1:8787', stunUrls: ['stun:stun.example.com:3478'] } };
     if (location.search === '?host') { state.role = 'host'; state.status = 'connected'; }
     globalThis.uiState = state;
     const noEvent = { addListener() {}, removeListener() {} };
@@ -29,6 +29,11 @@ try {
   await page.getByRole('button', { name: 'Share current tab →' }).waitFor();
   await page.screenshot({ path: resolve(output, 'popup.png'), fullPage: true });
   await page.getByRole('button', { name: 'Open settings' }).click();
+  assert.equal(await page.getByLabel('Purple', { exact: true }).isChecked(), true);
+  await page.getByLabel('Blue', { exact: true }).check();
+  assert.equal(await page.evaluate(() => uiState.visualPreferences.accentColor), '#3b82f6');
+  await page.getByLabel('Custom color', { exact: false }).fill('#12abcd');
+  assert.equal(await page.evaluate(() => uiState.visualPreferences.accentColor), '#12abcd');
   await page.screenshot({ path: resolve(output, 'settings.png'), fullPage: true });
   await page.goto('http://127.0.0.1:5193/popup.html?host');
   await page.getByLabel('Interaction mode').waitFor();
@@ -40,12 +45,19 @@ try {
   await page.getByLabel('Seconds without interaction').blur();
   await page.getByLabel('Simulation notices').check();
   await page.screenshot({ path: resolve(output, 'simulation-temporary.png'), fullPage: true });
-  assert.deepEqual(await page.evaluate(() => uiState.visualPreferences), { notices: true, duration: 'temporary', seconds: 0.5 });
+  assert.deepEqual(await page.evaluate(() => uiState.visualPreferences), { notices: true, duration: 'temporary', seconds: 0.5, accentColor: '#7871e8' });
   for (const invalid of ['0', '0.25', '31', '']) {
     await page.getByLabel('Seconds without interaction').fill(invalid);
     await page.getByLabel('Seconds without interaction').blur();
     assert.equal(await page.getByLabel('Seconds without interaction').inputValue(), '0.5');
   }
+  for (const [name, hex] of [['Blue', '#3b82f6'], ['Green', '#22c55e'], ['Orange', '#f97316'], ['Pink', '#ec4899'], ['Purple', '#7871e8']]) {
+    await page.getByLabel(name, { exact: true }).check();
+    assert.equal(await page.evaluate(() => uiState.visualPreferences.accentColor), hex);
+  }
+  await page.getByLabel('Custom color', { exact: false }).fill('#12abcd');
+  assert.equal(await page.evaluate(() => uiState.visualPreferences.accentColor), '#12abcd');
+  await page.screenshot({ path: resolve(output, 'simulation-custom-color.png'), fullPage: true });
   await page.setViewportSize({ width: 1365, height: 850 });
   await page.goto('http://127.0.0.1:5193/viewer.html');
   await page.getByText('Connect with your host.').waitFor();
@@ -53,5 +65,5 @@ try {
   await page.setViewportSize({ width: 398, height: 790 });
   await page.screenshot({ path: resolve(output, 'viewer-mobile.png'), fullPage: true });
   if (errors.length) throw new Error(errors.join('\n'));
-  process.stdout.write(`Visual QA: 6 screenshots, no page errors. ${output}\n`);
+  process.stdout.write(`Visual QA: 7 screenshots, no page errors. ${output}\n`);
 } finally { await browser?.close(); await server.close(); }

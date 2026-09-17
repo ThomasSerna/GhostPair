@@ -1,7 +1,7 @@
 import type { ControlCommand, ControlConfiguration } from '@ghostpair/protocol';
 
 /** Self-contained: Chrome serializes this function into the page's ISOLATED world. */
-export function installDomControl(captureId: string, generation: number, root = true, configuration: ControlConfiguration = { mode: 'visual', revision: 0, preferences: { notices: false, duration: 'persistent', seconds: 3 } }) {
+export function installDomControl(captureId: string, generation: number, root = true, configuration: ControlConfiguration = { mode: 'visual', revision: 0, preferences: { notices: false, duration: 'persistent', seconds: 3, accentColor: '#7871e8' } }) {
   type Context = { captureId: string; generation: number; ready: boolean; geometry: string; dispose: () => void; release: () => void; configure: (value: ControlConfiguration) => void };
   const scope = globalThis as typeof globalThis & { __ghostpairControl?: Context };
   const geometry = () => ({ viewportWidth: innerWidth, viewportHeight: innerHeight, offsetLeft: visualViewport?.offsetLeft ?? 0, offsetTop: visualViewport?.offsetTop ?? 0, scale: visualViewport?.scale ?? 1 });
@@ -42,7 +42,11 @@ export function installDomControl(captureId: string, generation: number, root = 
     if (value.revision < configuration.revision) throw new Error('The interaction mode changed.');
     if (value.revision !== configuration.revision || value.mode !== configuration.mode) { release(); clearVisual(); }
     configuration = value;
+    updateAccent();
     if (!value.preferences.notices) { notice?.remove(); notice = undefined; noticeUntil = 0; }
+  }
+  function updateAccent() {
+    layer?.style.setProperty('--gp-accent', configuration.preferences.accentColor ?? '#7871e8');
   }
   function ensureLayer() {
     if (layer) { if (!layer.isConnected) document.documentElement.append(layer); return; }
@@ -50,6 +54,7 @@ export function installDomControl(captureId: string, generation: number, root = 
     layer.dataset.ghostpairVisual = '';
     layer.setAttribute('aria-hidden', 'true');
     layer.style.cssText = 'all:initial!important;position:fixed!important;inset:0!important;width:100vw!important;height:100vh!important;z-index:2147483647!important;pointer-events:none!important;overflow:hidden!important;contain:strict!important;';
+    updateAccent();
     shadow = layer.attachShadow({ mode: 'closed' });
     const style = document.createElement('style');
     style.textContent = ':host{pointer-events:none!important}*{box-sizing:border-box;pointer-events:none!important;user-select:none}div{position:absolute;margin:0}';
@@ -101,7 +106,7 @@ export function installDomControl(captureId: string, generation: number, root = 
     const paintFocus = virtualFocus instanceof HTMLElement && !(virtualFocus instanceof HTMLIFrameElement || virtualFocus instanceof HTMLFrameElement) && !disabled(virtualFocus);
     if (paintFocus && virtualFocus instanceof HTMLElement) {
       focusMark ??= node(); rectStyle(virtualFocus, focusMark);
-      Object.assign(focusMark.style, { border: '2px solid #7871e8', borderRadius: '3px', background: 'transparent' });
+      Object.assign(focusMark.style, { border: '2px solid var(--gp-accent)', borderRadius: '3px', background: 'transparent' });
     } else { focusMark?.remove(); focusMark = undefined; }
     for (let i = halos.length - 1; i >= 0; i--) {
       const halo = halos[i]!;
@@ -120,7 +125,7 @@ export function installDomControl(captureId: string, generation: number, root = 
     noticeUntil = now + 1500; lastNotice = now; scheduleDraw();
   }
   function halo(x: number, y: number) {
-    const dot = node(); dot.style.cssText = `left:${x - 15}px;top:${y - 15}px;width:30px;height:30px;border:2px solid #7871e8;border-radius:50%;background:rgba(120,113,232,.12);`;
+    const dot = node(); dot.style.cssText = `left:${x - 15}px;top:${y - 15}px;width:30px;height:30px;border:2px solid var(--gp-accent);border-radius:50%;background:color-mix(in srgb,var(--gp-accent) 12%,transparent);`;
     halos.push({ node: dot, x, y, until: performance.now() + 500 }); scheduleDraw();
   }
   function previewFor(element: HTMLElement) {
@@ -140,7 +145,7 @@ export function installDomControl(captureId: string, generation: number, root = 
     const value = preview.value ?? '', start = Math.min(preview.anchor, preview.caret), end = Math.max(preview.anchor, preview.caret);
     const masked = element instanceof HTMLInputElement && element.type === 'password';
     const display = (text: string) => masked ? '•'.repeat(Array.from(text).length) : text;
-    const selection = document.createElement('span'); selection.textContent = display(value.slice(start, end)); selection.style.cssText = 'background:#c9c5ff;color:inherit';
+    const selection = document.createElement('span'); selection.textContent = display(value.slice(start, end)); selection.style.cssText = 'background:color-mix(in srgb,var(--gp-accent) 30%,transparent);color:inherit';
     const caret = document.createElement('span'); caret.style.cssText = 'border-left:1px solid currentColor;height:1em';
     preview.cursor = element === virtualFocus ? caret : undefined;
     preview.node.replaceChildren(document.createTextNode(display(value.slice(0, start))),
@@ -164,7 +169,7 @@ export function installDomControl(captureId: string, generation: number, root = 
   function markChecked(element: HTMLElement, checked: boolean, radio: boolean) {
     const preview = previewFor(element); preview.checked = checked;
     preview.node.textContent = checked ? radio ? '●' : '✓' : '';
-    preview.node.style.cssText = `border:1px solid #7871e8;border-radius:${radio ? '50%' : '3px'};background:#fff;color:#635bcd;font:bold 14px/1 system-ui;text-align:center;overflow:hidden;`;
+    preview.node.style.cssText = `border:1px solid var(--gp-accent);border-radius:${radio ? '50%' : '3px'};background:#fff;color:var(--gp-accent);font:bold 14px/1 system-ui;text-align:center;overflow:hidden;`;
   }
   function activateVisual(element: HTMLElement) {
     if (disabled(element)) return;
@@ -180,7 +185,7 @@ export function installDomControl(captureId: string, generation: number, root = 
       markChecked(element, isRadio || !(previews.get(element)?.checked ?? element.getAttribute('aria-checked') === 'true'), isRadio);
     } else if (element.matches('button,a[href],input[type="button"],input[type="submit"],input[type="reset"],[role="button"]')) {
       const preview = previewFor(element); preview.until = performance.now() + 180;
-      preview.node.style.cssText = 'background:rgba(120,113,232,.22);border:2px solid #7871e8;border-radius:4px;';
+      preview.node.style.cssText = 'background:color-mix(in srgb,var(--gp-accent) 22%,transparent);border:2px solid var(--gp-accent);border-radius:4px;';
     }
   }
   function insertVisual(text: string) {

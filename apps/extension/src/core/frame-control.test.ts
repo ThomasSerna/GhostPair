@@ -35,7 +35,7 @@ function harness() {
   const control = new FrameControl(() => usable);
   const input = (type = 'pointer', extras: object = {}): any => type === 'pointer' ? { ...p, controlRevision: 0, type, event: 'down', x: 450, y: 175, button: 'left', buttons: 1, modifiers: 0, clickCount: 1, ...extras } : { ...p, controlRevision: 0, type, text: 'hello', ...extras };
   const key = (event: 'down' | 'up', extras: object = {}): Extract<ControlCommand, { type: 'key' }> => ({ ...p, type: 'key', controlRevision: 0, event, key: 'Shift', code: 'ShiftLeft', keyCode: 16, modifiers: 8, repeat: false, ...extras });
-  const live = { mode: 'live' as const, revision: 0, preferences: { notices: false, duration: 'persistent' as const, seconds: 3 } };
+  const live = { mode: 'live' as const, revision: 0, preferences: { notices: false, duration: 'persistent' as const, seconds: 3, accentColor: '#7871e8' } };
   void control.configure(live);
   return { control, topology, frame, routes, indices, operations, committed, sendMessage, scripting, navigation, input, key, disable: () => { usable = false; } };
 }
@@ -51,7 +51,7 @@ it('cancels an in-flight route and queued or delayed input before changing mode'
   const first = h.control.execute(h.input()).catch(error => error);
   await entered.promise;
   const queued = h.control.execute(h.input('text')).catch(error => error);
-  await h.control.configure({ mode: 'visual', revision: 1, preferences: { notices: false, duration: 'persistent', seconds: 3 } });
+  await h.control.configure({ mode: 'visual', revision: 1, preferences: { notices: false, duration: 'persistent', seconds: 3, accentColor: '#7871e8' } });
   gate.resolve({ ok: true, token: 'old' });
   expect(await first).toBeInstanceOf(Error); expect(await queued).toBeInstanceOf(Error);
   await expect(h.control.execute(h.input('text'))).rejects.toThrow('mode changed');
@@ -64,7 +64,7 @@ it('tracks virtual iframe focus and expires the entire preview after inactivity'
   vi.useFakeTimers();
   try {
     const h = harness(); await h.control.bind(p);
-    await h.control.configure({ mode: 'visual', revision: 1, preferences: { notices: true, duration: 'temporary', seconds: 0.5 } });
+    await h.control.configure({ mode: 'visual', revision: 1, preferences: { notices: true, duration: 'temporary', seconds: 0.5, accentColor: '#7871e8' } });
     const original = h.sendMessage.getMockImplementation()!;
     h.sendMessage.mockImplementation(async (...args) => ({ ...await original(...args), ...(args[1].operation === 'commit' ? { visualActivity: 'click' } : {}) }));
     await h.control.execute({ ...h.input(), controlRevision: 1 });

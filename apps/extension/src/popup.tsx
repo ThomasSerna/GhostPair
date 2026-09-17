@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { MIN_PASSWORD_LENGTH, PasswordSchema, SettingsSchema, VisualSecondsSchema, validateSignalingUrl } from '@ghostpair/protocol';
+import { MIN_PASSWORD_LENGTH, PasswordSchema, SettingsSchema, validateSignalingUrl, type VisualPreferences } from '@ghostpair/protocol';
+import { SimulationPreferences } from './simulation-preferences';
 import { Brand, Status, Notifications, formatDeviceId, request, requestSessionPermissions, useSession } from './ui';
 import './styles.css';
 
@@ -78,6 +79,10 @@ function Popup() {
     void run(async () => { await request('ui.viewer.open'); });
   }
 
+  function saveVisualPreferences(preferences: VisualPreferences) {
+    void run(async () => setState(await request('ui.visual.preferences', { preferences })));
+  }
+
   return <main className="popup">
     <header className="popup-header">
       <Brand/>
@@ -93,6 +98,11 @@ function Popup() {
       <button className="primary" disabled={busy} onClick={() => void saveSettings()}>Save settings</button>
       <button className="secondary" disabled={busy} onClick={() => void run(async () => { setState(await request('ui.settings.reset')); setSettingsOpen(false); })}>Use build defaults</button>
       <details><summary>Extension identifier</summary><code className="extension-id">{chrome.runtime.id}</code><p className="helper">Your server administrator must allow this identifier.</p></details>
+      {state && <section className="simulation-settings" aria-label="Simulation settings">
+        <h2>Simulation</h2>
+        <p className="helper">Saved automatically for your next hosted session.</p>
+        <SimulationPreferences preferences={state.visualPreferences} busy={busy} onChange={saveVisualPreferences}/>
+      </section>}
     </section> : active ? <section className="session-panel">
       <Status state={state}/>
       <h1>{state.role === 'host' ? 'A space for two.' : 'Your remote session.'}</h1>
@@ -123,9 +133,7 @@ function Popup() {
         <section className="simulation-settings" aria-label="Simulation settings">
           <label>Interaction mode<select value={state.controlMode} disabled={busy} onChange={e => void run(async () => setState(await request('ui.control.mode', { mode: e.target.value })))}><option value="visual">Visual only</option><option value="live">Live control</option></select></label>
           <p className="helper">Visual only previews clicks and typing. Scrolling, navigation and tab management remain live.</p>
-          <label>Simulation duration<select value={state.visualPreferences.duration} disabled={busy} onChange={e => void run(async () => setState(await request('ui.visual.preferences', { preferences: { ...state.visualPreferences, duration: e.target.value } })))}><option value="persistent">Until cleared</option><option value="temporary">Temporary</option></select></label>
-          {state.visualPreferences.duration === 'temporary' && <label>Seconds without interaction<input type="number" min={0.1} max={30} step={0.1} defaultValue={state.visualPreferences.seconds} key={state.visualPreferences.seconds} disabled={busy} onBlur={e => { const seconds = e.target.valueAsNumber; if (!VisualSecondsSchema.safeParse(seconds).success) { e.target.value = String(state.visualPreferences.seconds); return; } if (seconds !== state.visualPreferences.seconds) void run(async () => setState(await request('ui.visual.preferences', { preferences: { ...state.visualPreferences, seconds } }))); }}/></label>}
-          <label className="check"><input type="checkbox" checked={state.visualPreferences.notices} disabled={busy} onChange={e => void run(async () => setState(await request('ui.visual.preferences', { preferences: { ...state.visualPreferences, notices: e.target.checked } })))}/><span>Simulation notices<small>Briefly label simulated clicks and typing on the shared page.</small></span></label>
+          <SimulationPreferences preferences={state.visualPreferences} busy={busy} onChange={saveVisualPreferences}/>
           <button className="secondary" disabled={busy || state.controlMode !== 'visual'} onClick={() => void run(async () => setState(await request('ui.visual.clear')))}>Clear simulation</button>
         </section>
       </> : <button className="primary" disabled={busy} onClick={openViewer}>Open remote viewer ↗</button>}

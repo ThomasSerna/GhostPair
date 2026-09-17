@@ -48,6 +48,7 @@ export const VisualPreferencesSchema = z.object({
   notices: z.boolean().default(false),
   duration: z.enum(['persistent', 'temporary']).default('persistent'),
   seconds: VisualSecondsSchema.default(3),
+  accentColor: z.string().regex(/^#[\da-f]{6}$/i, 'Choose a six-digit hex color.').transform(value => value.toLowerCase()).default('#7871e8'),
 }).strict();
 export type VisualPreferences = z.infer<typeof VisualPreferencesSchema>;
 export const ControlModeSchema = z.enum(['visual', 'live']);

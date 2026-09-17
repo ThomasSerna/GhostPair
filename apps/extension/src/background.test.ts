@@ -65,7 +65,7 @@ describe('background connection ownership and settings', () => {
     const h = await harness();
     expect((await h.send('ui.status')).state).toMatchObject({ controlMode: 'visual', visualPreferences: { notices: false, duration: 'persistent', seconds: 3 } });
     await h.send('ui.host.start', { password: 'Eight-42' });
-    const preferences = { notices: true, duration: 'temporary', seconds: 12 };
+    const preferences = { notices: true, duration: 'temporary', seconds: 0.5, accentColor: '#12abcd' };
     const saved = await h.send('ui.visual.preferences', { preferences });
     expect(saved.state.status).toBe('starting');
     expect(saved.state.visualPreferences).toEqual(preferences);
@@ -77,6 +77,19 @@ describe('background connection ownership and settings', () => {
     expect((await h.send('ui.status')).state).toMatchObject({ controlMode: 'visual', controlRevision: 0, visualPreferences: preferences });
     await h.send('ui.settings.reset'); expect(h.stored.visualPreferences).toEqual(preferences);
     const restarted = await harness(h.stored); expect((await restarted.send('ui.status')).state.visualPreferences).toEqual(preferences);
+  });
+  it('upgrades legacy visual preferences and saves colors before hosting', async () => {
+    const legacy = { notices: true, duration: 'temporary', seconds: 12 };
+    const h = await harness({ visualPreferences: legacy });
+    expect((await h.send('ui.status')).state.visualPreferences).toEqual({ ...legacy, accentColor: '#7871e8' });
+    const preferences = { ...legacy, seconds: 0.5, accentColor: '#abcdef' };
+    expect((await h.send('ui.visual.preferences', { preferences })).state.visualPreferences).toEqual(preferences);
+    expect(capture.configure).not.toHaveBeenCalled();
+    const invalid = await h.send('ui.visual.preferences', { preferences: { ...preferences, accentColor: 'red' } });
+    expect(invalid.ok).toBe(false);
+    expect(h.stored.visualPreferences).toEqual(preferences);
+    await h.send('ui.host.start', { password: 'Eight-42' });
+    expect(capture.configure).toHaveBeenCalledWith({ mode: 'visual', revision: 0, preferences });
   });
   it('preserves manual settings until build defaults are explicitly restored', async () => {
     const h = await harness(); const defaults = (await h.send('ui.status')).state.settings;

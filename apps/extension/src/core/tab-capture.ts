@@ -20,7 +20,7 @@ export class TabCapture {
   private paused = false;
   private control = true;
   private configuring = false;
-  private configuration: ControlConfiguration = { mode: 'visual', revision: 0, preferences: { notices: false, duration: 'persistent', seconds: 3 } };
+  private configuration: ControlConfiguration = { mode: 'visual', revision: 0, preferences: { notices: false, duration: 'persistent', seconds: 3, accentColor: '#7871e8' } };
   private tabs: TabInfo[] = [];
   private sources = new Map<number, string>();
   private acquiring = new Map<number, { canceled: boolean }>();
