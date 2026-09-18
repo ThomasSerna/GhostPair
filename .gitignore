@@ -12,3 +12,5 @@ tests/browser/.artifacts/
 playwright-report/
 test-results/
 .DS_Store
+
+tests/server/.artifacts/

@@ -3,10 +3,11 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { WebSocket } from 'ws';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ServerSignalMessageSchema, type ClientSignalMessage, type ServerSignalMessage } from '@ghostpair/protocol';
 import { createServer, type SignalingServer } from './server.js';
 import type { ServerConfig } from './config.js';
+import { Devices, type DeviceStore } from './devices.js';
 
 const origin = `chrome-extension://${'a'.repeat(32)}`;
 const password = 'GhostPair test password 937!';
@@ -51,8 +52,8 @@ class Peer {
   }
 }
 
-async function start(overrides: Partial<ServerConfig> = {}) {
-  const server = createServer({ databasePath: ':memory:', allowedOrigins: [origin], port: 0, scryptN: 1024, ...overrides });
+async function start(overrides: Partial<ServerConfig> = {}, store?: DeviceStore) {
+  const server = createServer({ databasePath: ':memory:', allowedOrigins: [origin], port: 0, scryptN: 1024, ...overrides }, store);
   servers.push(server);
   const address = await server.listen();
   const base = `http://127.0.0.1:${address.port}`;
@@ -308,4 +309,70 @@ describe('signaling security and lifecycle', () => {
     const response = await fetch(`${app.base}/v1/devices`, { method: 'POST', headers: { Origin: origin, 'X-Forwarded-For': '203.0.113.50' } });
     expect(response.status).toBe(429);
   });
+});
+
+function gate<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>(done => { resolve = done; }); return { promise, resolve };
+}
+
+it('reserves authentication capacity before asynchronous identity lookup and rejects disconnected completions', async () => {
+  const store = new Devices(':memory:'), lookup = gate<boolean>();
+  store.authenticate = vi.fn(() => lookup.promise);
+  const app = await start({ maxAuthConcurrency: 1 }, store);
+  const identity = await app.register(), first = await app.connect(), second = await app.connect();
+  first.send({ type: 'host.open', ...identity, password });
+  await until(() => app.server.stats.activeAuth === 1);
+  second.send({ type: 'host.open', ...identity, password });
+  expect((await second.next('error')).code).toBe('SERVER_BUSY');
+  expect(store.authenticate).toHaveBeenCalledTimes(1);
+  first.socket.close(); await until(() => first.socket.readyState === WebSocket.CLOSED);
+  lookup.resolve(true); await until(() => app.server.stats.activeAuth === 0);
+  expect(app.server.stats.activeRooms).toBe(0);
+});
+
+it('does not resurrect authentication after the socket timeout', async () => {
+  const store = new Devices(':memory:'), lookup = gate<boolean>(); store.authenticate = () => lookup.promise;
+  const app = await start({ authTimeoutMs: 75 }, store), identity = await app.register(), peer = await app.connect();
+  peer.send({ type: 'host.open', ...identity, password });
+  await until(() => peer.socket.readyState === WebSocket.CLOSED);
+  lookup.resolve(true); await until(() => app.server.stats.activeAuth === 0);
+  expect(app.server.stats.activeRooms).toBe(0);
+});
+
+it('drains pending identity work before closing storage on shutdown', async () => {
+  const store = new Devices(':memory:'), lookup = gate<boolean>(); store.authenticate = () => lookup.promise;
+  const close = vi.spyOn(store, 'close');
+  const app = await start({}, store), identity = await app.register(), peer = await app.connect();
+  peer.send({ type: 'host.open', ...identity, password }); await until(() => app.server.stats.activeAuth === 1);
+  const stopping = app.server.close(); expect(close).not.toHaveBeenCalled();
+  lookup.resolve(true); await stopping;
+  expect(close).toHaveBeenCalledOnce(); expect(app.server.stats.activeRooms).toBe(0);
+});
+
+it('reports storage outages without leaking errors and recovers registration and readiness', async () => {
+  const store = new Devices(':memory:'), check = vi.spyOn(store, 'check').mockRejectedValue(new Error('private connection data'));
+  const register = vi.spyOn(store, 'register').mockRejectedValue(new Error('private connection data'));
+  const app = await start({}, store);
+  for (const response of await Promise.all(Array.from({ length: 8 }, () => fetch(app.base + '/ready')))) {
+    expect(response.status).toBe(503); expect(await response.text()).not.toContain('private');
+  }
+  expect(check).toHaveBeenCalledOnce();
+  const failed = await fetch(app.base + '/v1/devices', { method: 'POST', headers: { Origin: origin } });
+  expect(failed.status).toBe(503); expect(await failed.text()).not.toContain('private');
+  check.mockRestore(); register.mockRestore();
+  const identity = await app.register();
+  const auth = vi.spyOn(store, 'authenticate').mockRejectedValueOnce(new Error('private credentials'));
+  const peer = await app.connect(); peer.send({ type: 'host.open', ...identity, password });
+  expect((await peer.next('error')).code).toBe('SERVER_BUSY');
+  peer.send({ type: 'host.open', ...identity, password }); expect((await peer.next('host.ready')).deviceId).toBe(identity.deviceId);
+  expect(auth).toHaveBeenCalledTimes(2);
+  await new Promise(done => setTimeout(done, 1050)); expect((await fetch(app.base + '/ready')).status).toBe(200);
+});
+
+it('does not listen or fall back when storage initialization fails', async () => {
+  const store = new Devices(':memory:'); vi.spyOn(store, 'initialize').mockRejectedValue(new Error('private database URL'));
+  const close = vi.spyOn(store, 'close'); const server = createServer({ port: 0 }, store); servers.push(server);
+  await expect(server.listen()).rejects.toThrow('initialize identity storage');
+  expect(server.httpServer.listening).toBe(false); expect(close).toHaveBeenCalledOnce();
 });

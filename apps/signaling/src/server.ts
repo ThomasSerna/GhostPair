@@ -4,7 +4,8 @@ import { isIP, type AddressInfo } from 'node:net';
 import { WebSocket, WebSocketServer, type RawData } from 'ws';
 import { ClientSignalMessageSchema, isRelaySignal, type ClientSignalMessage, type ServerSignalMessage } from '@ghostpair/protocol';
 import { defaultConfig, type ServerConfig } from './config.js';
-import { Devices } from './devices.js';
+import { Devices, type DeviceStore } from './devices.js';
+import { PostgresDevices } from './postgres-devices.js';
 import { RateLimit } from './rate-limit.js';
 
 type Phase = 'idle' | 'authenticating' | 'hosting' | 'paired' | 'detached';
@@ -18,6 +19,7 @@ interface Client {
   pendingDevice?: string;
   authTimer?: NodeJS.Timeout;
   alive: boolean;
+  authAttempt?: symbol;
   messages: RateLimit;
 }
 interface Room {
@@ -32,9 +34,9 @@ interface Room {
   timer: NodeJS.Timeout;
 }
 
-export function createServer(overrides: Partial<ServerConfig> = {}) {
+export function createServer(overrides: Partial<ServerConfig> = {}, store?: DeviceStore) {
   const config = { ...defaultConfig, ...overrides };
-  const devices = new Devices(config.databasePath);
+  const devices = store ?? (config.databaseUrl !== undefined ? new PostgresDevices({ ...config, databaseUrl: config.databaseUrl }) : new Devices(config.databasePath));
   const clients = new Set<Client>();
   const rooms = new Map<string, Room>();
   const openingHosts = new Map<string, Client>();
@@ -45,6 +47,20 @@ export function createServer(overrides: Partial<ServerConfig> = {}) {
   let activeAuth = 0;
   let stopping = false;
   let closed = false;
+  let initialized = false;
+  let readiness: Promise<boolean> | undefined, readinessUntil = 0;
+  const inFlight = new Set<Promise<unknown>>();
+  function track<T>(work: Promise<T>): Promise<T> {
+    inFlight.add(work); void work.then(() => inFlight.delete(work), () => inFlight.delete(work)); return work;
+  }
+  async function ready() {
+    if (!initialized || stopping) return false;
+    if (!readiness || Date.now() >= readinessUntil) {
+      readinessUntil = Infinity;
+      readiness = devices.check().then(() => true, () => false).finally(() => { readinessUntil = Date.now() + 1000; });
+    }
+    return await readiness && !stopping;
+  }
 
   function allowedOrigin(origin: string | undefined): boolean {
     if (!origin) return false;
@@ -75,6 +91,9 @@ export function createServer(overrides: Partial<ServerConfig> = {}) {
       json(response, stopping ? 503 : 200, { status: stopping ? 'stopping' : 'ok' });
       return;
     }
+    if (request.method === 'GET' && request.url === '/ready') {
+      const available = await ready(); json(response, available ? 200 : 503, { status: available ? 'ready' : 'unavailable' }); return;
+    }
     if (request.url !== '/v1/devices' || !['POST', 'OPTIONS'].includes(request.method ?? '')) {
       json(response, 404, { error: 'NOT_FOUND' }); return;
     }
@@ -88,7 +107,7 @@ export function createServer(overrides: Partial<ServerConfig> = {}) {
       response.setHeader('Access-Control-Allow-Headers', 'Content-Type');
       response.writeHead(204); response.end(); return;
     }
-    if (stopping || devices.count >= config.maxRegisteredDevices) {
+    if (stopping) {
       json(response, 503, { error: 'CAPACITY_REACHED' }); return;
     }
     if (!registrationRate.allow(requestIp(request))) {
@@ -101,17 +120,20 @@ export function createServer(overrides: Partial<ServerConfig> = {}) {
       size += Buffer.byteLength(chunk);
       if (size > 1024) { json(response, 413, { error: 'PAYLOAD_TOO_LARGE' }); return; }
     }
-    // Capacity is rechecked after body I/O, since other registrations may have completed.
-    if (stopping || devices.count >= config.maxRegisteredDevices) {
+    // Capacity checking and insertion are atomic inside the storage adapter.
+    if (stopping) {
       json(response, 503, { error: 'CAPACITY_REACHED' }); return;
     }
-    const identity = devices.create();
+    let identity;
+    try { identity = await devices.register(config.maxRegisteredDevices); }
+    catch { counters.internalErrors++; json(response, 503, { error: 'STORAGE_UNAVAILABLE' }); return; }
+    if (!identity) { json(response, 503, { error: 'CAPACITY_REACHED' }); return; }
     counters.registrations += 1;
     json(response, 201, identity);
   }
 
   const httpServer = createHttpServer((request, response) => {
-    void handleHttp(request, response).catch(() => {
+    void track(handleHttp(request, response)).catch(() => {
       counters.internalErrors += 1;
       if (!response.headersSent) json(response, 500, { error: 'INTERNAL_ERROR' });
       else response.destroy();
@@ -143,6 +165,7 @@ export function createServer(overrides: Partial<ServerConfig> = {}) {
   }
 
   function resetClient(client: Client): void {
+    client.authAttempt = undefined;
     client.phase = 'idle';
     client.room = undefined;
     client.role = undefined;
@@ -177,6 +200,7 @@ export function createServer(overrides: Partial<ServerConfig> = {}) {
   }
 
   function release(client: Client): void {
+    client.authAttempt = undefined;
     clients.delete(client);
     clearTimeout(client.authTimer);
     if (client.pendingDevice && openingHosts.get(client.pendingDevice) === client) openingHosts.delete(client.pendingDevice);
@@ -187,100 +211,123 @@ export function createServer(overrides: Partial<ServerConfig> = {}) {
   }
 
   function hashPassword(password: string, salt: Buffer): Promise<Buffer> {
-    activeAuth += 1;
     return new Promise<Buffer>((resolve, reject) => {
       scrypt(password, salt, 32, { N: config.scryptN, r: config.scryptR, p: config.scryptP, maxmem: 256 * 1024 * 1024 }, (failure, hash) => {
-        activeAuth -= 1;
         if (failure) reject(failure); else resolve(hash);
       });
     });
   }
 
-  function beginAuth(client: Client, deviceId: string): boolean {
-    if (client.phase !== 'idle') { error(client, 'INVALID_STATE', 'This connection already participates in a session.'); return false; }
+  function beginAuth(client: Client, deviceId: string): symbol | undefined {
+    if (stopping || !clients.has(client) || client.socket.readyState !== WebSocket.OPEN) return;
+    if (client.phase !== 'idle') { error(client, 'INVALID_STATE', 'This connection already participates in a session.'); return; }
     if (!authIpRate.allow(client.ip) || !authDeviceRate.allow(deviceId)) {
       counters.rateLimited += 1;
-      error(client, 'RATE_LIMITED', 'Too many attempts. Try again later.'); return false;
+      error(client, 'RATE_LIMITED', 'Too many attempts. Try again later.'); return;
     }
-    if (activeAuth >= config.maxAuthConcurrency) { error(client, 'SERVER_BUSY', 'The server is busy. Try again.'); return false; }
+    if (activeAuth >= config.maxAuthConcurrency) { error(client, 'SERVER_BUSY', 'The server is busy. Try again.'); return; }
     client.phase = 'authenticating';
-    return true;
+    activeAuth++; const attempt = Symbol('authentication'); client.authAttempt = attempt; return attempt;
   }
 
+  function currentAttempt(client: Client, attempt: symbol) {
+    return !stopping && clients.has(client) && client.socket.readyState === WebSocket.OPEN && client.phase === 'authenticating' && client.authAttempt === attempt;
+  }
   async function openHost(client: Client, message: Extract<ClientSignalMessage, { type: 'host.open' }>): Promise<void> {
-    if (!beginAuth(client, message.deviceId)) return;
-    if (!devices.authenticate(message.deviceId, message.ownerToken)) {
-      counters.authFailures += 1; client.phase = 'idle';
-      error(client, 'AUTH_FAILED', 'Could not authenticate the device.'); return;
-    }
-    if (rooms.has(message.deviceId) || openingHosts.has(message.deviceId)) {
-      client.phase = 'idle'; error(client, 'HOST_ALREADY_ACTIVE', 'This device already has a session.'); return;
-    }
-    if (rooms.size + openingHosts.size >= config.maxRooms) {
-      client.phase = 'idle'; error(client, 'SERVER_BUSY', 'There is no capacity for another session.'); return;
-    }
-    client.pendingDevice = message.deviceId;
-    openingHosts.set(message.deviceId, client);
-    const salt = randomBytes(16);
-    let passwordHash: Buffer;
-    try { passwordHash = await hashPassword(message.password, salt); }
-    catch {
-      if (openingHosts.get(message.deviceId) === client) openingHosts.delete(message.deviceId);
+    const attempt = beginAuth(client, message.deviceId); if (!attempt) return;
+    try {
+      const authenticated = await devices.authenticate(message.deviceId, message.ownerToken);
+      if (!currentAttempt(client, attempt)) return;
+      if (!authenticated) {
+        counters.authFailures += 1; client.phase = 'idle';
+        error(client, 'AUTH_FAILED', 'Could not authenticate the device.'); return;
+      }
+      if (rooms.has(message.deviceId) || openingHosts.has(message.deviceId)) {
+        client.phase = 'idle'; error(client, 'HOST_ALREADY_ACTIVE', 'This device already has a session.'); return;
+      }
+      if (rooms.size + openingHosts.size >= config.maxRooms) {
+        client.phase = 'idle'; error(client, 'SERVER_BUSY', 'There is no capacity for another session.'); return;
+      }
+      client.pendingDevice = message.deviceId;
+      openingHosts.set(message.deviceId, client);
+      const salt = randomBytes(16);
+      let passwordHash: Buffer;
+      try { passwordHash = await hashPassword(message.password, salt); }
+      catch {
+        salt.fill(0);
+        if (currentAttempt(client, attempt)) {
+          if (openingHosts.get(message.deviceId) === client) openingHosts.delete(message.deviceId);
+          client.pendingDevice = undefined; client.phase = 'idle';
+          error(client, 'SERVER_BUSY', 'Could not start the session.');
+        }
+        counters.internalErrors += 1; return;
+      }
+      if (!currentAttempt(client, attempt) || openingHosts.get(message.deviceId) !== client) {
+        passwordHash.fill(0); salt.fill(0); return;
+      }
+      openingHosts.delete(message.deviceId);
       client.pendingDevice = undefined;
-      client.phase = 'idle'; counters.internalErrors += 1;
-      error(client, 'SERVER_BUSY', 'Could not start the session.'); return;
+      const sessionId = randomBytes(16).toString('hex');
+      const room: Room = {
+        deviceId: message.deviceId, sessionId, host: client, salt, passwordHash, paired: false,
+        timer: setTimeout(() => removeRoom(room, true, 'The connection waiting period expired.'), config.waitingRoomTimeoutMs),
+      };
+      room.timer.unref();
+      rooms.set(room.deviceId, room);
+      client.phase = 'hosting'; client.role = 'host'; client.sessionId = sessionId; client.room = room;
+      clearTimeout(client.authTimer);
+      send(client, { type: 'host.ready', deviceId: message.deviceId, sessionId });
+    } catch {
+      counters.internalErrors++;
+      if (currentAttempt(client, attempt)) { client.phase = 'idle'; error(client, 'SERVER_BUSY', 'Identity storage is unavailable. Try again later.'); }
+    } finally {
+      activeAuth--;
+      if (client.authAttempt === attempt) client.authAttempt = undefined;
     }
-    if (stopping || !clients.has(client) || client.socket.readyState !== WebSocket.OPEN || client.phase !== 'authenticating' || openingHosts.get(message.deviceId) !== client) {
-      passwordHash.fill(0); salt.fill(0); return;
-    }
-    openingHosts.delete(message.deviceId);
-    client.pendingDevice = undefined;
-    const sessionId = randomBytes(16).toString('hex');
-    const room: Room = {
-      deviceId: message.deviceId, sessionId, host: client, salt, passwordHash, paired: false,
-      timer: setTimeout(() => removeRoom(room, true, 'The connection waiting period expired.'), config.waitingRoomTimeoutMs),
-    };
-    room.timer.unref();
-    rooms.set(room.deviceId, room);
-    client.phase = 'hosting'; client.role = 'host'; client.sessionId = sessionId; client.room = room;
-    clearTimeout(client.authTimer);
-    send(client, { type: 'host.ready', deviceId: message.deviceId, sessionId });
   }
 
   async function joinGuest(client: Client, message: Extract<ClientSignalMessage, { type: 'guest.join' }>): Promise<void> {
-    if (!beginAuth(client, message.deviceId)) return;
-    const room = rooms.get(message.deviceId);
-    if (!room || room.paired || room.pendingGuest) {
-      client.phase = 'idle'; error(client, 'SESSION_UNAVAILABLE', 'The session is unavailable.'); return;
+    const attempt = beginAuth(client, message.deviceId); if (!attempt) return;
+    try {
+      const room = rooms.get(message.deviceId);
+      if (!room || room.paired || room.pendingGuest) {
+        client.phase = 'idle'; error(client, 'SESSION_UNAVAILABLE', 'The session is unavailable.'); return;
+      }
+      room.pendingGuest = client;
+      client.room = room;
+      let hash: Buffer;
+      try { hash = await hashPassword(message.password, room.salt); }
+      catch {
+        if (room.pendingGuest === client) room.pendingGuest = undefined;
+        if (currentAttempt(client, attempt) && client.room === room) { client.room = undefined; client.phase = 'idle'; }
+        counters.internalErrors += 1;
+        error(client, 'SERVER_BUSY', 'Could not verify the password.'); return;
+      }
+      const current = currentAttempt(client, attempt) && rooms.get(message.deviceId) === room && room.pendingGuest === client && room.host.socket.readyState === WebSocket.OPEN;
+      if (!current) { hash.fill(0); return; }
+      room.pendingGuest = undefined;
+      const matches = timingSafeEqual(hash, room.passwordHash);
+      hash.fill(0);
+      if (!matches) {
+        client.room = undefined; client.phase = 'idle'; counters.authFailures += 1;
+        error(client, 'AUTH_FAILED', 'Could not authenticate the connection.'); return;
+      }
+      room.paired = true;
+      room.guest = client;
+      room.passwordHash.fill(0); room.salt.fill(0);
+      clearTimeout(room.timer); clearTimeout(client.authTimer);
+      client.phase = 'paired'; client.role = 'guest'; client.sessionId = room.sessionId;
+      room.host.phase = 'paired';
+      counters.sessionsPaired += 1;
+      send(client, { type: 'paired', role: 'guest', sessionId: room.sessionId });
+      send(room.host, { type: 'paired', role: 'host', sessionId: room.sessionId });
+    } catch {
+      counters.internalErrors++;
+      if (currentAttempt(client, attempt)) { client.phase = 'idle'; error(client, 'SERVER_BUSY', 'Identity storage is unavailable. Try again later.'); }
+    } finally {
+      activeAuth--;
+      if (client.authAttempt === attempt) client.authAttempt = undefined;
     }
-    room.pendingGuest = client;
-    client.room = room;
-    let hash: Buffer;
-    try { hash = await hashPassword(message.password, room.salt); }
-    catch {
-      if (room.pendingGuest === client) room.pendingGuest = undefined;
-      if (client.room === room) { client.room = undefined; client.phase = 'idle'; }
-      counters.internalErrors += 1;
-      error(client, 'SERVER_BUSY', 'Could not verify the password.'); return;
-    }
-    const current = !stopping && clients.has(client) && client.socket.readyState === WebSocket.OPEN && client.phase === 'authenticating' && rooms.get(message.deviceId) === room && room.pendingGuest === client && room.host.socket.readyState === WebSocket.OPEN;
-    if (!current) { hash.fill(0); return; }
-    room.pendingGuest = undefined;
-    const matches = timingSafeEqual(hash, room.passwordHash);
-    hash.fill(0);
-    if (!matches) {
-      client.room = undefined; client.phase = 'idle'; counters.authFailures += 1;
-      error(client, 'AUTH_FAILED', 'Could not authenticate the connection.'); return;
-    }
-    room.paired = true;
-    room.guest = client;
-    room.passwordHash.fill(0); room.salt.fill(0);
-    clearTimeout(room.timer); clearTimeout(client.authTimer);
-    client.phase = 'paired'; client.role = 'guest'; client.sessionId = room.sessionId;
-    room.host.phase = 'paired';
-    counters.sessionsPaired += 1;
-    send(client, { type: 'paired', role: 'guest', sessionId: room.sessionId });
-    send(room.host, { type: 'paired', role: 'host', sessionId: room.sessionId });
   }
 
   async function handleMessage(client: Client, data: RawData, binary: boolean): Promise<void> {
@@ -331,7 +378,7 @@ export function createServer(overrides: Partial<ServerConfig> = {}) {
       ws.on('close', () => release(client));
       ws.on('error', () => { ws.terminate(); });
       ws.on('message', (data, binary) => {
-        void handleMessage(client, data, binary).catch(() => {
+        void track(handleMessage(client, data, binary)).catch(() => {
           counters.internalErrors += 1;
           error(client, 'INTERNAL_ERROR', 'Could not process the message.'); ws.close(1011, 'Internal error');
         });
@@ -352,10 +399,17 @@ export function createServer(overrides: Partial<ServerConfig> = {}) {
     httpServer,
     get stats() { return { ...counters, activeConnections: clients.size, activeRooms: rooms.size, activeAuth }; },
     async listen(port = config.port, host = config.host): Promise<AddressInfo> {
-      await new Promise<void>((resolve, reject) => {
-        httpServer.once('error', reject);
-        httpServer.listen(port, host, () => { httpServer.off('error', reject); resolve(); });
-      });
+      try { await devices.initialize(); initialized = true; }
+      catch { await devices.close().catch(() => undefined); clearInterval(heartbeat); throw new Error('Could not initialize identity storage.'); }
+      try {
+        await new Promise<void>((resolve, reject) => {
+          httpServer.once('error', reject);
+          httpServer.listen(port, host, () => { httpServer.off('error', reject); resolve(); });
+        });
+      } catch {
+        initialized = false; clearInterval(heartbeat); await devices.close();
+        throw new Error('Could not bind the signaling port.');
+      }
       return httpServer.address() as AddressInfo;
     },
     async close(): Promise<void> {
@@ -366,7 +420,8 @@ export function createServer(overrides: Partial<ServerConfig> = {}) {
       for (const client of clients) { release(client); client.socket.terminate(); }
       wss.close();
       if (httpServer.listening) await new Promise<void>((resolve) => { httpServer.close(() => resolve()); httpServer.closeAllConnections(); });
-      devices.close();
+      await Promise.allSettled([...inFlight]);
+      await devices.close();
     },
   };
 }

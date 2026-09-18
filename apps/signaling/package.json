@@ -15,9 +15,11 @@
   },
   "dependencies": {
     "@ghostpair/protocol": "*",
+    "pg": "^8.23.0",
     "ws": "^8.18.3"
   },
   "devDependencies": {
+    "@types/pg": "^8.23.1",
     "@types/ws": "^8.18.1",
     "tsx": "^4.20.5"
   }

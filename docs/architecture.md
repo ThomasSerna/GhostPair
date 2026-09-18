@@ -20,9 +20,11 @@ flowchart LR
 
 ## Identity and pairing
 
-`POST /v1/devices` creates a random 128-bit public identifier and returns a 256-bit owner credential once. SQLite stores the SHA-256 hash of that credential. The extension stores it in `storage.local`, restricted to `TRUSTED_CONTEXTS`; this does not encrypt the browser profile against someone with disk access.
+`POST /v1/devices` creates a random 128-bit public identifier and returns a 256-bit owner credential once. SQLite (local development) or PostgreSQL (DATABASE_URL) stores the SHA-256 hash of that credential. Both implement the asynchronous DeviceStore contract. Registration checks capacity and inserts atomically; PostgreSQL uses a single-client transaction with a table lock. A four-connection pool has five-second connection and query limits; TLS verifies the server certificate by default. Storage is initialized before the server listens. The extension stores it in `storage.local`, restricted to `TRUSTED_CONTEXTS`; this does not encrypt the browser profile against someone with disk access.
 
-`/v1/connect` accepts WSS messages defined by `packages/protocol`: `host.open`, `guest.join`, `signal`, `host.close`, and `ping`. The server emits `host.ready`, `paired`, `signal`, `ended`, `error`, and `pong`. Passwords contain 8–256 characters and are checked using asynchronous scrypt with a random salt and bounded concurrency. They are not saved in SQLite. Knowing a public identifier does not grant the host role.
+`/v1/connect` accepts WSS messages defined by `packages/protocol`: `host.open`, `guest.join`, `signal`, `host.close`, and `ping`. The server emits `host.ready`, `paired`, `signal`, `ended`, `error`, and `pong`. Passwords contain 8–256 characters and are checked using asynchronous scrypt with a random salt and bounded concurrency. They are not saved in either database. Authentication capacity is reserved before identity lookup, and attempt tokens reject completions after timeout, disconnect or shutdown. Knowing a public identifier does not grant the host role.
+
+GET /health reports process liveness; GET /ready reports initialized storage availability with coalesced probes cached for one second. Shutdown stops admission, drains tracked handlers, and closes storage. Storage failures return generic errors without exposing connection strings.
 
 Rooms belong to the authenticated socket. Each opening receives a new session ID; signaling is checked against the session and socket role. Room validity is checked again after asynchronous cryptographic work. A second guest cannot displace the first. Protocol incompatibility is reported explicitly; both participants must update together when the peer protocol changes. Existing installation identities do not need to be recreated.
 

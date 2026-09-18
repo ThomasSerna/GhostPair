@@ -1,7 +1,12 @@
+import { validatePostgresConfig } from './postgres-devices.js';
+
 export interface ServerConfig {
   host: string;
   port: number;
   databasePath: string;
+  databaseUrl?: string;
+  databaseSslMode: 'verify-full' | 'disable';
+  databaseSslCaFile?: string;
   allowedOrigins: string[];
   allowLocalhostOrigins: boolean;
   trustProxy: boolean;
@@ -30,6 +35,7 @@ export const defaultConfig: ServerConfig = {
   host: '127.0.0.1',
   port: 8787,
   databasePath: './data/ghostpair.sqlite',
+  databaseSslMode: 'verify-full',
   allowedOrigins: [],
   allowLocalhostOrigins: false,
   trustProxy: false,
@@ -69,6 +75,9 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): ServerConfi
     host: env.HOST ?? defaultConfig.host,
     port: positiveInt(env.PORT, defaultConfig.port, 'PORT'),
     databasePath: env.DATABASE_PATH ?? defaultConfig.databasePath,
+    databaseUrl: env.DATABASE_URL,
+    databaseSslMode: (env.DATABASE_SSL_MODE ?? 'verify-full') as ServerConfig['databaseSslMode'],
+    databaseSslCaFile: env.DATABASE_SSL_CA_FILE,
     allowedOrigins: (env.ALLOWED_ORIGINS ?? '').split(',').map((value) => value.trim()).filter(Boolean),
     allowLocalhostOrigins: env.DEV_ALLOW_LOCALHOST_ORIGINS === 'true',
     trustProxy: env.TRUST_PROXY === 'true',
@@ -77,6 +86,8 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): ServerConfi
     maxRooms: positiveInt(env.MAX_ROOMS, defaultConfig.maxRooms, 'MAX_ROOMS'),
     maxRegisteredDevices: positiveInt(env.MAX_REGISTERED_DEVICES, defaultConfig.maxRegisteredDevices, 'MAX_REGISTERED_DEVICES'),
   };
+  if (config.databaseUrl !== undefined) validatePostgresConfig({ ...config, databaseUrl: config.databaseUrl });
+  else if (env.DATABASE_SSL_MODE || env.DATABASE_SSL_CA_FILE) throw new Error('Database TLS configuration requires DATABASE_URL.');
   for (const origin of config.allowedOrigins) {
     if (!/^chrome-extension:\/\/[a-p]{32}$/.test(origin)) {
       throw new Error('ALLOWED_ORIGINS must contain exact Chrome/Edge extension origins');

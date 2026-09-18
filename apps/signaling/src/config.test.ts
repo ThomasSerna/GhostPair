@@ -37,3 +37,12 @@ describe('bounded rate-limit state', () => {
     expect(rate.allow('first', 103)).toBe(true);
   });
 });
+
+it('selects portable PostgreSQL with explicit verified TLS and rejects conflicting URL options', () => {
+  const base = { DEV_ALLOW_LOCALHOST_ORIGINS: 'true', DATABASE_URL: 'postgresql://user:password@localhost/db' };
+  expect(configFromEnv(base)).toMatchObject({ databaseUrl: base.DATABASE_URL, databaseSslMode: 'verify-full' });
+  expect(configFromEnv({ ...base, DATABASE_SSL_MODE: 'disable' }).databaseSslMode).toBe('disable');
+  for (const DATABASE_URL of ['', 'https://localhost/db', 'postgres://localhost', base.DATABASE_URL + '?sslmode=require']) expect(() => configFromEnv({ ...base, DATABASE_URL })).toThrow();
+  expect(() => configFromEnv({ ...base, DATABASE_SSL_MODE: 'require' })).toThrow('DATABASE_SSL_MODE');
+  expect(() => configFromEnv({ ...base, DATABASE_SSL_MODE: 'disable', DATABASE_SSL_CA_FILE: 'ca.pem' })).toThrow();
+});
