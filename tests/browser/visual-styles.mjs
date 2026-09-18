@@ -73,10 +73,12 @@ export async function visualStyles(page, name) {
     await click(`#${id}-button`);
     const pressed = await overlays(`#${id}-button`);
     assert.ok(pressed.some(e => e.border === '2px' && Math.abs(parseFloat(e.radius) - 28) < .1), JSON.stringify({ id, pressed }));
-    assert.ok((await overlays(`#${id}-card`)).some(e => e.border === '2px' && Math.abs(parseFloat(e.radius) - 14) < .1 && e.text === ''));
+    assert.equal((await overlays(`#${id}-card`)).length, 0);
+    assert.ok((await overlays(`#${id}-card .indicator`)).some(e => e.border === '2px'));
     assert.ok((await overlays(`#${id}-r1`)).every(e => e.border === '0px'));
-    assert.ok((await overlays(`#${id}-r2`)).some(e => e.border === '2px'));
-    assert.ok((await overlays(`#${id}-plain`)).some(e => e.border === '2px' && Math.abs(parseFloat(e.radius) - 4) < .1 && e.text === ''));
+    assert.equal((await overlays(`#${id}-r2`)).length, 0);
+    assert.ok((await overlays(`#${id}-r2 .indicator`)).some(e => e.border === '2px'));
+    assert.equal((await overlays(`#${id}-plain`)).length, 0);
   }
   await page.clock.runFor(600);
   await click('#compact');
@@ -90,7 +92,7 @@ export async function visualStyles(page, name) {
   await send(undefined, { operation: 'configure', configuration });
   await page.clock.runFor(80);
   await textStyleMatches('light-text');
-  assert.ok((await overlays('#light-card')).some(e => e.color === 'rgb(18, 171, 205)'));
+  assert.ok((await overlays('#light-card .indicator')).some(e => e.color === 'rgb(18, 171, 205)'));
   assert.deepEqual(await snapshot(), original);
   await page.screenshot({ path: resolve(artifactRoot, `visual-styles-${name}-updated.png`), caret: 'initial' });
 

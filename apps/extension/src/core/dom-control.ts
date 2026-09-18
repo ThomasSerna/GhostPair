@@ -78,7 +78,7 @@ export function installDomControl(captureId: string, generation: number, root = 
     drawing = undefined; layer?.remove(); layer = undefined; shadow = undefined; focusMark = undefined; notice = undefined;
     previews.clear(); halos.length = 0; virtualFocus = null; visualDown = null; visualKeys.clear(); noticeUntil = 0; lastNotice = -Infinity;
   }
-  function rectStyle(element: HTMLElement, overlay: HTMLDivElement) {
+  function rectStyle(element: Element, overlay: HTMLDivElement) {
     const box = element.getBoundingClientRect(), style = getComputedStyle(element);
     let left = Math.max(0, box.left), top = Math.max(0, box.top), right = Math.min(innerWidth, box.right), bottom = Math.min(innerHeight, box.bottom);
     let visible = element.getClientRects().length > 0 && style.visibility !== 'hidden' && style.display !== 'none' && Number(style.opacity) !== 0;
@@ -94,11 +94,11 @@ export function installDomControl(captureId: string, generation: number, root = 
   function scaled(value: string, scale: number) {
     return value.replace(/(-?[\d.]+)px/g, (_, number) => `${Number(number) * scale}px`);
   }
-  function surfaceStyle(element: HTMLElement, box: DOMRect, style: CSSStyleDeclaration) {
+  function surfaceStyle(element: Element, box: DOMRect, style: CSSStyleDeclaration) {
     const width = parseFloat(style.width) + (style.boxSizing === 'border-box' ? 0 : parseFloat(style.paddingLeft) + parseFloat(style.paddingRight) + parseFloat(style.borderLeftWidth) + parseFloat(style.borderRightWidth));
     const height = parseFloat(style.height) + (style.boxSizing === 'border-box' ? 0 : parseFloat(style.paddingTop) + parseFloat(style.paddingBottom) + parseFloat(style.borderTopWidth) + parseFloat(style.borderBottomWidth));
-    const sx = box.width / (width || element.offsetWidth || box.width || 1);
-    const sy = box.height / (height || element.offsetHeight || box.height || 1);
+    const sx = box.width / (width || (element instanceof HTMLElement ? element.offsetWidth : 0) || box.width || 1);
+    const sy = box.height / (height || (element instanceof HTMLElement ? element.offsetHeight : 0) || box.height || 1);
     const radius = (value: string) => {
       const [x, y = x] = value.split(' ');
       return `${scaled(x!, sx)} ${scaled(y!, sy)}`;
@@ -120,7 +120,7 @@ export function installDomControl(captureId: string, generation: number, root = 
     };
   }
   // Composite translucent solid backgrounds without copying page DOM or fetching images.
-  function effectiveBackground(element: HTMLElement) {
+  function effectiveBackground(element: Element) {
     const layers: string[] = [];
     for (let current: Element | null = element; current; current = parent(current)) {
       const color = getComputedStyle(current).backgroundColor;
@@ -132,7 +132,7 @@ export function installDomControl(captureId: string, generation: number, root = 
     const dark = scheme.includes('dark') && (!scheme.includes('light') || matchMedia('(prefers-color-scheme: dark)').matches);
     return { backgroundColor: dark ? '#121212' : '#fff', backgroundImage: layers.join(',') || 'none' };
   }
-  function visibleSurface(element: HTMLElement) {
+  function visibleSurface(element: Element) {
     const box = element.getBoundingClientRect();
     if (box.width < 3 || box.height < 3 || !element.getClientRects().length) return false;
     for (let current: Element | null = element; current; current = parent(current)) {
@@ -158,19 +158,20 @@ export function installDomControl(captureId: string, generation: number, root = 
     return element;
   }
   function choiceIndicator(element: HTMLElement, surface: HTMLElement) {
-    const small = (target: HTMLElement) => {
+    const small = (target: Element) => {
       const box = target.getBoundingClientRect();
       return box.width <= 48 && box.height <= 48 && box.width / box.height >= 0.6 && box.width / box.height <= 1.6 && visibleSurface(target);
     };
     if ((element instanceof HTMLInputElement || !element.textContent?.trim()) && small(element)) return element;
-    const candidates = Array.from(surface.querySelectorAll<HTMLElement>('span[aria-hidden="true"],i[aria-hidden="true"],span:empty,i:empty')).filter(target => {
+    const candidates = Array.from(surface.querySelectorAll<Element>('span[aria-hidden="true"],i[aria-hidden="true"],div[aria-hidden="true"],span:empty,i:empty,div:empty,svg[aria-hidden="true"]')).filter(target => {
       if (!small(target) || target.textContent?.trim()) return false;
       const css = getComputedStyle(target), box = target.getBoundingClientRect(), bounds = surface.getBoundingClientRect();
-      return box.left >= bounds.left && box.right <= bounds.right && box.top >= bounds.top && box.bottom <= bounds.bottom && (parseFloat(css.borderTopWidth) > 0 || css.backgroundColor !== 'rgba(0, 0, 0, 0)');
+      return box.left >= bounds.left && box.right <= bounds.right && box.top >= bounds.top && box.bottom <= bounds.bottom && (target instanceof SVGElement || parseFloat(css.borderTopWidth) > 0 || css.backgroundColor !== 'rgba(0, 0, 0, 0)');
     });
-    return candidates.length === 1 ? candidates[0] : undefined;
+    const leaves = candidates.filter(candidate => !candidates.some(other => other !== candidate && candidate.contains(other)));
+    return leaves.length === 1 ? leaves[0] : undefined;
   }
-  function paintOutline(element: HTMLElement, overlay: HTMLDivElement, selected: boolean, tint: number) {
+  function paintOutline(element: Element, overlay: HTMLDivElement, selected: boolean, tint: number) {
     const { box, style } = rectStyle(element, overlay);
     const profile = surfaceStyle(element, box, style);
     Object.assign(overlay.style, {
@@ -183,7 +184,7 @@ export function installDomControl(captureId: string, generation: number, root = 
   }
   function paintChoice(element: HTMLElement, preview: Preview) {
     const surface = choiceSurface(element), indicator = choiceIndicator(element, surface);
-    paintOutline(surface, preview.node, Boolean(preview.checked), 10);
+    preview.node.style.display = 'none';
     if (!indicator) { preview.marker?.remove(); preview.marker = undefined; return; }
     preview.marker ??= node();
     const { box, style } = rectStyle(indicator, preview.marker);
@@ -225,8 +226,9 @@ export function installDomControl(captureId: string, generation: number, root = 
     }
     const paintFocus = virtualFocus instanceof HTMLElement && !(virtualFocus instanceof HTMLIFrameElement || virtualFocus instanceof HTMLFrameElement) && !disabled(virtualFocus);
     if (paintFocus && virtualFocus instanceof HTMLElement) {
-      focusMark ??= node();
-      paintOutline(virtualFocus.matches(choices) ? choiceSurface(virtualFocus) : virtualFocus, focusMark, true, 0);
+      const indicator = virtualFocus.matches(choices) ? choiceIndicator(virtualFocus, choiceSurface(virtualFocus)) : virtualFocus;
+      if (indicator) { focusMark ??= node(); paintOutline(indicator, focusMark, true, 0); }
+      else { focusMark?.remove(); focusMark = undefined; }
     } else { focusMark?.remove(); focusMark = undefined; }
     for (let i = halos.length - 1; i >= 0; i--) {
       const halo = halos[i]!;
@@ -326,8 +328,8 @@ export function installDomControl(captureId: string, generation: number, root = 
       if (command.event === 'down') { visualDown = hit; visualButton = command.button; setVirtualFocus(semantic(hit)); return 'focus'; }
       const clicked = hit && visualButton === command.button ? commonAncestor(visualDown, hit) : null; visualDown = null;
       if (!hit || !clicked) return;
-      halo(command.x, command.y);
       const element = semantic(clicked);
+      if (!element?.matches(choices)) halo(command.x, command.y);
       if (element && command.button === 'left') activateVisual(element);
       return 'click';
     }
