@@ -200,3 +200,51 @@ it('disposes an installation that finishes after its capture was cleared', async
   expect(h.operations.some(o => o.id === 'a' && o.message.operation === 'dispose' && o.message.generation === p.generation)).toBe(true);
   await expect(h.control.execute(h.input())).rejects.toThrow('changed'); expect(h.committed).toEqual([]);
 });
+
+async function localHarness() {
+  const h = harness(); await h.control.bind(p);
+  await h.control.configure({ mode: 'visual', revision: 1, preferences: { notices: false, text: { duration: 'temporary', seconds: 1 }, other: { duration: 'persistent', seconds: 3 }, accentColor: '#7871e8' } });
+  const local = (operation: string, fields: object = {}, documentId = 'a', frameId = 1) => h.control.localVisual({ ...p, controlRevision: 1, operation, ...fields }, { tab: { id: p.tabId } as chrome.tabs.Tab, documentId, frameId });
+  return { ...h, local };
+}
+
+it('accepts host text activity only from the current authorized document', async () => {
+  vi.useFakeTimers();
+  try {
+    const h = await localHarness(), activity = { category: 'text', kind: 'typing' };
+    await expect(h.local('activity', { activity }, 'foreign')).rejects.toThrow('changed');
+    await expect(h.local('activity', { activity, generation: 0 })).rejects.toThrow('changed');
+    await expect(h.local('activity', { activity }, 'a', 2)).rejects.toThrow('changed');
+    await h.local('activity', { activity });
+    await vi.advanceTimersByTimeAsync(700); await h.local('activity', { activity });
+    await vi.advanceTimersByTimeAsync(999); expect(h.operations.some(e => e.message.operation === 'visual.clear')).toBe(false);
+    await vi.advanceTimersByTimeAsync(1); expect(h.operations.filter(e => e.message.operation === 'visual.clear' && e.message.category === 'text')).toHaveLength(4);
+    await h.control.clear();
+  } finally { vi.useRealTimers(); }
+});
+
+it('moves text across frames only after destination insertion and rejects replay', async () => {
+  const h = await localHarness(), original = h.sendMessage.getMockImplementation()!;
+  h.sendMessage.mockImplementation(async (...args) => ({ ...await original(...args), ...(args[1].operation === 'visual.drag.read' ? { text: 'shared 🙂', sourceId: 'source' } : {}) }));
+  const token = '11111111-1111-1111-1111-111111111111';
+  await h.local('drag.start', { token });
+  await h.local('drag.drop', { token, targetId: 'target', revision: 0, offset: 0, copy: false }, 'b', 2);
+  expect(h.operations.filter(e => e.message.operation.startsWith('visual.drag.')).map(e => [e.id, e.message.operation])).toEqual([
+    ['a', 'visual.drag.read'], ['b', 'visual.drag.insert'], ['a', 'visual.drag.delete'], ['a', 'visual.drag.finish'],
+  ]);
+  await expect(h.local('drag.drop', { token, targetId: 'target', revision: 0, offset: 0, copy: false }, 'b', 2)).rejects.toThrow('changed');
+  await h.control.clear();
+});
+
+it('preserves drag source when insertion fails or navigation invalidates the transfer', async () => {
+  const h = await localHarness(), original = h.sendMessage.getMockImplementation()!;
+  h.sendMessage.mockImplementation(async (...args) => ({ ...await original(...args), ...(args[1].operation === 'visual.drag.read' ? { text: 'keep', sourceId: 'source' } : args[1].operation === 'visual.drag.insert' ? { ok: false, error: 'Destination changed' } : {}) }));
+  const token = '11111111-1111-1111-1111-111111111111';
+  await h.local('drag.start', { token });
+  await expect(h.local('drag.drop', { token, targetId: 'target', revision: 0, offset: 0, copy: false }, 'b', 2)).rejects.toThrow('Destination changed');
+  expect(h.operations.some(e => e.message.operation === 'visual.drag.delete')).toBe(false);
+  await h.local('drag.start', { token });
+  h.navigation.onBeforeNavigate.emit({ tabId: p.tabId, frameId: 1 });
+  await expect(h.local('drag.drop', { token, targetId: 'target', revision: 0, offset: 0, copy: false }, 'b', 2)).rejects.toThrow('changed');
+  await h.control.clear();
+});

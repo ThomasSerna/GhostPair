@@ -217,9 +217,13 @@ async function fromTransport(message: Record<string, any>) {
 chrome.runtime.onMessage.addListener((message, sender, respond) => {
   if (sender.id !== chrome.runtime.id || message?.target !== 'background') return;
   const fromOffscreen = pageUrl(sender.url) === chrome.runtime.getURL('offscreen.html'), fromViewer = isViewer(sender), fromPopup = pageUrl(sender.url) === chrome.runtime.getURL('popup.html');
-  if (!fromOffscreen && !fromViewer && !fromPopup && message.type !== 'dom.geometry') return;
+  if (!fromOffscreen && !fromViewer && !fromPopup && !['dom.geometry', 'dom.visual'].includes(message.type)) return;
   void (async () => {
     await ready;
+    if (message.type === 'dom.visual') {
+      if (state.role !== 'host' || state.status !== 'connected' || state.paused || !state.controlEnabled) throw new Error('Simulation is unavailable.');
+      await capture.localVisual(message, sender); return { ok: true };
+    }
     if (message.type === 'dom.geometry') { capture.geometry(message, sender); return { ok: true }; }
     if (fromOffscreen || fromViewer && sender.tab?.id === viewerTabId && message.type.startsWith('transport.')) return await fromTransport(message) ?? { ok: true, state };
     if (message.type === 'ui.status') return { ok: true, state };

@@ -20,6 +20,7 @@ export class FrameControl {
   private canceledPointer = false;
   private keys = new Map<string, Owner>();
   private canceledKeys = new Set<string>();
+  private drag?: { token: string; frame: Frame; started: number };
   private configuration: ControlConfiguration = { mode: 'visual', revision: 0, preferences: { notices: false, text: { duration: 'persistent', seconds: 10 }, other: { duration: 'persistent', seconds: 3 }, accentColor: '#7871e8' } };
   private expiry: Partial<Record<VisualCategory, ReturnType<typeof setTimeout>>> = {};
   private lastActivity: Partial<Record<VisualCategory, number>> = {};
@@ -94,6 +95,7 @@ export class FrameControl {
 
   release() {
     ++this.revision;
+    this.drag = undefined;
     this.pointer = undefined; this.canceledPointer = true;
     for (const code of this.keys.keys()) this.canceledKeys.add(code);
     this.keys.clear();
@@ -107,6 +109,42 @@ export class FrameControl {
     void this.release(); this.presentation = undefined; this.frames.clear(); this.failures.clear(); this.blocked.clear();
     // Generation-scoped disposal cannot remove a newer installation in the same document.
     return p ? Promise.allSettled(frames.map(frame => this.message(p, frame, 'dispose'))).then(() => undefined) : Promise.resolve();
+  }
+
+  async localVisual(message: Record<string, any>, sender: chrome.runtime.MessageSender) {
+    const p = this.presentation, revision = this.revision;
+    const frame = sender.documentId && this.frames.get(sender.documentId);
+    if (!p || !frame || sender.tab?.id !== p.tabId || sender.frameId !== frame.frameId || message.captureId !== p.captureId || message.generation !== p.generation || message.controlRevision !== this.configuration.revision || this.configuration.mode !== 'visual') throw changed();
+    this.check(p, revision);
+    if (message.operation === 'activity') {
+      const activity = message.activity;
+      if (activity?.category !== 'text' || !['focus', 'typing'].includes(activity.kind)) throw new Error('Invalid local activity.');
+      this.activity(activity); return;
+    }
+    if (typeof message.token !== 'string' || !/^[a-f0-9-]{36}$/.test(message.token)) throw new Error('Invalid drag token.');
+    if (message.operation === 'drag.start') {
+      if (this.drag) void this.message(p, this.drag.frame, 'visual.drag.finish', { token: this.drag.token }).catch(() => undefined);
+      this.drag = { token: message.token, frame, started: Date.now() }; return;
+    }
+    if (message.operation !== 'drag.drop' || typeof message.targetId !== 'string' || !Number.isSafeInteger(message.revision) || !Number.isSafeInteger(message.offset) || typeof message.copy !== 'boolean') throw new Error('Invalid drag destination.');
+    const drag = this.drag;
+    if (!drag || drag.token !== message.token || Date.now() - drag.started > 30000 || !this.frames.has(drag.frame.documentId)) throw changed();
+    this.drag = undefined; // Single-use transfer, including failed drops.
+    const work = this.queue.then(async () => {
+      try {
+        const source = await this.request(p, revision, drag.frame, 'visual.drag.read', { token: drag.token });
+        if (typeof source.text !== 'string' || new TextEncoder().encode(source.text).length > 256 * 1024) throw new Error('Invalid dragged text.');
+        const sameField = frame.documentId === drag.frame.documentId && source.sourceId === message.targetId;
+        await this.request(p, revision, frame, sameField && !message.copy ? 'visual.drag.move' : 'visual.drag.insert', {
+          token: drag.token, targetId: message.targetId, revision: message.revision, offset: message.offset, text: source.text,
+        });
+        if (!message.copy && !sameField) await this.request(p, revision, drag.frame, 'visual.drag.delete', { token: drag.token });
+        this.activity({ category: 'text', kind: 'typing' });
+      } finally {
+        if (this.presentation === p) await this.message(p, drag.frame, 'visual.drag.finish', { token: drag.token }).catch(() => undefined);
+      }
+    });
+    this.queue = work.catch(() => undefined); await work;
   }
 
   private retire(frameId: number) {

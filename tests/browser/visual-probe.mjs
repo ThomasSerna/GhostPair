@@ -96,7 +96,45 @@ for (const name of process.argv.slice(2).length ? process.argv.slice(2) : ['chro
     await send(undefined, { operation: 'dispose', controlRevision: 1 });
     assert.equal(await page.locator('[data-ghostpair-visual]').count(), 0);
     await visualStyles(page, name);
-    results.push({ browser: name, nonMutation: true, editing: true, geometry: true, notices: true, adaptiveStyles: true, liveColors: true, staleInputRejected: true });
+    // Real local keyboard/selection with an isolated, extension-owned editor.
+    await page.setContent(fixture); config.mode = 'visual'; config.revision = 0; await install();
+    await click('#text'); await key('a', 2); await text('Guest');
+    const field = await page.locator('#text').boundingBox();
+    await page.mouse.click(field.x + 30, field.y + field.height / 2);
+    await page.keyboard.press('Control+a'); await page.keyboard.insertText('Host á漢🙂'); await page.clock.runFor(40);
+    assert.ok((await contents()).includes('Host á漢🙂'));
+    assert.equal(await page.locator('#text').inputValue(), 'Original');
+    const clipboard = await page.evaluate(() => {
+      const editor = preview.activeElement, data = new DataTransfer();
+      editor.setSelectionRange(0, 4);
+      editor.dispatchEvent(new ClipboardEvent('copy', { clipboardData: data, bubbles: true, cancelable: true }));
+      const copied = data.getData('text/plain');
+      editor.dispatchEvent(new ClipboardEvent('cut', { clipboardData: data, bubbles: true, cancelable: true }));
+      data.setData('text/plain', 'Paste🙂');
+      editor.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }));
+      return { copied, value: editor.value };
+    });
+    assert.equal(clipboard.copied, 'Host'); assert.equal(clipboard.value, 'Paste🙂 á漢🙂');
+    await page.keyboard.press('End');
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send('Input.imeSetComposition', { text: '語', selectionStart: 1, selectionEnd: 1 });
+    const protectedClear = await send(undefined, { operation: 'visual.clear', category: 'text' });
+    assert.equal(protectedClear.protected, true);
+    await page.evaluate(() => {
+      globalThis.deferredReply = undefined;
+      controller({ target: 'ghostpair.dom', captureId: 'fixture', generation: 1, controlRevision: 0, operation: 'command', command: { type: 'text', controlRevision: 0, text: ' remote' } }, { id: 'fixture' }, reply => { globalThis.deferredReply = reply; });
+    });
+    assert.equal(await page.evaluate(() => deferredReply), undefined);
+    await cdp.send('Input.insertText', { text: '語' }); await page.clock.runFor(80);
+    assert.equal(await page.evaluate(() => deferredReply?.ok), true);
+    assert.ok((await contents()).includes('Paste🙂 á漢🙂語 remote'));
+    assert.equal(await page.locator('#text').inputValue(), 'Original');
+    assert.deepEqual(await page.evaluate(() => events.filter(([type, id]) => id === 'text' && ['input', 'change', 'beforeinput'].includes(type))), []);
+    await page.screenshot({ path: resolve(artifactRoot, `visual-host-edit-${name}.png`) });
+    await send(undefined, { operation: 'visual.clear' });
+    assert.equal(await page.locator('[data-ghostpair-visual]').count(), 0);
+    await cdp.detach();
+    results.push({ hostEditing: true, localClipboardEvents: true, imeConcurrency: true, browser: name, nonMutation: true, editing: true, geometry: true, notices: true, adaptiveStyles: true, liveColors: true, staleInputRejected: true });
   } finally { await browser.close(); }
 }
 await writeFile(resolve(artifactRoot, 'visual-results.json'), JSON.stringify(results, null, 2));

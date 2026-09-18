@@ -127,6 +127,9 @@ export class TabCapture {
     if (!parsed.success || JSON.stringify(parsed.data) === JSON.stringify(current)) return;
     this.invalidate(true); this.schedule();
   }
+  localVisual(message: Record<string, any>, sender: chrome.runtime.MessageSender) {
+    return this.frameControl.localVisual(message, sender);
+  }
   refresh(): Promise<void> {
     const work = this.serial.then(() => this.refreshNow());
     this.serial = work.catch(() => undefined); return work;

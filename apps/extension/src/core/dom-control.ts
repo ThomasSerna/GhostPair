@@ -28,8 +28,48 @@ export function installDomControl(captureId: string, generation: number, root = 
   scope.__ghostpairControl = context;
 
   // All preview data and nodes belong to the extension, never to a page control.
-  type Preview = { node: HTMLDivElement; marker?: HTMLDivElement; cursor?: HTMLSpanElement; value?: string; anchor: number; caret: number; checked?: boolean; radio?: boolean; until?: number };
+  type Preview = { id: string; revision: number; editor?: HTMLInputElement | HTMLTextAreaElement; composing?: boolean; selecting?: boolean; node: HTMLDivElement; marker?: HTMLDivElement; cursor?: HTMLSpanElement; value?: string; anchor: number; caret: number; checked?: boolean; radio?: boolean; until?: number };
   const previews = new Map<HTMLElement, Preview>();
+  const editors = new WeakMap<Element, HTMLElement>();
+  const deferredInput: { command: ControlCommand; respond: (result: unknown) => void; timer: ReturnType<typeof setTimeout> }[] = [];
+  let dragging: { token: string; element: HTMLElement; start: number; end: number; revision: number; timer: ReturnType<typeof setTimeout> } | undefined;
+  let dropping = false;
+  const randomToken = () => {
+    const hex = Array.from(crypto.getRandomValues(new Uint8Array(16)), byte => byte.toString(16).padStart(2, '0')).join('');
+    return [hex.slice(0, 8), hex.slice(8, 12), hex.slice(12, 16), hex.slice(16, 20), hex.slice(20)].join('-');
+  };
+  const dragMime = 'application/x-ghostpair-text';
+  function local(operation: string, fields: object = {}): Promise<any> {
+    return chrome.runtime.sendMessage({ target: 'background', type: 'dom.visual', captureId: context.captureId, generation: context.generation, controlRevision: configuration.revision, operation, ...fields });
+  }
+  function localActivity(kind: VisualActivity['kind'] = 'focus') {
+    void local('activity', { activity: { category: 'text', kind } }).catch(() => undefined);
+  }
+  function endDrag() {
+    if (dragging) { clearTimeout(dragging.timer); const preview = previews.get(dragging.element); if (preview) preview.selecting = false; }
+    dragging = undefined;
+  }
+  function cancelDeferred() {
+    for (const pending of deferredInput.splice(0)) { clearTimeout(pending.timer); pending.respond({ ok: false, error: 'The simulated editor changed. Try again.' }); }
+  }
+  function flushDeferred() {
+    for (const pending of deferredInput.splice(0)) {
+      clearTimeout(pending.timer);
+      try { pending.respond({ ok: true, visualActivity: execute(pending.command) }); }
+      catch (error) { pending.respond({ ok: false, error: (error as Error).message }); }
+    }
+  }
+  function runCommand(command: ControlCommand, respond: (result: unknown) => void) {
+    if (configuration.mode === 'visual' && virtualFocus instanceof HTMLElement && previews.get(virtualFocus)?.composing) {
+      if (deferredInput.length >= 64) throw new Error('Finish composing before more remote input.');
+      const pending = { command, respond, timer: setTimeout(() => {
+        const index = deferredInput.indexOf(pending);
+        if (index >= 0) { deferredInput.splice(index, 1); respond({ ok: false, error: 'Finish composing before more remote input.' }); }
+      }, 5000) };
+      deferredInput.push(pending); return true;
+    }
+    respond({ ok: true, visualActivity: execute(command) }); return false;
+  }
   let virtualFocus: Element | null = null;
   let visualDown: Element | null = null;
   let visualButton = 'left';
@@ -52,12 +92,12 @@ export function installDomControl(captureId: string, generation: number, root = 
     if (layer) { if (!layer.isConnected) document.documentElement.append(layer); return; }
     layer = document.createElement('div');
     layer.dataset.ghostpairVisual = '';
-    layer.setAttribute('aria-hidden', 'true');
+    layer.setAttribute('aria-label', 'GhostPair simulated fields');
     layer.style.cssText = 'all:initial!important;position:fixed!important;inset:0!important;width:100vw!important;height:100vh!important;z-index:2147483647!important;pointer-events:none!important;overflow:hidden!important;contain:strict!important;';
     updateAccent();
     shadow = layer.attachShadow({ mode: 'closed' });
     const style = document.createElement('style');
-    style.textContent = ':host{pointer-events:none!important}*{box-sizing:border-box;pointer-events:none!important;user-select:none}div{position:absolute;margin:0}';
+    style.textContent = ':host{pointer-events:none!important}*{box-sizing:border-box;pointer-events:none!important;user-select:none}div{position:absolute;margin:0}input[data-gp-editor],textarea[data-gp-editor]{box-sizing:border-box;pointer-events:auto!important;user-select:text!important;position:absolute;margin:0;resize:none;outline:none}input[data-gp-editor]::selection,textarea[data-gp-editor]::selection{background:var(--gp-accent);color:white}';
     shadow.append(style);
     document.documentElement.append(layer);
   }
@@ -67,18 +107,20 @@ export function installDomControl(captureId: string, generation: number, root = 
     return element instanceof HTMLElement && (editable(element) || element.isContentEditable) ? 'text' : 'other';
   }
   function clearCategory(category: VisualCategory) {
+    if (category === 'text' && (dragging || dropping || [...previews.values()].some(p => p.composing || p.selecting))) return true;
     for (const [element, preview] of previews) if ((preview.value !== undefined ? 'text' : 'other') === category) {
-      preview.node.remove(); preview.marker?.remove(); previews.delete(element);
+      preview.node.remove(); preview.marker?.remove(); preview.editor?.remove(); previews.delete(element);
     }
     if (virtualFocus && categoryFor(virtualFocus) === category) { virtualFocus = null; visualDown = null; visualKeys.clear(); focusMark?.remove(); focusMark = undefined; }
     scheduleDraw();
   }
   function clearVisual() {
+    cancelDeferred(); endDrag(); dropping = false;
     if (drawing !== undefined) cancelAnimationFrame(drawing);
     drawing = undefined; layer?.remove(); layer = undefined; shadow = undefined; focusMark = undefined; notice = undefined;
     previews.clear(); halos.length = 0; virtualFocus = null; visualDown = null; visualKeys.clear(); noticeUntil = 0; lastNotice = -Infinity;
   }
-  function rectStyle(element: Element, overlay: HTMLDivElement) {
+  function rectStyle(element: Element, overlay: HTMLElement) {
     const box = element.getBoundingClientRect(), style = getComputedStyle(element);
     let left = Math.max(0, box.left), top = Math.max(0, box.top), right = Math.min(innerWidth, box.right), bottom = Math.min(innerHeight, box.bottom);
     let visible = element.getClientRects().length > 0 && style.visibility !== 'hidden' && style.display !== 'none' && Number(style.opacity) !== 0;
@@ -209,11 +251,17 @@ export function installDomControl(captureId: string, generation: number, root = 
     drawnAt = time; ensureLayer();
     if (virtualFocus && !virtualFocus.isConnected) virtualFocus = null;
     for (const [element, preview] of previews) {
-      if (!element.isConnected || preview.until !== undefined && time >= preview.until) { preview.node.remove(); preview.marker?.remove(); previews.delete(element); continue; }
+      if (!element.isConnected || preview.until !== undefined && time >= preview.until) { preview.node.remove(); preview.marker?.remove(); preview.editor?.remove(); previews.delete(element); continue; }
       if (preview.checked !== undefined) { paintChoice(element, preview); continue; }
       if (preview.value !== undefined) {
         const { box, style } = rectStyle(element, preview.node);
         Object.assign(preview.node.style, surfaceStyle(element, box, style), effectiveBackground(element), { whiteSpace: element instanceof HTMLInputElement ? 'pre' : 'pre-wrap', overflowWrap: 'anywhere', overflow: 'hidden' });
+        if (preview.editor) {
+          rectStyle(element, preview.editor);
+          Object.assign(preview.editor.style, surfaceStyle(element, box, style), effectiveBackground(element));
+          preview.editor.style.opacity = shadow?.activeElement === preview.editor ? '1' : '0';
+          preview.editor.readOnly = disabled(element) || editable(element) && element.readOnly;
+        }
         // Scroll only the extension's text surface, never the real field/page.
         if (preview.cursor && virtualFocus === element) {
           const cursor = preview.cursor.getBoundingClientRect(), inset = 4;
@@ -254,16 +302,172 @@ export function installDomControl(captureId: string, generation: number, root = 
     let preview = previews.get(element);
     if (!preview) {
       if (previews.size >= 256) throw new Error('Clear the simulation before adding more fields.');
-      preview = { node: node(), anchor: 0, caret: 0 }; previews.set(element, preview);
+      preview = { id: randomToken(), revision: 0, node: node(), anchor: 0, caret: 0 }; previews.set(element, preview);
     }
     scheduleDraw(); return preview;
   }
   function textPreview(element: HTMLElement) {
     const preview = previewFor(element);
     if (preview.value === undefined) { preview.value = editable(element) ? element.value : element.innerText; preview.anchor = preview.caret = preview.value.length; }
+    if (!preview.editor) makeEditor(element, preview);
     return preview;
   }
+  function selectionFromEditor(preview: Preview) {
+    const editor = preview.editor!;
+    const start = editor.selectionStart ?? 0, end = editor.selectionEnd ?? start;
+    preview.anchor = editor.selectionDirection === 'backward' ? end : start;
+    preview.caret = editor.selectionDirection === 'backward' ? start : end;
+  }
+  function commitEditor(element: HTMLElement, preview: Preview) {
+    const editor = preview.editor!;
+    if (editor.readOnly || new TextEncoder().encode(editor.value).length > 256 * 1024) {
+      editor.value = preview.value ?? ''; selectionFromEditor(preview); paintText(element, preview); return;
+    }
+    if (preview.value !== editor.value) { preview.value = editor.value; preview.revision++; }
+    selectionFromEditor(preview); paintText(element, preview); localActivity('typing');
+  }
+  function makeEditor(element: HTMLElement, preview: Preview) {
+    const editor = element instanceof HTMLInputElement ? document.createElement('input') : document.createElement('textarea');
+    if (editor instanceof HTMLInputElement) editor.type = element instanceof HTMLInputElement && element.type === 'password' ? 'password' : 'text';
+    editor.dataset.gpEditor = preview.id;
+    editor.setAttribute('aria-label', `Simulated ${element.getAttribute('aria-label') || element.getAttribute('placeholder') || 'text'}`);
+    editor.autocomplete = 'off'; editor.spellcheck = false; editor.tabIndex = -1;
+    editor.style.cssText = 'all:initial;position:absolute;box-sizing:border-box;margin:0;opacity:0;';
+    editor.value = preview.value ?? '';
+    editor.readOnly = disabled(element) || editable(element) && element.readOnly;
+    preview.editor = editor; editors.set(editor, element); shadow!.append(editor);
+    editor.addEventListener('focus', () => { selectionFromEditor(preview); paintText(element, preview); localActivity(); scheduleDraw(); });
+    editor.addEventListener('blur', () => { preview.composing = false; preview.selecting = false; commitEditor(element, preview); flushDeferred(); scheduleDraw(); });
+    editor.addEventListener('pointerdown', () => { preview.selecting = true; localActivity(); });
+    editor.addEventListener('pointerup', () => { preview.selecting = false; selectionFromEditor(preview); paintText(element, preview); localActivity(); });
+    editor.addEventListener('pointercancel', () => { preview.selecting = false; });
+    editor.addEventListener('select', () => { selectionFromEditor(preview); localActivity(); });
+    editor.addEventListener('keyup', () => { selectionFromEditor(preview); if (!preview.composing) paintText(element, preview); localActivity(); });
+    editor.addEventListener('keydown', raw => {
+      const event = raw as KeyboardEvent;
+      event.stopPropagation();
+      if (event.key === 'Escape') { event.preventDefault(); editor.blur(); }
+      if (event.key === 'Tab') {
+        event.preventDefault();
+        const fields = [...document.querySelectorAll<HTMLElement>('input,textarea,[contenteditable="true"]')].filter(e => (editable(e) || e.isContentEditable) && !disabled(e) && !(editable(e) && e.readOnly) && visibleSurface(e));
+        const next = fields[(fields.indexOf(element) + (event.shiftKey ? -1 : 1) + fields.length) % fields.length];
+        if (next) { const target = textPreview(next); paintText(next, target); draw(performance.now() + 40); target.editor!.focus({ preventScroll: true }); }
+      }
+      localActivity();
+    });
+    editor.addEventListener('input', () => commitEditor(element, preview));
+    editor.addEventListener('compositionstart', () => { preview.composing = true; localActivity(); });
+    editor.addEventListener('compositionend', () => { preview.composing = false; commitEditor(element, preview); flushDeferred(); });
+    editor.addEventListener('scroll', () => { preview.node.scrollLeft = editor.scrollLeft; preview.node.scrollTop = editor.scrollTop; });
+    for (const type of ['copy', 'cut', 'paste']) editor.addEventListener(type, raw => {
+      const event = raw as ClipboardEvent;
+      event.stopPropagation(); event.preventDefault(); localActivity();
+      if (!event.clipboardData || preview.composing) return;
+      if (type === 'paste') {
+        if (editor.readOnly) return;
+        let text = event.clipboardData.getData('text/plain');
+        if (editor instanceof HTMLInputElement) text = text.replace(/[\r\n]/g, '');
+        const start = editor.selectionStart ?? 0, end = editor.selectionEnd ?? start;
+        if (new TextEncoder().encode(editor.value.slice(0, start) + text + editor.value.slice(end)).length > 256 * 1024) return;
+        editor.setRangeText(text, start, end, 'end'); commitEditor(element, preview);
+      } else {
+        if (editor instanceof HTMLInputElement && editor.type === 'password') return;
+        const start = editor.selectionStart ?? 0, end = editor.selectionEnd ?? start;
+        event.clipboardData.setData('text/plain', editor.value.slice(start, end));
+        if (type === 'cut' && !editor.readOnly) { editor.setRangeText('', start, end, 'end'); commitEditor(element, preview); }
+      }
+    });
+    editor.addEventListener('dragstart', raw => {
+      const event = raw as DragEvent;
+      if (!event.isTrusted || !event.dataTransfer || editor.readOnly || editor instanceof HTMLInputElement && editor.type === 'password') { event.preventDefault(); return; }
+      selectionFromEditor(preview);
+      const start = Math.min(preview.anchor, preview.caret), end = Math.max(preview.anchor, preview.caret);
+      if (start === end) { event.preventDefault(); return; }
+      endDrag(); const token = randomToken();
+      dragging = { token, element, start, end, revision: preview.revision, timer: setTimeout(endDrag, 30000) };
+      event.dataTransfer.setData(dragMime, token);
+      event.dataTransfer.setData('text/plain', preview.value!.slice(start, end));
+      // The extension commits the move after the destination acknowledges insertion.
+      // Native source deletion must never race that transaction.
+      event.dataTransfer.effectAllowed = 'copy';
+      void local('drag.start', { token }).catch(endDrag); localActivity();
+    });
+  }
+  function dropOffset(preview: Preview, x: number, y: number) {
+    const walker = document.createTreeWalker(preview.node, NodeFilter.SHOW_TEXT), range = document.createRange();
+    let offset = 0, best = 0, distance = Infinity;
+    const rtl = getComputedStyle(preview.node).direction === 'rtl';
+    while (walker.nextNode()) {
+      const text = walker.currentNode as Text;
+      const position = (index: number) => { range.setStart(text, index); range.setEnd(text, index); return range.getBoundingClientRect(); };
+      let low = 0, high = text.length;
+      while (low < high) {
+        const middle = (low + high) >> 1, box = position(middle);
+        if (box.bottom < y || box.top <= y && (rtl ? box.left > x : box.left < x)) low = middle + 1; else high = middle;
+      }
+      for (const index of [Math.max(0, low - 1), low]) {
+        const box = position(index), dy = y < box.top ? box.top - y : y > box.bottom ? y - box.bottom : 0;
+        const score = dy * 10000 + Math.abs(box.left - x);
+        if (score < distance) { distance = score; best = offset + index; }
+      }
+      offset += text.length;
+    }
+    const value = preview.value ?? '';
+    if (best > 0 && best < value.length && /[\uDC00-\uDFFF]/.test(value[best]!)) best--;
+    return Math.min(value.length, best);
+  }
+  function endSelection() { for (const preview of previews.values()) preview.selecting = false; }
+  function dragTarget(event: DragEvent) {
+    if (configuration.mode !== 'visual' || !context.ready || !event.isTrusted || !event.dataTransfer?.types.includes(dragMime)) return;
+    // A GhostPair drop must never fall through into an original page field.
+    event.preventDefault(); event.stopImmediatePropagation();
+    const element = semantic(targetAt(event.clientX, event.clientY));
+    if (!element || !(editable(element) || element.isContentEditable) || disabled(element) || editable(element) && element.readOnly) return;
+    const preview = textPreview(element); paintText(element, preview);
+    event.dataTransfer.dropEffect = 'copy';
+    if (event.type !== 'drop') return;
+    const offset = dropOffset(preview, event.clientX, event.clientY);
+    dropping = true;
+    void local('drag.drop', { token: event.dataTransfer.getData(dragMime), targetId: preview.id, revision: preview.revision, offset, copy: event.ctrlKey || event.metaKey }).then(reply => {
+      if (reply?.ok && preview.editor?.isConnected) preview.editor.focus({ preventScroll: true });
+    }).catch(() => undefined).finally(() => { dropping = false; localActivity('typing'); });
+  }
+  function dragOperation(message: Record<string, any>) {
+    if (configuration.mode !== 'visual') throw new Error('Simulation is unavailable.');
+    const source = dragging && previews.get(dragging.element);
+    if (message.operation === 'visual.drag.read') {
+      if (!dragging || dragging.token !== message.token || !source || source.revision !== dragging.revision) throw new Error('The dragged text changed.');
+      return { text: source.value!.slice(dragging.start, dragging.end), sourceId: source.id };
+    }
+    if (message.operation === 'visual.drag.delete') {
+      if (!dragging || dragging.token !== message.token || !source || source.revision !== dragging.revision) return {};
+      source.value = source.value!.slice(0, dragging.start) + source.value!.slice(dragging.end);
+      source.anchor = source.caret = dragging.start; source.revision++; paintText(dragging.element, source); endDrag(); return {};
+    }
+    if (message.operation === 'visual.drag.finish') { if (dragging?.token === message.token) endDrag(); return {}; }
+    const entry = [...previews].find(([, p]) => p.id === message.targetId);
+    if (!entry) throw new Error('The destination changed.');
+    const [element, preview] = entry;
+    if (!element.isConnected || disabled(element) || editable(element) && element.readOnly || preview.composing || preview.revision !== message.revision || !Number.isInteger(message.offset) || message.offset < 0 || message.offset > preview.value!.length) throw new Error('The destination changed.');
+    let value = preview.value!, offset = message.offset;
+    if (message.operation === 'visual.drag.move') {
+      if (!dragging || dragging.token !== message.token || source !== preview || source.revision !== dragging.revision) throw new Error('The dragged text changed.');
+      if (offset >= dragging.start && offset <= dragging.end) { endDrag(); return {}; }
+      value = value.slice(0, dragging.start) + value.slice(dragging.end);
+      if (offset > dragging.end) offset -= dragging.end - dragging.start;
+    }
+    const text = typeof message.text === 'string' && element instanceof HTMLInputElement ? message.text.replace(/[\r\n]/g, '') : message.text;
+    const next = value.slice(0, offset) + text + value.slice(offset);
+    if (typeof message.text !== 'string' || new TextEncoder().encode(next).length > 256 * 1024) throw new Error('Simulated text exceeds the limit.');
+    preview.value = next; preview.revision++; preview.anchor = preview.caret = offset + text.length;
+    paintText(element, preview); if (message.operation === 'visual.drag.move') endDrag(); return {};
+  }
   function paintText(element: HTMLElement, preview: Preview) {
+    if (preview.editor && !preview.composing) {
+      if (preview.editor.value !== preview.value) preview.editor.value = preview.value ?? '';
+      const start = Math.min(preview.anchor, preview.caret), end = Math.max(preview.anchor, preview.caret), direction = preview.caret < preview.anchor ? 'backward' : 'forward';
+      if (preview.editor.selectionStart !== start || preview.editor.selectionEnd !== end || preview.editor.selectionDirection !== direction) preview.editor.setSelectionRange(start, end, direction);
+    }
     const value = preview.value ?? '', start = Math.min(preview.anchor, preview.caret), end = Math.max(preview.anchor, preview.caret);
     const masked = element instanceof HTMLInputElement && element.type === 'password';
     const display = (text: string) => masked ? '•'.repeat(Array.from(text).length) : text;
@@ -319,7 +523,7 @@ export function installDomControl(captureId: string, generation: number, root = 
     const start = Math.min(preview.anchor, preview.caret), end = Math.max(preview.anchor, preview.caret);
     const next = value.slice(0, start) + text + value.slice(end);
     if (new TextEncoder().encode(next).length > 256 * 1024) throw new Error('Simulated text exceeds the limit.');
-    preview.value = next; preview.anchor = preview.caret = start + text.length; paintText(element, preview); return 'typing';
+    preview.value = next; preview.revision++; preview.anchor = preview.caret = start + text.length; paintText(element, preview); return 'typing';
   }
   function executeVisual(command: ControlCommand): string | undefined {
     if (command.type === 'pointer') {
@@ -375,6 +579,7 @@ export function installDomControl(captureId: string, generation: number, root = 
 
   function targetAt(x: number, y: number): Element | null {
     let element = document.elementFromPoint(x, y);
+    if (element === layer) { const inside = shadow?.elementFromPoint(x, y); return inside ? editors.get(inside) ?? null : null; }
     while (element?.shadowRoot) {
       const inner = element.shadowRoot.elementFromPoint(x, y);
       if (!inner || inner === element) break;
@@ -418,7 +623,7 @@ export function installDomControl(captureId: string, generation: number, root = 
   function prepare(command: ControlCommand) {
     const element = 'x' in command ? targetAt(command.x, command.y) : focused();
     const child = childTarget(element, command);
-    prepared = { token: crypto.randomUUID(), command, element, child, childWindow: child ? (element as HTMLIFrameElement).contentWindow : undefined };
+    prepared = { token: randomToken(), command, element, child, childWindow: child ? (element as HTMLIFrameElement).contentWindow : undefined };
     return { token: prepared.token, child };
   }
   function verify(token: string) {
@@ -503,6 +708,7 @@ export function installDomControl(captureId: string, generation: number, root = 
     throw new Error('Focus an editable text field before typing.');
   }
   function release() {
+    cancelDeferred(); endDrag();
     prepared = undefined;
     visualDown = null; visualKeys.clear();
     if (down) {
@@ -617,8 +823,9 @@ export function installDomControl(captureId: string, generation: number, root = 
       if (message.controlRevision !== undefined && message.controlRevision !== configuration.revision) throw new Error('The interaction mode changed.');
       if (message.operation === 'dispose') { dispose(); respond({ ok: true }); return; }
       if (message.operation === 'release') { release(); respond({ ok: true }); return; }
-      if (message.operation === 'visual.clear') { if (message.category === 'text' || message.category === 'other') clearCategory(message.category); else { release(); clearVisual(); } respond({ ok: true }); return; }
+      if (message.operation === 'visual.clear') { const protectedPreview = message.category === 'text' || message.category === 'other' ? clearCategory(message.category) : (release(), clearVisual(), false); respond({ ok: true, protected: Boolean(protectedPreview) }); return; }
       if (!context.ready || message.generation !== context.generation) throw new Error('The shared page changed. Wait for the current view.');
+      if (message.operation?.startsWith('visual.drag.')) { respond({ ok: true, ...dragOperation(message) }); return; }
       if (message.operation === 'visual.notice') { showNotice(message.kind); respond({ ok: true }); return; }
       if (message.operation === 'virtual.focus') { const pending = verify(message.token); setVirtualFocus(pending.element); respond({ ok: true }); return; }
       if (message.operation === 'describe') { respond({ ok: true, index: root ? -1 : frameIndex(window.parent, window), ...geometry() }); return; }
@@ -635,10 +842,10 @@ export function installDomControl(captureId: string, generation: number, root = 
         }
         const pending = verify(message.token); prepared = undefined;
         if (pending.child) throw new Error('The embedded page is not ready for control.');
-        const visualActivity = execute(pending.command); respond({ ok: true, visualActivity }); return;
+        return runCommand(pending.command, respond);
       }
       if (message.operation !== 'command') throw new Error('Unknown page control operation.');
-      const visualActivity = execute(message.command); respond({ ok: true, visualActivity });
+      return runCommand(message.command, respond);
     } catch (error) { respond({ ok: false, error: (error as Error).message }); }
   };
   function changed() {
@@ -651,10 +858,14 @@ export function installDomControl(captureId: string, generation: number, root = 
   }
   function dispose() {
     release(); clearVisual(); chrome.runtime.onMessage.removeListener(listener);
+    window.removeEventListener('pointerup', endSelection, true); window.removeEventListener('pointercancel', endSelection, true);
+    for (const type of ['dragenter', 'dragover', 'drop']) window.removeEventListener(type, dragTarget as EventListener, true);
     window.removeEventListener('resize', changed); visualViewport?.removeEventListener('resize', changed); visualViewport?.removeEventListener('scroll', changed);
     delete scope.__ghostpairControl;
   }
   chrome.runtime.onMessage.addListener(listener);
+  window.addEventListener('pointerup', endSelection, true); window.addEventListener('pointercancel', endSelection, true);
+  for (const type of ['dragenter', 'dragover', 'drop']) window.addEventListener(type, dragTarget as EventListener, true);
   window.addEventListener('resize', changed); visualViewport?.addEventListener('resize', changed); visualViewport?.addEventListener('scroll', changed);
   return geometry();
 }
