@@ -44,13 +44,27 @@ export const SettingsSchema = z.object({
 }).strict();
 export type Settings = z.infer<typeof SettingsSchema>;
 export const VisualSecondsSchema = z.number().finite().min(0.1).max(30).multipleOf(0.1);
-export const VisualPreferencesSchema = z.object({
-  notices: z.boolean().default(false),
+export const VisualLifetimeSchema = z.object({
   duration: z.enum(['persistent', 'temporary']).default('persistent'),
-  seconds: VisualSecondsSchema.default(3),
-  accentColor: z.string().regex(/^#[\da-f]{6}$/i, 'Choose a six-digit hex color.').transform(value => value.toLowerCase()).default('#7871e8'),
+  seconds: VisualSecondsSchema,
 }).strict();
+export const VisualPreferencesSchema = z.preprocess(value => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
+  const saved = value as Record<string, unknown>;
+  if (('duration' in saved || 'seconds' in saved) && !('text' in saved || 'other' in saved)) {
+    const { duration = 'persistent', seconds = 3, ...rest } = saved;
+    return { ...rest, text: { duration, seconds }, other: { duration, seconds } };
+  }
+  return value;
+}, z.object({
+  notices: z.boolean().default(false),
+  text: VisualLifetimeSchema.default({ duration: 'persistent', seconds: 10 }),
+  other: VisualLifetimeSchema.default({ duration: 'persistent', seconds: 3 }),
+  accentColor: z.string().regex(/^#[\da-f]{6}$/i, 'Choose a six-digit hex color.').transform(value => value.toLowerCase()).default('#7871e8'),
+}).strict());
 export type VisualPreferences = z.infer<typeof VisualPreferencesSchema>;
+export type VisualCategory = 'text' | 'other';
+export interface VisualActivity { category: VisualCategory; kind: 'focus' | 'click' | 'typing' }
 export const ControlModeSchema = z.enum(['visual', 'live']);
 export type ControlMode = z.infer<typeof ControlModeSchema>;
 export interface ControlConfiguration { mode: ControlMode; revision: number; preferences: VisualPreferences }

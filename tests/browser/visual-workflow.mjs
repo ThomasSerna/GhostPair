@@ -24,7 +24,7 @@ export async function visualWorkflow(page, viewer, menu, call, ready, { embedded
       : pixels[i + 1] > pixels[i] + 60 && pixels[i + 2] > pixels[i] + 60) total++;
     return total;
   }, accent);
-  await call(menu, 'ui.visual.preferences', { preferences: { notices: false, duration: 'persistent', seconds: 3 } });
+  await call(menu, 'ui.visual.preferences', { preferences: { notices: false, text: { duration: 'persistent', seconds: 10 }, other: { duration: 'persistent', seconds: 3 } } });
   const basePixels = await accentPixels();
   await click('#choice-label'); await click('#r2'); await click('#text');
   const bounds = await content.locator('#text').boundingBox(), viewport = await page.evaluate(() => ({ width: innerWidth, height: innerHeight }));
@@ -50,7 +50,7 @@ export async function visualWorkflow(page, viewer, menu, call, ready, { embedded
   assert.deepEqual(await form.evaluate(() => quizProbe.changes), []);
   assert.deepEqual(await form.evaluate(() => quizProbe.submits), []);
   const beforeCyan = await accentPixels('cyan');
-  await call(menu, 'ui.visual.preferences', { preferences: { notices: false, duration: 'persistent', seconds: 3, accentColor: '#12abcd' } });
+  await call(menu, 'ui.visual.preferences', { preferences: { notices: false, text: { duration: 'persistent', seconds: 10 }, other: { duration: 'persistent', seconds: 3 }, accentColor: '#12abcd' } });
   await poll(async () => await accentPixels('cyan') > beforeCyan + 20, 'updated custom color visible in the received video');
   assert.ok(await textPixels() > beforeText + 20, 'changing color preserves the simulated text');
   await page.screenshot({ path: resolve(artifactRoot, `visual-${pair.replace(':', '-')}-${embedded ? 'frame' : 'root'}-host.png`) });
@@ -59,12 +59,12 @@ export async function visualWorkflow(page, viewer, menu, call, ready, { embedded
   await call(menu, 'ui.visual.clear');
   await poll(async () => await content.locator('[data-ghostpair-visual]').count() === 0, 'manual preview cleanup');
   assert.deepEqual((await call(menu, 'ui.status')).presentation, presentation, 'clearing previews does not restart media');
-  const prefs = { notices: true, duration: 'temporary', seconds: 0.5 };
+  const prefs = { notices: true, text: { duration: 'temporary', seconds: 0.5 }, other: { duration: 'temporary', seconds: 0.5 } };
   await call(menu, 'ui.visual.preferences', { preferences: prefs });
   await poll(async () => (await call(viewer, 'ui.status')).controlRevision > state.controlRevision, 'clear revision received');
   await click('#text'); await viewer.keyboard.insertText('Temporary');
   await poll(async () => await content.locator('[data-ghostpair-visual]').count() === 1, 'temporary preview');
   await poll(async () => await content.locator('[data-ghostpair-visual]').count() === 0, 'preview expires in every frame');
   assert.equal(await content.locator('#text').inputValue(), '');
-  await call(menu, 'ui.visual.preferences', { preferences: { notices: false, duration: 'persistent', seconds: 3 } });
+  await call(menu, 'ui.visual.preferences', { preferences: { notices: false, text: { duration: 'persistent', seconds: 10 }, other: { duration: 'persistent', seconds: 3 } } });
 }

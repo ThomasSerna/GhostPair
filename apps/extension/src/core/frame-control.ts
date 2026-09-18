@@ -1,4 +1,4 @@
-import { isSupportedUrl, type ControlCommand, type ControlConfiguration, type Presentation } from '@ghostpair/protocol';
+import { isSupportedUrl, type ControlCommand, type ControlConfiguration, type Presentation, type VisualActivity, type VisualCategory } from '@ghostpair/protocol';
 import { installDomControl } from './dom-control';
 
 type Input = Extract<ControlCommand, { type: 'pointer' | 'wheel' | 'key' | 'text' }>;
@@ -20,13 +20,17 @@ export class FrameControl {
   private canceledPointer = false;
   private keys = new Map<string, Owner>();
   private canceledKeys = new Set<string>();
-  private configuration: ControlConfiguration = { mode: 'visual', revision: 0, preferences: { notices: false, duration: 'persistent', seconds: 3, accentColor: '#7871e8' } };
-  private expiry?: ReturnType<typeof setTimeout>;
-  private lastActivity = 0;
+  private configuration: ControlConfiguration = { mode: 'visual', revision: 0, preferences: { notices: false, text: { duration: 'persistent', seconds: 10 }, other: { duration: 'persistent', seconds: 3 }, accentColor: '#7871e8' } };
+  private expiry: Partial<Record<VisualCategory, ReturnType<typeof setTimeout>>> = {};
+  private lastActivity: Partial<Record<VisualCategory, number>> = {};
+  private resetExpiry() {
+    for (const timer of Object.values(this.expiry)) clearTimeout(timer);
+    this.expiry = {}; this.lastActivity = {};
+  }
 
   async configure(configuration: ControlConfiguration) {
     const reset = configuration.revision !== this.configuration.revision || configuration.mode !== this.configuration.mode;
-    if (reset) { await this.release(); clearTimeout(this.expiry); this.lastActivity = 0; }
+    if (reset) { await this.release(); this.resetExpiry(); }
     this.configuration = configuration;
     const p = this.presentation;
     if (p) {
@@ -37,21 +41,27 @@ export class FrameControl {
   }
 
   private scheduleExpiry() {
-    clearTimeout(this.expiry);
-    if (!this.lastActivity || this.configuration.mode !== 'visual' || this.configuration.preferences.duration !== 'temporary') return;
-    this.expiry = setTimeout(() => { void this.clearVisual(); }, Math.max(0, this.configuration.preferences.seconds * 1000 - (Date.now() - this.lastActivity)));
+    for (const category of ['text', 'other'] as const) {
+      clearTimeout(this.expiry[category]);
+      const last = this.lastActivity[category], preference = this.configuration.preferences[category];
+      if (last === undefined || this.configuration.mode !== 'visual' || preference.duration !== 'temporary') continue;
+      const p = this.presentation, configuration = this.configuration;
+      this.expiry[category] = setTimeout(() => {
+        const work = this.queue.then(async () => {
+          if (!p || this.presentation !== p || this.configuration !== configuration || this.lastActivity[category] !== last) return;
+          delete this.lastActivity[category];
+          const results = await Promise.allSettled([...this.frames.values()].map(frame => this.message(p, frame, 'visual.clear', { category })));
+          if (results.some(result => result.status === 'fulfilled' && result.value?.protected)) this.activity({ category, kind: 'focus' });
+        });
+        this.queue = work.catch(() => undefined);
+      }, Math.max(0, preference.seconds * 1000 - (Date.now() - last)));
+    }
   }
-  private async clearVisual() {
-    const p = this.presentation, configuration = this.configuration;
-    this.lastActivity = 0; clearTimeout(this.expiry);
-    await this.release();
-    if (p && this.presentation === p && this.configuration === configuration) await Promise.allSettled([...this.frames.values()].map(frame => this.message(p, frame, 'visual.clear')));
-  }
-  private activity(kind?: string) {
-    if (!kind || this.configuration.mode !== 'visual') return;
-    this.lastActivity = Date.now(); this.scheduleExpiry();
+  private activity(activity?: VisualActivity) {
+    if (!activity || this.configuration.mode !== 'visual') return;
+    this.lastActivity[activity.category] = Date.now(); this.scheduleExpiry();
     const p = this.presentation, root = p && this.frames.get(p.documentId);
-    if (p && root && this.configuration.preferences.notices) void this.message(p, root, 'visual.notice', { kind }).catch(() => undefined);
+    if (p && root && this.configuration.preferences.notices) void this.message(p, root, 'visual.notice', { kind: activity.kind }).catch(() => undefined);
   }
 
   constructor(private usable: (presentation: Presentation) => boolean) {
@@ -92,7 +102,7 @@ export class FrameControl {
   }
 
   clear() {
-    clearTimeout(this.expiry); this.lastActivity = 0;
+    this.resetExpiry();
     const p = this.presentation, frames = [...this.frames.values()];
     void this.release(); this.presentation = undefined; this.frames.clear(); this.failures.clear(); this.blocked.clear();
     // Generation-scoped disposal cannot remove a newer installation in the same document.

@@ -67,6 +67,7 @@ const ready = (async () => {
   const saved = await chrome.storage.local.get(['settings', 'identities', 'visualPreferences']);
   const preferences = VisualPreferencesSchema.safeParse(saved.visualPreferences);
   visualPreferences = preferences.success ? preferences.data : VisualPreferencesSchema.parse({});
+  if (saved.visualPreferences && preferences.success) await chrome.storage.local.set({ visualPreferences });
   const parsed = SettingsSchema.safeParse(saved.settings);
   const settings = parsed.success && validateSignalingUrl(parsed.data.signalingUrl) ? parsed.data : defaults;
   const identity = (saved.identities as Record<string, { deviceId: string }> | undefined)?.[settings.signalingUrl];

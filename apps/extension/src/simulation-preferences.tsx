@@ -11,12 +11,15 @@ export function SimulationPreferences({ preferences, busy, onChange }: {
   onChange: (preferences: VisualPreferences) => void;
 }) {
   return <>
-    <label>Simulation duration<select value={preferences.duration} disabled={busy} onChange={e => onChange({ ...preferences, duration: e.target.value as VisualPreferences['duration'] })}><option value="persistent">Until cleared</option><option value="temporary">Temporary</option></select></label>
-    {preferences.duration === 'temporary' && <label>Seconds without interaction<input type="number" min={0.1} max={30} step={0.1} defaultValue={preferences.seconds} key={preferences.seconds} disabled={busy} onBlur={e => {
+    {(['text', 'other'] as const).map(category => <fieldset key={category} disabled={busy}>
+    <legend>{category === 'text' ? 'Simulated text' : 'Other simulations'}</legend>
+    <label>Duration<select value={preferences[category].duration} onChange={e => onChange({ ...preferences, [category]: { ...preferences[category], duration: e.target.value } })}><option value="persistent">Until cleared</option><option value="temporary">Temporary</option></select></label>
+    {preferences[category].duration === 'temporary' && <label>Seconds without interaction<input type="number" min={0.1} max={30} step={0.1} defaultValue={preferences[category].seconds} key={preferences[category].seconds} onBlur={e => {
       const seconds = e.target.valueAsNumber;
-      if (!VisualSecondsSchema.safeParse(seconds).success) { e.target.value = String(preferences.seconds); return; }
-      if (seconds !== preferences.seconds) onChange({ ...preferences, seconds });
+      if (!VisualSecondsSchema.safeParse(seconds).success) { e.target.value = String(preferences[category].seconds); return; }
+      if (seconds !== preferences[category].seconds) onChange({ ...preferences, [category]: { ...preferences[category], seconds } });
     }}/><small className="helper">0.1–30 seconds, in steps of 0.1.</small></label>}
+    </fieldset>)}
     <fieldset className="simulation-colors" disabled={busy}>
       <legend>Simulation color</legend>
       <div className="color-options">{colors.map(([name, color]) => <label key={color}>

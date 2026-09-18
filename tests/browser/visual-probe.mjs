@@ -30,7 +30,7 @@ for (const name of process.argv.slice(2).length ? process.argv.slice(2) : ['chro
       Element.prototype.attachShadow = function (options) { const shadow = attach.call(this, options); if (this.hasAttribute('data-ghostpair-visual')) globalThis.preview = shadow; return shadow; };
       globalThis.chrome = { runtime: { id: 'fixture', onMessage: { addListener: fn => { globalThis.controller = fn; }, removeListener() {} }, sendMessage: async () => ({}) } };
     });
-    const config = { mode: 'visual', revision: 0, preferences: { notices: false, duration: 'persistent', seconds: 3, accentColor: '#7871e8' } };
+    const config = { mode: 'visual', revision: 0, preferences: { notices: false, text: { duration: 'persistent', seconds: 10 }, other: { duration: 'persistent', seconds: 3 }, accentColor: '#7871e8' } };
     const install = async (generation = 1) => page.evaluate(`(${installDomControl.toString()})('fixture',${generation},true,${JSON.stringify(config)})`);
     await install();
     const send = async (command, extra = {}) => {

@@ -30,7 +30,7 @@ button{font:inherit;font-weight:600;color:inherit;background:var(--button);paddi
 export async function visualStyles(page, name) {
   await page.setViewportSize({ width: 1100, height: 900 });
   await page.setContent(fixture);
-  const configuration = { mode: 'visual', revision: 0, preferences: { notices: false, duration: 'persistent', seconds: 0.5, accentColor: '#7871e8' } };
+  const configuration = { mode: 'visual', revision: 0, preferences: { notices: false, text: { duration: 'persistent', seconds: 0.5 }, other: { duration: 'persistent', seconds: 0.5 }, accentColor: '#7871e8' } };
   await page.evaluate(`(${installDomControl.toString()})('styles',1,true,${JSON.stringify(configuration)})`);
   const send = async (command, extra = {}) => {
     const reply = await page.evaluate(({ command, extra }) => {

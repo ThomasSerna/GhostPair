@@ -2,9 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { VisualPreferencesSchema, PasswordSchema, ClientSignalMessageSchema, ControlCommandSchema, ClipboardUpdateSchema, isRelaySignal, isSupportedUrl, validateSignalingUrl } from './index';
 describe('network boundaries', () => {
   it('defaults to silent persistent previews and bounds their configurable lifetime', () => {
-    expect(VisualPreferencesSchema.parse({})).toEqual({ notices: false, duration: 'persistent', seconds: 3, accentColor: '#7871e8' });
-    for (let tenths = 1; tenths <= 300; tenths++) expect(VisualPreferencesSchema.safeParse({ seconds: tenths / 10 }).success).toBe(true);
-    for (const seconds of [-1, 0, 0.01, 0.25, 30.1, 31, Infinity, NaN]) expect(VisualPreferencesSchema.safeParse({ seconds }).success).toBe(false);
+    expect(VisualPreferencesSchema.parse({})).toEqual({ notices: false, text: { duration: 'persistent', seconds: 10 }, other: { duration: 'persistent', seconds: 3 }, accentColor: '#7871e8' });
+    for (let tenths = 1; tenths <= 300; tenths++) expect(VisualPreferencesSchema.safeParse({ text: { seconds: tenths / 10 }, other: { seconds: tenths / 10 } }).success).toBe(true);
+    for (const seconds of [-1, 0, 0.01, 0.25, 30.1, 31, Infinity, NaN]) expect(VisualPreferencesSchema.safeParse({ text: { seconds } }).success).toBe(false);
     expect(ControlCommandSchema.safeParse({ type: 'tab.create', url: 'https://example.com' }).success).toBe(false);
   });
   it('defaults legacy preferences to purple and accepts only opaque hex accents', () => {

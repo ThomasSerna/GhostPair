@@ -35,7 +35,7 @@ function harness() {
   const control = new FrameControl(() => usable);
   const input = (type = 'pointer', extras: object = {}): any => type === 'pointer' ? { ...p, controlRevision: 0, type, event: 'down', x: 450, y: 175, button: 'left', buttons: 1, modifiers: 0, clickCount: 1, ...extras } : { ...p, controlRevision: 0, type, text: 'hello', ...extras };
   const key = (event: 'down' | 'up', extras: object = {}): Extract<ControlCommand, { type: 'key' }> => ({ ...p, type: 'key', controlRevision: 0, event, key: 'Shift', code: 'ShiftLeft', keyCode: 16, modifiers: 8, repeat: false, ...extras });
-  const live = { mode: 'live' as const, revision: 0, preferences: { notices: false, duration: 'persistent' as const, seconds: 3, accentColor: '#7871e8' } };
+  const live = { mode: 'live' as const, revision: 0, preferences: { notices: false, text: { duration: 'persistent' as const, seconds: 10 }, other: { duration: 'persistent' as const, seconds: 3 }, accentColor: '#7871e8' } };
   void control.configure(live);
   return { control, topology, frame, routes, indices, operations, committed, sendMessage, scripting, navigation, input, key, disable: () => { usable = false; } };
 }
@@ -51,7 +51,7 @@ it('cancels an in-flight route and queued or delayed input before changing mode'
   const first = h.control.execute(h.input()).catch(error => error);
   await entered.promise;
   const queued = h.control.execute(h.input('text')).catch(error => error);
-  await h.control.configure({ mode: 'visual', revision: 1, preferences: { notices: false, duration: 'persistent', seconds: 3, accentColor: '#7871e8' } });
+  await h.control.configure({ mode: 'visual', revision: 1, preferences: { notices: false, text: { duration: 'persistent', seconds: 10 }, other: { duration: 'persistent', seconds: 3 }, accentColor: '#7871e8' } });
   gate.resolve({ ok: true, token: 'old' });
   expect(await first).toBeInstanceOf(Error); expect(await queued).toBeInstanceOf(Error);
   await expect(h.control.execute(h.input('text'))).rejects.toThrow('mode changed');
@@ -60,20 +60,43 @@ it('cancels an in-flight route and queued or delayed input before changing mode'
   expect(h.committed[0]!.command.controlRevision).toBe(1);
 });
 
-it('tracks virtual iframe focus and expires the entire preview after inactivity', async () => {
+it('tracks virtual iframe focus and expires categories independently', async () => {
   vi.useFakeTimers();
   try {
     const h = harness(); await h.control.bind(p);
-    await h.control.configure({ mode: 'visual', revision: 1, preferences: { notices: true, duration: 'temporary', seconds: 0.5, accentColor: '#7871e8' } });
-    const original = h.sendMessage.getMockImplementation()!;
-    h.sendMessage.mockImplementation(async (...args) => ({ ...await original(...args), ...(args[1].operation === 'commit' ? { visualActivity: 'click' } : {}) }));
+    const preferences = { notices: true, text: { duration: 'temporary' as const, seconds: 1 }, other: { duration: 'temporary' as const, seconds: 0.5 }, accentColor: '#7871e8' };
+    await h.control.configure({ mode: 'visual', revision: 1, preferences });
+    const original = h.sendMessage.getMockImplementation()!, types = new Map<string, string>();
+    h.sendMessage.mockImplementation(async (...args) => {
+      if (args[1].operation === 'prepare') types.set(args[2].documentId, args[1].command.type);
+      return { ...await original(...args), ...(args[1].operation === 'commit' ? { visualActivity: { category: types.get(args[2].documentId) === 'text' ? 'text' : 'other', kind: 'click' } } : {}) };
+    });
     await h.control.execute({ ...h.input(), controlRevision: 1 });
     expect(h.operations.filter(e => e.message.operation === 'virtual.focus').map(e => e.id)).toEqual(['root', 'b']);
-    expect(h.operations.filter(e => e.message.operation === 'visual.notice').map(e => e.id)).toEqual(['root']);
     await vi.advanceTimersByTimeAsync(300);
     await h.control.execute({ ...h.input('text'), controlRevision: 1 });
-    await vi.advanceTimersByTimeAsync(499); expect(h.operations.some(e => e.message.operation === 'visual.clear')).toBe(false);
-    await vi.advanceTimersByTimeAsync(1); expect(h.operations.filter(e => e.message.operation === 'visual.clear')).toHaveLength(4);
+    await vi.advanceTimersByTimeAsync(200);
+    const clears = () => h.operations.filter(e => e.message.operation === 'visual.clear');
+    expect(clears()).toHaveLength(4); expect(clears().every(e => e.message.category === 'other')).toBe(true);
+    await vi.advanceTimersByTimeAsync(799); expect(clears()).toHaveLength(4);
+    await vi.advanceTimersByTimeAsync(1); expect(clears().filter(e => e.message.category === 'text')).toHaveLength(4);
+    await h.control.clear(); expect(vi.getTimerCount()).toBe(0);
+  } finally { vi.useRealTimers(); }
+});
+
+it('recalculates lifetime changes without clearing persistent categories', async () => {
+  vi.useFakeTimers();
+  try {
+    const h = harness(); await h.control.bind(p); h.routes.clear();
+    const preferences = { notices: false, text: { duration: 'persistent' as const, seconds: 10 }, other: { duration: 'temporary' as const, seconds: 2 }, accentColor: '#7871e8' };
+    await h.control.configure({ mode: 'visual', revision: 1, preferences });
+    const original = h.sendMessage.getMockImplementation()!;
+    h.sendMessage.mockImplementation(async (...args) => ({ ...await original(...args), ...(args[1].operation === 'commit' ? { visualActivity: { category: 'other', kind: 'click' } } : {}) }));
+    await h.control.execute({ ...h.input(), controlRevision: 1 });
+    await vi.advanceTimersByTimeAsync(300);
+    await h.control.configure({ mode: 'visual', revision: 1, preferences: { ...preferences, other: { duration: 'temporary', seconds: 0.5 } } });
+    await vi.advanceTimersByTimeAsync(199); expect(h.operations.some(e => e.message.operation === 'visual.clear')).toBe(false);
+    await vi.advanceTimersByTimeAsync(1); expect(h.operations.filter(e => e.message.operation === 'visual.clear').every(e => e.message.category === 'other')).toBe(true);
     await h.control.clear(); expect(vi.getTimerCount()).toBe(0);
   } finally { vi.useRealTimers(); }
 });

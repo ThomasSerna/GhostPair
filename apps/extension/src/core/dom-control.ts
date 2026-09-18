@@ -1,7 +1,7 @@
-import type { ControlCommand, ControlConfiguration } from '@ghostpair/protocol';
+import type { ControlCommand, ControlConfiguration, VisualActivity, VisualCategory } from '@ghostpair/protocol';
 
 /** Self-contained: Chrome serializes this function into the page's ISOLATED world. */
-export function installDomControl(captureId: string, generation: number, root = true, configuration: ControlConfiguration = { mode: 'visual', revision: 0, preferences: { notices: false, duration: 'persistent', seconds: 3, accentColor: '#7871e8' } }) {
+export function installDomControl(captureId: string, generation: number, root = true, configuration: ControlConfiguration = { mode: 'visual', revision: 0, preferences: { notices: false, text: { duration: 'persistent', seconds: 10 }, other: { duration: 'persistent', seconds: 3 }, accentColor: '#7871e8' } }) {
   type Context = { captureId: string; generation: number; ready: boolean; geometry: string; dispose: () => void; release: () => void; configure: (value: ControlConfiguration) => void };
   const scope = globalThis as typeof globalThis & { __ghostpairControl?: Context };
   const geometry = () => ({ viewportWidth: innerWidth, viewportHeight: innerHeight, offsetLeft: visualViewport?.offsetLeft ?? 0, offsetTop: visualViewport?.offsetTop ?? 0, scale: visualViewport?.scale ?? 1 });
@@ -63,6 +63,16 @@ export function installDomControl(captureId: string, generation: number, root = 
   }
   function node() { ensureLayer(); const result = document.createElement('div'); shadow!.append(result); return result; }
   function scheduleDraw() { if (drawing === undefined) drawing = requestAnimationFrame(draw); }
+  function categoryFor(element: Element | null): VisualCategory {
+    return element instanceof HTMLElement && (editable(element) || element.isContentEditable) ? 'text' : 'other';
+  }
+  function clearCategory(category: VisualCategory) {
+    for (const [element, preview] of previews) if ((preview.value !== undefined ? 'text' : 'other') === category) {
+      preview.node.remove(); preview.marker?.remove(); previews.delete(element);
+    }
+    if (virtualFocus && categoryFor(virtualFocus) === category) { virtualFocus = null; visualDown = null; visualKeys.clear(); focusMark?.remove(); focusMark = undefined; }
+    scheduleDraw();
+  }
   function clearVisual() {
     if (drawing !== undefined) cancelAnimationFrame(drawing);
     drawing = undefined; layer?.remove(); layer = undefined; shadow = undefined; focusMark = undefined; notice = undefined;
@@ -503,7 +513,10 @@ export function installDomControl(captureId: string, generation: number, root = 
   }
   function execute(command: ControlCommand) {
     if (command.controlRevision !== configuration.revision) throw new Error('The interaction mode changed.');
-    if (configuration.mode === 'visual' && command.type !== 'wheel') return executeVisual(command);
+    if (configuration.mode === 'visual' && command.type !== 'wheel') {
+      const kind = executeVisual(command) as VisualActivity['kind'] | undefined;
+      return kind ? { category: categoryFor(virtualFocus), kind } satisfies VisualActivity : undefined;
+    }
     if (command.type === 'pointer') {
       const element = targetAt(command.x, command.y);
       if (!element) { if (command.event === 'up') release(); return; }
@@ -602,7 +615,7 @@ export function installDomControl(captureId: string, generation: number, root = 
       if (message.controlRevision !== undefined && message.controlRevision !== configuration.revision) throw new Error('The interaction mode changed.');
       if (message.operation === 'dispose') { dispose(); respond({ ok: true }); return; }
       if (message.operation === 'release') { release(); respond({ ok: true }); return; }
-      if (message.operation === 'visual.clear') { release(); clearVisual(); respond({ ok: true }); return; }
+      if (message.operation === 'visual.clear') { if (message.category === 'text' || message.category === 'other') clearCategory(message.category); else { release(); clearVisual(); } respond({ ok: true }); return; }
       if (!context.ready || message.generation !== context.generation) throw new Error('The shared page changed. Wait for the current view.');
       if (message.operation === 'visual.notice') { showNotice(message.kind); respond({ ok: true }); return; }
       if (message.operation === 'virtual.focus') { const pending = verify(message.token); setVirtualFocus(pending.element); respond({ ok: true }); return; }
