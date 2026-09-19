@@ -43,6 +43,9 @@ it('selects portable PostgreSQL with explicit verified TLS and rejects conflicti
   expect(configFromEnv(base)).toMatchObject({ databaseUrl: base.DATABASE_URL, databaseSslMode: 'verify-full' });
   expect(configFromEnv({ ...base, DATABASE_SSL_MODE: 'disable' }).databaseSslMode).toBe('disable');
   for (const DATABASE_URL of ['', 'https://localhost/db', 'postgres://localhost', base.DATABASE_URL + '?sslmode=require']) expect(() => configFromEnv({ ...base, DATABASE_URL })).toThrow();
+  for (const parameter of ['sslnegotiation=direct', 'ssl=no-verify', 'uselibpqcompat=true']) expect(() => configFromEnv({ ...base, DATABASE_URL: base.DATABASE_URL + '?' + parameter })).toThrow('Configure TLS');
+  for (const parameter of ['query_timeout=0', 'statement_timeout=0', 'connectionTimeoutMillis=0', 'options=-c%20statement_timeout%3D0']) expect(() => configFromEnv({ ...base, DATABASE_URL: base.DATABASE_URL + '?' + parameter })).toThrow('timeouts');
+  expect(configFromEnv({ ...base, DATABASE_URL: base.DATABASE_URL + '?application_name=GhostPair' }).databaseSslMode).toBe('verify-full');
   expect(() => configFromEnv({ ...base, DATABASE_SSL_MODE: 'require' })).toThrow('DATABASE_SSL_MODE');
   expect(() => configFromEnv({ ...base, DATABASE_SSL_MODE: 'disable', DATABASE_SSL_CA_FILE: 'ca.pem' })).toThrow();
 });

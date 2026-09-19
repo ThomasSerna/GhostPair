@@ -7,7 +7,8 @@ export function validatePostgresConfig(config: PostgresConfig) {
   let url: URL;
   try { url = new URL(config.databaseUrl); } catch { throw new Error('Invalid DATABASE_URL.'); }
   if (!['postgres:', 'postgresql:'].includes(url.protocol) || !url.hostname || url.pathname.length < 2) throw new Error('Invalid DATABASE_URL.');
-  if (['sslmode', 'sslcert', 'sslkey', 'sslrootcert', 'ssl'].some(key => url.searchParams.has(key))) throw new Error('Configure TLS with DATABASE_SSL_MODE and DATABASE_SSL_CA_FILE, not DATABASE_URL parameters.');
+  if ([...url.searchParams.keys()].some(key => key.toLowerCase().startsWith('ssl') || key.toLowerCase() === 'uselibpqcompat')) throw new Error('Configure TLS with DATABASE_SSL_MODE and DATABASE_SSL_CA_FILE, not DATABASE_URL parameters.');
+  if (['query_timeout', 'statement_timeout', 'connectionTimeoutMillis', 'options'].some(key => url.searchParams.has(key))) throw new Error('DATABASE_URL cannot override bounded database timeouts.');
   if (!['verify-full', 'disable'].includes(config.databaseSslMode)) throw new Error('Invalid DATABASE_SSL_MODE.');
   if (config.databaseSslMode === 'disable' && config.databaseSslCaFile) throw new Error('DATABASE_SSL_CA_FILE requires verify-full.');
 }
