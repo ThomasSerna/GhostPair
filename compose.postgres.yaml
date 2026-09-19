@@ -1,0 +1,5 @@
+services:
+  signaling:
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?Set the PostgreSQL connection secret}
+      DATABASE_SSL_MODE: ${DATABASE_SSL_MODE:-verify-full}

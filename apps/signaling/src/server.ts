@@ -1,4 +1,5 @@
 import { randomBytes, scrypt, timingSafeEqual } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
 import { createServer as createHttpServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { isIP, type AddressInfo } from 'node:net';
 import { WebSocket, WebSocketServer, type RawData } from 'ws';
@@ -87,6 +88,11 @@ export function createServer(overrides: Partial<ServerConfig> = {}, store?: Devi
   }
 
   async function handleHttp(request: IncomingMessage, response: ServerResponse): Promise<void> {
+    if (request.method === 'GET' && request.url === '/privacy') {
+      const policy = await readFile(new URL('../../../docs/privacy.html', import.meta.url));
+      response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'", 'Cache-Control': 'no-cache' });
+      response.end(policy); return;
+    }
     if (request.method === 'GET' && request.url === '/health') {
       json(response, stopping ? 503 : 200, { status: stopping ? 'stopping' : 'ok' });
       return;

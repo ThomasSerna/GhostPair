@@ -376,3 +376,11 @@ it('does not listen or fall back when storage initialization fails', async () =>
   await expect(server.listen()).rejects.toThrow('initialize identity storage');
   expect(server.httpServer.listening).toBe(false); expect(close).toHaveBeenCalledOnce();
 });
+
+it('serves the privacy document directly without Caddy', async () => {
+  const app = await start(), response = await fetch(app.base + '/privacy');
+  expect(response.status).toBe(200);
+  expect(response.headers.get('content-type')).toContain('text/html');
+  expect(response.headers.get('content-security-policy')).toContain("frame-ancestors 'none'");
+  expect(await response.text()).toContain('GhostPair privacy');
+});

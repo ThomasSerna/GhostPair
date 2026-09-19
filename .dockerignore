@@ -2,6 +2,7 @@ node_modules
 dist
 .git
 tests/browser/.artifacts
+tests/server/.artifacts
 **/.env*
 **/*.sqlite*
 coverage
