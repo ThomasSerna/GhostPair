@@ -26,7 +26,29 @@ npm run package
 
 Run a single pairing with `node tests/browser/smoke.mjs chrome:edge`. Override executable locations with `GHOSTPAIR_CHROME` and `GHOSTPAIR_EDGE`. Set `GHOSTPAIR_HEADED=1` for visible windows and optionally `GHOSTPAIR_INSPECT=1` to hold the synthetic session for one minute for inspection.
 
+PostgreSQL integration uses Docker by default. If Docker is unavailable, point `GHOSTPAIR_TEST_POSTGRES_BIN` at a PostgreSQL installation containing `initdb`, `pg_ctl` and `postgres`, then run the same suite:
+
+```powershell
+$env:GHOSTPAIR_TEST_POSTGRES_BIN = 'C:\PostgreSQL\17\bin'
+npm.cmd run test:postgres
+Remove-Item Env:GHOSTPAIR_TEST_POSTGRES_BIN
+```
+
+Both modes create an isolated database with synthetic credentials, exercise the same storage/migration/restart checks, and stop it afterward. Native mode listens only on loopback and keeps its temporary cluster under `tests/server/.artifacts`; it never connects to a production database.
+
 The harness loads an unpacked extension using `Extensions.loadUnpacked`, enabled only for the isolated browser process with `--enable-unsafe-extension-debugging`. Inspection runs omit Playwright's opt-in `--enable-automation` argument to inspect the ordinary toolbar; they do not suppress native capture or extension debugging indicators. The capture probe invokes `Extensions.triggerAction` against a browser **tab target** to exercise local extension authorization; it first verifies rejection without invocation. These test APIs are separate from the extension runtime. See [the CDP extension testing API](https://chromedevtools.github.io/devtools-protocol/tot/Extensions/) and [Playwright extension testing](https://playwright.dev/docs/chrome-extensions).
+
+## Extension origins and Render preparation: September 19, 2026
+
+**137 unit tests in 15 files passed**, together with workspace type checks and `npm run package:store` (production compilation plus both ZIPs). Origin coverage accepts two distinct valid IDs without configuration for registration, preflight and authenticated WebSockets; rejects web, absent, null and malformed origins; and preserves the explicit localhost development opt-in. Legacy origin configuration is ignored.
+
+`node tests/browser/smoke.mjs chrome:edge` passed on Chrome 153.0.8010.50 and Edge 153.0.4234.48 with **different unpacked extension IDs** and no server ID configuration. The complete session fixture verified native video, embedded questionnaires, interaction cancellation, unchanged toolbar state and P2P continuity after signaling loss; 30 video frames rendered in its three-second sample. `environment-check.mjs` also passed.
+
+`npm run test:postgres` passed against an isolated native PostgreSQL **17.10** instance, covering the shared SQLite/PostgreSQL contract, persistence, database restart, migration dry run, repeated import, conflict rollback and authentication with original credentials. Temporary binaries came from `@embedded-postgres/windows-x64@17.10.0-beta.17` in the ignored artifact directory; no runtime dependency was added. Docker Desktop failed to start because of an inaccessible stale socket, so the Docker image/container check was not rerun. An initial native run stalled on inherited Windows process pipes; the test runner now uses ignored stdio for native lifecycle commands, and the rerun passed.
+
+Both 0.5.0 ZIPs contain 18 files and were independently checked for `https://ghostpair.onrender.com`, external STUN, the existing Manifest V3 permissions, and absence of environment files, source maps and test files. Public production defaults live in `.env.production`; local development mode retains the loopback defaults. No extension store submission occurred.
+
+Render Auto-Deploy was changed from On Commit to **Off** and verified after a page reload. The live service remains on `cb06081`; publishing `main` prepares the next release without deploying it. PostgreSQL provider selection, live TLS/readiness/pairing and persistence across a Render redeploy remain pending. The agreed cutover will replace old ephemeral SQLite addresses once; no production migration was attempted. See [the activation procedure](deployment.md).
 
 ## Host editing and portable release: September 18, 2026
 
@@ -44,9 +66,9 @@ An initial combined smoke run timed out at the Live-control click in the second 
 
 Both Compose configurations validate. The image/container test checks `/health`, `/ready`, direct Node `/privacy`, denied origins, registration and authentication after restart, and the Docker health check with a non-default `PORT=9797`. Docker Desktop was started for local verification; no public service was created. `npm audit --omit=dev` reports no vulnerabilities in production dependencies; the build-stage install reports two moderate development-dependency findings, which remain outside the runtime image after pruning.
 
-`npm run package` generated and inspected separate Chrome/Edge 0.5.0 ZIPs (18 files each), with Manifest V3, no added permissions, source maps, environment files or test instrumentation. `environment-check.mjs` passed root/workspace and process-precedence checks, private-sentinel exclusion, public build metadata, positive store ZIP generation in a disposable fixture and rejection of local endpoints, unexpected permissions and instrumentation. `npm run package:store` correctly rejects the current development endpoint before building. The public-looking fixture domain tests validation only; it is not a provisioned GhostPair service. Current local ZIPs must be rebuilt with final public endpoints before submission. UI inspection passed seven scenarios with no page errors; the two preference groups and screenshots were inspected.
+`npm run package` generated and inspected separate Chrome/Edge 0.5.0 ZIPs (18 files each), with Manifest V3, no added permissions, source maps, environment files or test instrumentation. `environment-check.mjs` passed root/workspace and process-precedence checks, private-sentinel exclusion, public build metadata, positive store ZIP generation in a disposable fixture and rejection of local endpoints, unexpected permissions and instrumentation. At that time, `npm run package:store` correctly rejected the development endpoint before building. The public-looking fixture domain tested validation only. The subsequent Render preparation below replaces these development package defaults. UI inspection passed seven scenarios with no page errors; the two preference groups and screenshots were inspected.
 
-Still pending: actual publisher/contact/retention data, stable public domain and STUN configuration, final extension IDs and allowlist, managed PostgreSQL TLS/backup restoration, real Koyeb deployment, final screenshots, and the manual checks below. In particular, physical IME/clipboard gestures and cross-frame dragging between independent computers, profiles and networks require manual confirmation. Local automated fixtures do not establish these results or native Windows capture-indicator behavior.
+Still pending: actual publisher/contact/retention data, verified public STUN connectivity, managed PostgreSQL TLS/backup restoration and activation on Render, final screenshots, and the manual checks below. In particular, physical IME/clipboard gestures and cross-frame dragging between independent computers, profiles and networks require manual confirmation. Local automated fixtures do not establish these results or native Windows capture-indicator behavior.
 
 ## Adaptive simulation follow-up: September 17, 2026
 

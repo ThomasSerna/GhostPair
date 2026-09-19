@@ -20,6 +20,6 @@ try {
   process.once('SIGINT', () => { void stop(); });
   process.once('SIGTERM', () => { void stop(); });
 } catch {
-  console.error(JSON.stringify({ event: 'signaling.start_failed', message: 'Check Node 24, origin allowlist, database permissions and listening port.' }));
+  console.error(JSON.stringify({ event: 'signaling.start_failed', message: 'Check Node 24, database connection/TLS configuration, database permissions and listening port.' }));
   process.exitCode = 1;
 }

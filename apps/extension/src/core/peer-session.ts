@@ -393,7 +393,7 @@ async function start(message: Record<string, any>) {
     if (connected) notify('transport.notice', { message: 'The signaling server disconnected. The P2P session continues.' });
     else fail('The server closed the connection. Check settings or start a new session.');
   };
-  ws.onerror = () => { if (epoch === current && !connected) fail('Could not connect. Check the server and its extension ID allowlist.'); };
+  ws.onerror = () => { if (epoch === current && !connected) fail('Could not connect. Check the signaling server address and availability.'); };
 }
 
 async function onMessage(message: Record<string, any>) {
@@ -402,7 +402,7 @@ async function onMessage(message: Record<string, any>) {
       const settings = SettingsSchema.parse(message.settings);
       if (!validateSignalingUrl(settings.signalingUrl)) throw new Error('Invalid signaling server.');
       const response = await fetch(new URL('/v1/devices', settings.signalingUrl), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}', credentials: 'omit', redirect: 'error', signal: AbortSignal.timeout(10000) });
-      if (!response.ok) throw new Error(`Registration rejected (${response.status}). Allow this extension ID on the server.`);
+      if (!response.ok) throw new Error(`Registration rejected (${response.status}). Check the signaling server address and availability.`);
       return { ok: true, identity: await response.json() };
     }
     case 'session.start': await start(message); return { ok: true };

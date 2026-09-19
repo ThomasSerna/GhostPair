@@ -6,7 +6,6 @@ services:
       HOST: 0.0.0.0
       PORT: 8787
       DATABASE_PATH: /data/ghostpair.sqlite
-      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:?Set the Chrome and Edge extension origins}
       TRUST_PROXY: "true"
     volumes:
       - identities:/data

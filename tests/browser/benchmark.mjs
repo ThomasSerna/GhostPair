@@ -67,7 +67,7 @@ try {
     let host, guest, server;
     try {
       host = await launchExtension('chrome', resolve(scratch, variant)); guest = await launchExtension('chrome', resolve(scratch, variant));
-      server = createServer({ databasePath: ':memory:', port: 0, allowedOrigins: [`chrome-extension://${host.id}`, `chrome-extension://${guest.id}`] });
+      server = createServer({ databasePath: ':memory:', port: 0 });
       const address = await server.listen(0), settings = { signalingUrl: `http://127.0.0.1:${address.port}`, stunUrls: [stun.url] };
       const hostUi = await host.context.newPage(); await hostUi.goto(`chrome-extension://${host.id}/popup.html`);
       const guestUi = await guest.context.newPage(); await guestUi.goto(`chrome-extension://${guest.id}/${variant === 'mvp' ? 'popup' : 'viewer'}.html`);

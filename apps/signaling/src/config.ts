@@ -7,7 +7,6 @@ export interface ServerConfig {
   databaseUrl?: string;
   databaseSslMode: 'verify-full' | 'disable';
   databaseSslCaFile?: string;
-  allowedOrigins: string[];
   allowLocalhostOrigins: boolean;
   trustProxy: boolean;
   authTimeoutMs: number;
@@ -36,7 +35,6 @@ export const defaultConfig: ServerConfig = {
   port: 8787,
   databasePath: './data/ghostpair.sqlite',
   databaseSslMode: 'verify-full',
-  allowedOrigins: [],
   allowLocalhostOrigins: false,
   trustProxy: false,
   authTimeoutMs: 10_000,
@@ -78,7 +76,6 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): ServerConfi
     databaseUrl: env.DATABASE_URL,
     databaseSslMode: (env.DATABASE_SSL_MODE ?? 'verify-full') as ServerConfig['databaseSslMode'],
     databaseSslCaFile: env.DATABASE_SSL_CA_FILE,
-    allowedOrigins: (env.ALLOWED_ORIGINS ?? '').split(',').map((value) => value.trim()).filter(Boolean),
     allowLocalhostOrigins: env.DEV_ALLOW_LOCALHOST_ORIGINS === 'true',
     trustProxy: env.TRUST_PROXY === 'true',
     maxConnections: positiveInt(env.MAX_CONNECTIONS, defaultConfig.maxConnections, 'MAX_CONNECTIONS'),
@@ -88,14 +85,8 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): ServerConfi
   };
   if (config.databaseUrl !== undefined) validatePostgresConfig({ ...config, databaseUrl: config.databaseUrl });
   else if (env.DATABASE_SSL_MODE || env.DATABASE_SSL_CA_FILE) throw new Error('Database TLS configuration requires DATABASE_URL.');
-  for (const origin of config.allowedOrigins) {
-    if (!/^chrome-extension:\/\/[a-p]{32}$/.test(origin)) {
-      throw new Error('ALLOWED_ORIGINS must contain exact Chrome/Edge extension origins');
-    }
-  }
-  if (config.allowedOrigins.length === 0 && !config.allowLocalhostOrigins) {
-    throw new Error('Configure ALLOWED_ORIGINS with the installed extension IDs');
-  }
+  // Legacy ALLOWED_ORIGINS values are intentionally ignored: every valid
+  // Chrome/Edge extension origin is accepted without installation registration.
   if (config.port > 65_535) throw new Error('PORT must be at most 65535');
   return config;
 }

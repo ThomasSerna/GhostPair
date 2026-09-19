@@ -25,6 +25,9 @@ assert.ok(!manifest.permissions.includes('debugger'));
 // Test-only grants bypass permission dialogs, but do not bypass tab capture invocation.
 manifest.host_permissions = ['http://*/*', 'https://*/*'];
 await writeFile(resolve(extensionPath, 'manifest.json'), JSON.stringify(manifest));
+// Different unpacked paths produce independent extension IDs, as store installs do.
+const guestExtensionPath = await mkdtemp(resolve(artifactRoot, 'smoke-guest-extension-'));
+await cp(extensionPath, guestExtensionPath, { recursive: true });
 const results = [], stun = await startStun();
 async function call(page, type, fields = {}) {
   const reply = await page.evaluate(({ type, fields }) => chrome.runtime.sendMessage({ target: 'background', type, ...fields }), { type, fields });
@@ -59,10 +62,11 @@ try {
     let host, guest, signal;
     try {
       const [hostName, guestName] = pair.split(':');
-      host = await launchExtension(hostName, extensionPath); guest = await launchExtension(guestName, extensionPath, { nativeVisibility: true });
+      host = await launchExtension(hostName, extensionPath); guest = await launchExtension(guestName, guestExtensionPath, { nativeVisibility: true });
+      assert.notEqual(host.id, guest.id, 'session must work with independently assigned extension IDs');
       const errors = [];
       for (const browser of [host, guest]) browser.context.on('page', page => page.on('pageerror', error => errors.push(error.message)));
-      signal = createServer({ databasePath: ':memory:', port: 0, allowedOrigins: [`chrome-extension://${host.id}`, `chrome-extension://${guest.id}`] });
+      signal = createServer({ databasePath: ':memory:', port: 0 });
       const address = await signal.listen(0);
       const settings = { signalingUrl: `http://127.0.0.1:${address.port}`, stunUrls: [stun.url] };
       const hostUi = await host.context.newPage(); await hostUi.goto(`chrome-extension://${host.id}/popup.html`);
@@ -177,8 +181,8 @@ try {
       await poll(async () => !(await host.worker.evaluate(() => chrome.tabCapture.getCapturedTabs())).some(t => ['active', 'pending'].includes(t.status)), 'capture tracks released');
       assert.equal(guest.context.pages().filter(p => p.url() === `chrome-extension://${guest.id}/viewer.html`).length, 1);
       assert.deepEqual(errors, []);
-      results.push({ pair, host: host.version, guest: guest.version, nativeVideo: true, questionnaire: true, embeddedQuestionnaire: true, cancellation: true, toolbar: appearance, renderedFramesInThreeSeconds: renderedFrames, passed: true }); console.log(JSON.stringify(results.at(-1)));
+      results.push({ pair, host: host.version, guest: guest.version, independentExtensionIds: true, nativeVideo: true, questionnaire: true, embeddedQuestionnaire: true, cancellation: true, toolbar: appearance, renderedFramesInThreeSeconds: renderedFrames, passed: true }); console.log(JSON.stringify(results.at(-1)));
     } finally { await signal?.close(); await closeBrowser(guest); await closeBrowser(host); }
   }
   await writeFile(resolve(artifactRoot, 'native-smoke-results.json'), JSON.stringify(results, null, 2));
-} finally { await stun.close(); await new Promise(done => fixture.close(done)); await removeTestArtifact(extensionPath); }
+} finally { await stun.close(); await new Promise(done => fixture.close(done)); await removeTestArtifact(guestExtensionPath); await removeTestArtifact(extensionPath); }

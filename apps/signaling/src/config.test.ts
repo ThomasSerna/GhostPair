@@ -3,24 +3,28 @@ import { configFromEnv } from './config.js';
 import { RateLimit } from './rate-limit.js';
 
 describe('production configuration', () => {
-  it('fails closed without an origin allowlist and rejects wildcard or web origins', () => {
-    expect(() => configFromEnv({})).toThrow('ALLOWED_ORIGINS');
-    for (const invalid of ['*', 'https://example.com', 'chrome-extension://*', `chrome-extension://${'q'.repeat(32)}`]) {
-      expect(() => configFromEnv({ ALLOWED_ORIGINS: invalid })).toThrow('exact');
+  it('starts without an origin allowlist and ignores legacy values', () => {
+    const config = configFromEnv({});
+    expect(config).not.toHaveProperty('allowedOrigins');
+    for (const legacy of ['', '*', 'https://example.com', 'chrome-extension://replace_with_your_extension_id', `chrome-extension://${'a'.repeat(32)}`]) {
+      expect(configFromEnv({ ALLOWED_ORIGINS: legacy })).toEqual(config);
     }
-    const origin = `chrome-extension://${'a'.repeat(32)}`;
-    expect(configFromEnv({ ALLOWED_ORIGINS: origin }).allowedOrigins).toEqual([origin]);
+  });
+
+  it('permits localhost origins only with an explicit development opt-in', () => {
+    expect(configFromEnv({}).allowLocalhostOrigins).toBe(false);
     expect(configFromEnv({ DEV_ALLOW_LOCALHOST_ORIGINS: 'true' }).allowLocalhostOrigins).toBe(true);
-    expect(() => configFromEnv({ DEV_ALLOW_LOCALHOST_ORIGINS: '1' })).toThrow('ALLOWED_ORIGINS');
+    for (const value of ['1', 'false', 'TRUE', '']) {
+      expect(configFromEnv({ DEV_ALLOW_LOCALHOST_ORIGINS: value }).allowLocalhostOrigins).toBe(false);
+    }
   });
 
   it('rejects invalid ports and requires explicit proxy trust', () => {
-    const base = { ALLOWED_ORIGINS: `chrome-extension://${'a'.repeat(32)}` };
     for (const PORT of ['-1', '0', 'abc', '65536', '1.5']) {
-      expect(() => configFromEnv({ ...base, PORT })).toThrow();
+      expect(() => configFromEnv({ PORT })).toThrow();
     }
-    expect(configFromEnv(base).trustProxy).toBe(false);
-    expect(configFromEnv({ ...base, TRUST_PROXY: 'true' }).trustProxy).toBe(true);
+    expect(configFromEnv({}).trustProxy).toBe(false);
+    expect(configFromEnv({ TRUST_PROXY: 'true' }).trustProxy).toBe(true);
   });
 });
 

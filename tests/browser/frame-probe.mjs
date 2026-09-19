@@ -50,7 +50,7 @@ try {
     let host, guest, signal;
     try {
       host = await launchExtension(name, extensionPath); guest = await launchExtension(name, extensionPath);
-      signal = createServer({ databasePath: ':memory:', port: 0, allowedOrigins: [`chrome-extension://${host.id}`, `chrome-extension://${guest.id}`] });
+      signal = createServer({ databasePath: ':memory:', port: 0 });
       const address = await signal.listen(0), settings = { signalingUrl: `http://127.0.0.1:${address.port}`, stunUrls: [stun.url] };
       const menu = await host.context.newPage(); await menu.goto(`chrome-extension://${host.id}/popup.html`);
       const viewer = await guest.context.newPage(); await viewer.goto(`chrome-extension://${guest.id}/viewer.html`);

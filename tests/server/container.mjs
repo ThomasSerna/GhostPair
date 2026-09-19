@@ -20,7 +20,7 @@ async function ready() {
   throw new Error('Docker health check did not pass on the configured PORT.');
 }
 try {
-  container = (await docker('run', '--rm', '-d', '-e', `ALLOWED_ORIGINS=${origin}`, '-e', 'PORT=9797', '--health-interval=1s', '--health-start-period=1s', '-p', '127.0.0.1::9797', 'ghostpair:validation')).stdout.trim();
+  container = (await docker('run', '--rm', '-d', '-e', 'PORT=9797', '--health-interval=1s', '--health-start-period=1s', '-p', '127.0.0.1::9797', 'ghostpair:validation')).stdout.trim();
   assert.match(container, /^[a-f0-9]{64}$/);
   let base = await ready();
   for (const route of ['/health', '/ready', '/privacy']) assert.equal((await fetch(base + route)).status, 200);
@@ -28,7 +28,7 @@ try {
   const response = await fetch(base + '/v1/devices', { method: 'POST', headers: { Origin: origin } });
   assert.equal(response.status, 201); const identity = await response.json();
   await docker('restart', container); base = await ready();
-  socket = new WebSocket(base.replace('http:', 'ws:') + '/v1/connect', { origin });
+  socket = new WebSocket(base.replace('http:', 'ws:') + '/v1/connect', { origin: `chrome-extension://${'p'.repeat(32)}` });
   await new Promise((done, fail) => { socket.once('open', done); socket.once('error', fail); });
   const result = new Promise((done, fail) => { const timer = setTimeout(() => fail(new Error('Container authentication timeout')), 10000); socket.once('message', data => { clearTimeout(timer); done(JSON.parse(data)); }); });
   socket.send(JSON.stringify({ type: 'host.open', ...identity, password: 'Synthetic container password' }));

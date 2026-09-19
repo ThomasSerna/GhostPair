@@ -53,20 +53,20 @@ class Peer {
 }
 
 async function start(overrides: Partial<ServerConfig> = {}, store?: DeviceStore) {
-  const server = createServer({ databasePath: ':memory:', allowedOrigins: [origin], port: 0, scryptN: 1024, ...overrides }, store);
+  const server = createServer({ databasePath: ':memory:', port: 0, scryptN: 1024, ...overrides }, store);
   servers.push(server);
   const address = await server.listen();
   const base = `http://127.0.0.1:${address.port}`;
   return {
     server,
     base,
-    async register() {
-      const response = await fetch(`${base}/v1/devices`, { method: 'POST', headers: { Origin: origin } });
+    async register(requestOrigin = origin) {
+      const response = await fetch(`${base}/v1/devices`, { method: 'POST', headers: { Origin: requestOrigin } });
       expect(response.status).toBe(201);
       return await response.json() as { deviceId: string; ownerToken: string };
     },
-    async connect() {
-      const socket = new WebSocket(`${base.replace('http:', 'ws:')}/v1/connect`, { origin });
+    async connect(requestOrigin = origin) {
+      const socket = new WebSocket(`${base.replace('http:', 'ws:')}/v1/connect`, { origin: requestOrigin });
       sockets.push(socket);
       const peer = new Peer(socket);
       await new Promise<void>((resolve, reject) => { socket.once('open', resolve); socket.once('error', reject); });
@@ -93,11 +93,38 @@ afterEach(async () => {
 });
 
 describe('signaling security and lifecycle', () => {
-  it('enforces exact HTTP and WebSocket origins, including absent and similar origins', async () => {
+  it('accepts different Chrome/Edge IDs for registration, preflight and WebSocket authentication without configuration', async () => {
     const app = await start();
-    for (const rejected of [undefined, 'https://example.com', `${origin}.evil`]) {
-      const response = await fetch(`${app.base}/v1/devices`, { method: 'POST', headers: rejected ? { Origin: rejected } : {} });
-      expect(response.status).toBe(403);
+    for (const accepted of [origin, `chrome-extension://${'p'.repeat(32)}`]) {
+      const preflight = await fetch(`${app.base}/v1/devices`, { method: 'OPTIONS', headers: { Origin: accepted } });
+      expect(preflight.status).toBe(204);
+      expect(preflight.headers.get('access-control-allow-origin')).toBe(accepted);
+      expect(preflight.headers.get('access-control-allow-methods')).toBe('POST');
+      expect(preflight.headers.get('vary')).toBe('Origin');
+      const response = await fetch(`${app.base}/v1/devices`, { method: 'POST', headers: { Origin: accepted } });
+      expect(response.status).toBe(201);
+      expect(response.headers.get('access-control-allow-origin')).toBe(accepted);
+      expect(response.headers.get('vary')).toBe('Origin');
+      const identity = await response.json() as { deviceId: string; ownerToken: string };
+      const peer = await app.connect(accepted);
+      peer.send({ type: 'host.open', ...identity, password });
+      expect((await peer.next('host.ready')).deviceId).toBe(identity.deviceId);
+    }
+    expect(await (await fetch(`${app.base}/health`)).json()).toEqual({ status: 'ok' });
+  });
+
+  it('rejects web, absent and malformed origins for HTTP and WebSocket', async () => {
+    const app = await start();
+    for (const rejected of [undefined, 'null', '*', 'https://example.com', 'http://localhost:8787',
+      `${origin}.evil`, `${origin}/`, `${origin}?query=1`, `${origin}#fragment`, `${origin}:1234`,
+      `chrome-extension://${'a'.repeat(31)}`, `chrome-extension://${'a'.repeat(33)}`,
+      `chrome-extension://${'q'.repeat(32)}`, `chrome-extension://${'A'.repeat(32)}`,
+      `https://${'a'.repeat(32)}`, `chrome-extension://user@${'a'.repeat(32)}`]) {
+      for (const method of ['POST', 'OPTIONS']) {
+        const response = await fetch(`${app.base}/v1/devices`, { method, headers: rejected ? { Origin: rejected } : {} });
+        expect(response.status).toBe(403);
+        expect(response.headers.has('access-control-allow-origin')).toBe(false);
+      }
       const socket = new WebSocket(`${app.base.replace('http:', 'ws:')}/v1/connect`, rejected ? { origin: rejected } : {});
       sockets.push(socket);
       socket.on('error', () => {});
@@ -106,10 +133,22 @@ describe('signaling security and lifecycle', () => {
       });
       expect(status).toBe(403);
     }
-    const preflight = await fetch(`${app.base}/v1/devices`, { method: 'OPTIONS', headers: { Origin: origin } });
-    expect(preflight.status).toBe(204);
-    expect(preflight.headers.get('access-control-allow-origin')).toBe(origin);
-    expect(await (await fetch(`${app.base}/health`)).json()).toEqual({ status: 'ok' });
+  });
+
+  it('allows exact loopback HTTP origins only with the development opt-in', async () => {
+    const app = await start({ allowLocalhostOrigins: true });
+    for (const accepted of ['http://localhost:8787', 'http://127.0.0.1:3000', 'http://[::1]:8787']) {
+      const identity = await app.register(accepted);
+      const preflight = await fetch(`${app.base}/v1/devices`, { method: 'OPTIONS', headers: { Origin: accepted } });
+      expect(preflight.status).toBe(204);
+      expect(preflight.headers.get('access-control-allow-origin')).toBe(accepted);
+      const peer = await app.connect(accepted);
+      peer.send({ type: 'host.open', ...identity, password });
+      expect((await peer.next('host.ready')).deviceId).toBe(identity.deviceId);
+    }
+    for (const rejected of ['http://localhost.evil:8787', 'http://localhost:8787/path', 'https://localhost:8787', 'http://user@localhost:8787']) {
+      expect((await fetch(`${app.base}/v1/devices`, { method: 'POST', headers: { Origin: rejected } })).status).toBe(403);
+    }
   });
 
   it('persists the device identity while storing only an owner-token hash', async () => {

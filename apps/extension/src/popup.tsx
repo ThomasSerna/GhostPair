@@ -97,7 +97,6 @@ function Popup() {
       <p className="helper">Each signaling server uses a separate device identity. Saved settings override the build defaults.</p>
       <button className="primary" disabled={busy} onClick={() => void saveSettings()}>Save settings</button>
       <button className="secondary" disabled={busy} onClick={() => void run(async () => { setState(await request('ui.settings.reset')); setSettingsOpen(false); })}>Use build defaults</button>
-      <details><summary>Extension identifier</summary><code className="extension-id">{chrome.runtime.id}</code><p className="helper">Your server administrator must allow this identifier.</p></details>
       {state && <section className="simulation-settings" aria-label="Simulation settings">
         <h2>Simulation</h2>
         <p className="helper">Saved automatically for your next hosted session.</p>

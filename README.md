@@ -12,12 +12,13 @@ Requirements: Node.js 24.13 or later and npm. In PowerShell, use `npm.cmd` if ex
 npm.cmd ci
 Copy-Item .env.example .env
 npm.cmd run build
+npm.cmd run build -w @ghostpair/extension -- --mode development
 ```
 
 1. Open `chrome://extensions` or `edge://extensions`, enable developer mode, and load `dist/extension` as an unpacked extension.
-2. Copy the browser's extension ID into `ALLOWED_ORIGINS` in the root `.env`. Use exact `chrome-extension://ID` origins, separated by commas, for all participating installations. This ID is separate from the GhostPair address assigned to each profile.
+2. Any valid Chrome/Edge extension ID can connect without server configuration. Web-page origins remain denied; `DEV_ALLOW_LOCALHOST_ORIGINS=true` is an optional opt-in for local browser-page test fixtures only. Legacy `ALLOWED_ORIGINS` values are ignored.
 3. Run `npm.cmd run dev:server`. The server automatically loads the root `.env`; shell or deployment variables take precedence. A missing file is allowed when configuration is injected. Invalid configuration prevents startup with an explanatory error.
-4. For local tests, keep `VITE_SIGNALING_URL=http://127.0.0.1:8787`. Both browsers must use the same signaling server. Settings are available from the popup and the guest connection page.
+4. For local tests, keep `VITE_SIGNALING_URL=http://127.0.0.1:8787` in `.env` and build in development mode as above, or use `dev:extension`. Ordinary production builds use the committed `.env.production` defaults instead. Both browsers must use the same signaling server. Settings are available from the popup and the guest connection page.
 5. On an HTTP/HTTPS page, invoke GhostPair from the browser toolbar, choose a password of 8–256 characters, confirm the sharing scope, and select **Share current tab →**. Approve the requested permissions and share your GhostPair address and password with your guest.
 6. In another isolated profile or computer, select **Connect to a host ↗** to open the full-page connection screen. Enter the host's address and password. For internet connections, deploy HTTPS signaling first as described below.
 
@@ -34,11 +35,11 @@ npm.cmd run test:visual
 npm.cmd run package
 ```
 
-Packages are written to `dist/packages/`. Packages built with local endpoints are for development. Configure production endpoints and follow [Publishing](docs/publishing.md) before submitting to stores.
+Packages are written to `dist/packages/`. Production builds default to `https://ghostpair.onrender.com` through the public-only `.env.production`. Use `npm.cmd run package:store` to validate those endpoints and create store packages. The new server release remains pending PostgreSQL activation; follow [Publishing](docs/publishing.md) before submitting to stores.
 
 ### Environment and saved settings
 
-The signaling server loads the root `.env`; Vite also reads its environment files from that root, including when launched through npm workspaces. Only public `VITE_*` values are exposed to extension code. Never put secrets in a `VITE_*` variable. Vite also supports root `.env.local` and mode-specific files; process environment variables have priority.
+The signaling server loads the root `.env`; Vite also reads its environment files from that root, including when launched through npm workspaces. Only public `VITE_*` values are exposed to extension code. Never put secrets in a `VITE_*` variable or the committed `.env.production`. Production-specific values override the generic `.env`; use untracked `.env.production.local` or process variables to override them for a different deployment. Process environment variables have priority. Development mode continues to use the root development defaults.
 
 `VITE_SIGNALING_URL` and `VITE_STUN_URLS` provide the extension's build defaults. Manually saved settings survive new builds. Select **Use build defaults** to remove those overrides. After changing public environment values, rebuild and reload the extension. Changing signaling servers uses a separate identity for that server.
 
@@ -64,11 +65,11 @@ Version 0.5.0 uses peer protocol 4 for visual simulation and interaction revisio
 
 ## Deployment
 
-For Koyeb, use the Docker image with PostgreSQL, a stable HTTPS domain and one signaling instance. See [Portable deployment](docs/deployment.md) for variables, migration, backups and moving to another host. [Publishing](docs/publishing.md) covers the final domain, store IDs and publisher information required by `npm run package:store`.
+Production is hosted on Render at **https://ghostpair.onrender.com**, using the repository Dockerfile and branch `main`. Auto-deploy must stay Off until a persistent PostgreSQL provider is configured. See [Render activation](docs/deployment.md) and `deploy/render.env.example` for the remaining connection and verification steps. The planned cutover resets old ephemeral SQLite identities once; later deployments retain PostgreSQL identities. The local SQLite file is not a production backup. [Publishing](docs/publishing.md) covers packages and publisher requirements.
 
 Docker Compose includes Node.js signaling, persistent SQLite, Caddy for HTTPS/WSS, and coturn in STUN-only mode. Use a domain pointing to the server and allow TCP 80/443 and UDP/TCP 3478.
 
-For a new deployment, copy `deploy/.env.example` to the root `.env`. If `.env` already exists, merge deployment values instead of overwriting it. Set `SIGNAL_DOMAIN`, exact `ALLOWED_ORIGINS`, and public extension endpoints:
+For a new self-managed Compose deployment, copy `deploy/.env.example` to the root `.env`. If `.env` already exists, merge deployment values instead of overwriting it. Set `SIGNAL_DOMAIN` and public extension endpoints. Put the public build values in `.env.production.local` as well to override the committed Render defaults:
 
 ```dotenv
 SIGNAL_DOMAIN=connect.example.com

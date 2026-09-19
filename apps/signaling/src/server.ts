@@ -65,7 +65,7 @@ export function createServer(overrides: Partial<ServerConfig> = {}, store?: Devi
 
   function allowedOrigin(origin: string | undefined): boolean {
     if (!origin) return false;
-    if (config.allowedOrigins.includes(origin)) return true;
+    if (/^chrome-extension:\/\/[a-p]{32}$/.test(origin)) return true;
     if (!config.allowLocalhostOrigins) return false;
     try {
       const url = new URL(origin);
