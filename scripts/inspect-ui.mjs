@@ -14,7 +14,7 @@ try {
   browser = await chromium.launch({ executablePath: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe', headless: true });
   const context = await browser.newContext({ viewport: { width: 398, height: 790 } });
   await context.addInitScript(() => {
-    const state = { role: null, status: 'idle', paused: false, controlEnabled: true, controlMode: 'visual', controlRevision: 0, visualPreferences: { notices: false, duration: 'persistent', seconds: 3, accentColor: '#7871e8' }, clipboardEnabled: false, remoteClipboardEnabled: false, tabs: [], generation: 0, settings: { signalingUrl: 'http://127.0.0.1:8787', stunUrls: ['stun:stun.example.com:3478'] } };
+    const state = { role: null, status: 'idle', paused: false, controlEnabled: true, controlMode: 'visual', controlRevision: 0, visualPreferences: { notices: false, text: { duration: 'persistent', seconds: 10 }, other: { duration: 'persistent', seconds: 3 }, accentColor: '#7871e8' }, clipboardEnabled: false, remoteClipboardEnabled: false, tabs: [], generation: 0, settings: { signalingUrl: 'http://127.0.0.1:8787', stunUrls: ['stun:stun.example.com:3478'] } };
     if (location.search === '?host') { state.role = 'host'; state.status = 'connected'; }
     globalThis.uiState = state;
     const noEvent = { addListener() {}, removeListener() {} };
@@ -40,16 +40,19 @@ try {
   assert.equal(await page.getByLabel('Interaction mode').inputValue(), 'visual');
   assert.equal(await page.getByLabel('Simulation notices').isChecked(), false);
   await page.screenshot({ path: resolve(output, 'simulation-default.png'), fullPage: true });
-  await page.getByLabel('Simulation duration').selectOption('temporary');
-  await page.getByLabel('Seconds without interaction').fill('0.5');
-  await page.getByLabel('Seconds without interaction').blur();
+  const textPreferences = page.getByRole('group', { name: 'Simulated text', exact: true }), otherPreferences = page.getByRole('group', { name: 'Other simulations', exact: true });
+  await textPreferences.getByRole('combobox').selectOption('temporary');
+  await otherPreferences.getByRole('combobox').selectOption('temporary');
+  assert.equal(await otherPreferences.getByLabel('Seconds without interaction').inputValue(), '3');
+  await textPreferences.getByLabel('Seconds without interaction').fill('0.5');
+  await textPreferences.getByLabel('Seconds without interaction').blur();
   await page.getByLabel('Simulation notices').check();
   await page.screenshot({ path: resolve(output, 'simulation-temporary.png'), fullPage: true });
-  assert.deepEqual(await page.evaluate(() => uiState.visualPreferences), { notices: true, duration: 'temporary', seconds: 0.5, accentColor: '#7871e8' });
+  assert.deepEqual(await page.evaluate(() => uiState.visualPreferences), { notices: true, text: { duration: 'temporary', seconds: 0.5 }, other: { duration: 'temporary', seconds: 3 }, accentColor: '#7871e8' });
   for (const invalid of ['0', '0.25', '31', '']) {
-    await page.getByLabel('Seconds without interaction').fill(invalid);
-    await page.getByLabel('Seconds without interaction').blur();
-    assert.equal(await page.getByLabel('Seconds without interaction').inputValue(), '0.5');
+    await textPreferences.getByLabel('Seconds without interaction').fill(invalid);
+    await textPreferences.getByLabel('Seconds without interaction').blur();
+    assert.equal(await textPreferences.getByLabel('Seconds without interaction').inputValue(), '0.5');
   }
   for (const [name, hex] of [['Blue', '#3b82f6'], ['Green', '#22c55e'], ['Orange', '#f97316'], ['Pink', '#ec4899'], ['Purple', '#7871e8']]) {
     await page.getByLabel(name, { exact: true }).check();

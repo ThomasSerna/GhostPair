@@ -15,6 +15,10 @@ node tests/browser/environment-check.mjs
 npm run test:browser
 npm run test:frames
 npm run test:questionnaires
+npm run test:visual
+npm run test:postgres
+docker build -t ghostpair:validation .
+node tests/server/container.mjs
 node tests/browser/benchmark.mjs
 node scripts/inspect-ui.mjs
 npm run package
@@ -23,6 +27,26 @@ npm run package
 Run a single pairing with `node tests/browser/smoke.mjs chrome:edge`. Override executable locations with `GHOSTPAIR_CHROME` and `GHOSTPAIR_EDGE`. Set `GHOSTPAIR_HEADED=1` for visible windows and optionally `GHOSTPAIR_INSPECT=1` to hold the synthetic session for one minute for inspection.
 
 The harness loads an unpacked extension using `Extensions.loadUnpacked`, enabled only for the isolated browser process with `--enable-unsafe-extension-debugging`. Inspection runs omit Playwright's opt-in `--enable-automation` argument to inspect the ordinary toolbar; they do not suppress native capture or extension debugging indicators. The capture probe invokes `Extensions.triggerAction` against a browser **tab target** to exercise local extension authorization; it first verifies rejection without invocation. These test APIs are separate from the extension runtime. See [the CDP extension testing API](https://chromedevtools.github.io/devtools-protocol/tot/Extensions/) and [Playwright extension testing](https://playwright.dev/docs/chrome-extensions).
+
+## Host editing and portable release: September 18, 2026
+
+Version **0.5.0** retains peer protocol **4**. **134 unit tests in 15 files passed**, together with workspace TypeScript checks and production compilation. Local implementation commits cover independent durations, indicator-only choice previews, host text editing, PostgreSQL, deployment and packaging, with a separate correction for database URL precedence over TLS and timeout configuration.
+
+Unit coverage includes legacy preference migration into both categories, independent expiration across frames, preserved settings and colors, and authorized single-use drag transfers. Transfers validate the session/document route, insert before deleting, reject replay and retain the source after insertion failure or navigation. Server tests cover asynchronous authentication capacity, disconnects, timeouts, shutdown during lookup, storage failure/recovery, grouped readiness and startup failure without fallback.
+
+`npm run test:visual` passed on Chrome 153.0.8010.50 and Edge 153.0.4234.46, with a final rerun using Edge 153.0.4234.48. The fixture verifies indicator-only painting, unchanged original values, native host selection and typing, Unicode, synthetic clipboard event data, and native IME composition with queued remote input. A native drag is protected from expiration; a remote source edit after the read step causes the stale deletion to preserve the edited source. Clipboard event tests avoid reading or replacing the personal Windows clipboard. `npm run test:frames` passed on both browsers and `npm run test:questionnaires` passed all 40 Live-control comparisons.
+
+Native WebRTC session checks passed Chrome→Chrome, Edge→Edge and Chrome→Edge. The final Edge pairings used Edge 153.0.4234.48. These include host edits and moves into previously untouched fields in root documents and embedded questionnaires, followed by the existing session, navigation and cancellation regressions. Root-document moves use native mouse dragging. For the cross-frame move the harness observes the actual dragstart token and delivers trusted CDP drag events to the destination, because Playwright's intercepted drag did not dispatch them there. The extension still performs the complete authorized transfer through its normal internal messages. These hooks exist only in the disposable test installation.
+
+An initial combined smoke run timed out at the Live-control click in the second authorized tab; the isolated Chrome→Chrome rerun passed. The harness now waits for the destination URL in the received presentation before clicking the newly authorized tab, matching the other tab switches. Subsequent Edge→Edge and Chrome→Edge runs passed. This records the retry rather than describing the first batch as entirely successful.
+
+`npm run test:postgres` passed against a real disposable PostgreSQL 17 Docker container. The same contract ran against SQLite and PostgreSQL, including concurrent registration limits, authentication and persistence. The integration also verified database restart, read-only dry run, repeated migration, exact preservation of all three columns, transaction rollback on a conflicting row, and authentication with the original credentials after migration. Test databases and credentials are synthetic. Verified TLS settings and rejection of contradictory URL options are unit-tested; a production CA/provider connection remains a deployment check.
+
+Both Compose configurations validate. The image/container test checks `/health`, `/ready`, direct Node `/privacy`, denied origins, registration and authentication after restart, and the Docker health check with a non-default `PORT=9797`. Docker Desktop was started for local verification; no public service was created. `npm audit --omit=dev` reports no vulnerabilities in production dependencies; the build-stage install reports two moderate development-dependency findings, which remain outside the runtime image after pruning.
+
+`npm run package` generated and inspected separate Chrome/Edge 0.5.0 ZIPs (18 files each), with Manifest V3, no added permissions, source maps, environment files or test instrumentation. `environment-check.mjs` passed root/workspace and process-precedence checks, private-sentinel exclusion, public build metadata, positive store ZIP generation in a disposable fixture and rejection of local endpoints, unexpected permissions and instrumentation. `npm run package:store` correctly rejects the current development endpoint before building. The public-looking fixture domain tests validation only; it is not a provisioned GhostPair service. Current local ZIPs must be rebuilt with final public endpoints before submission. UI inspection passed seven scenarios with no page errors; the two preference groups and screenshots were inspected.
+
+Still pending: actual publisher/contact/retention data, stable public domain and STUN configuration, final extension IDs and allowlist, managed PostgreSQL TLS/backup restoration, real Koyeb deployment, final screenshots, and the manual checks below. In particular, physical IME/clipboard gestures and cross-frame dragging between independent computers, profiles and networks require manual confirmation. Local automated fixtures do not establish these results or native Windows capture-indicator behavior.
 
 ## Adaptive simulation follow-up: September 17, 2026
 

@@ -1,6 +1,6 @@
 {
   "name": "ghostpair",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "private": true,
   "type": "module",
   "workspaces": [
@@ -22,7 +22,8 @@
     "test:visual": "node tests/browser/visual-probe.mjs",
     "test:questionnaires": "node tests/browser/questionnaire-probe.mjs",
     "test:postgres": "npm run build -w @ghostpair/protocol && npm run build -w @ghostpair/signaling && node tests/server/postgres.mjs",
-    "migrate:identities": "node apps/signaling/dist/migrate-main.js"
+    "migrate:identities": "node apps/signaling/dist/migrate-main.js",
+    "package:store": "node scripts/package-store.mjs"
   },
   "devDependencies": {
     "@types/chrome": "^0.1.24",

@@ -123,7 +123,7 @@ try {
       const pending = await waitState(viewer, s => s.tabs.some(t => t.url === `${base}/two` && !t.authorized), 'new tab waits for approval');
       assert.equal(pending.presentation, undefined);
       const second = await poll(() => host.context.pages().find(p => p.url() === `${base}/two`), 'new host page');
-      await authorize(host, second); await call(hostUi, 'ui.host.authorize'); await videoReady(viewer);
+      await authorize(host, second); await call(hostUi, 'ui.host.authorize'); await videoReady(viewer, second.url());
       await click(second, viewer, '#target'); await poll(() => second.evaluate(() => window.clicks === 1), 'second authorized tab');
       await call(viewer, 'ui.command', { command: { controlRevision: (await state(viewer)).controlRevision, type: 'tab.activate', tabId: original.tabId } }); await videoReady(viewer, page.url());
       await click(page, viewer, '#target'); await poll(() => page.evaluate(() => window.clicks === 3), 'return to first authorized tab');

@@ -11,7 +11,7 @@ export function SimulationPreferences({ preferences, busy, onChange }: {
   onChange: (preferences: VisualPreferences) => void;
 }) {
   return <>
-    {(['text', 'other'] as const).map(category => <fieldset key={category} disabled={busy}>
+    {(['text', 'other'] as const).map(category => <fieldset className="simulation-lifetime" key={category} disabled={busy}>
     <legend>{category === 'text' ? 'Simulated text' : 'Other simulations'}</legend>
     <label>Duration<select value={preferences[category].duration} onChange={e => onChange({ ...preferences, [category]: { ...preferences[category], duration: e.target.value } })}><option value="persistent">Until cleared</option><option value="temporary">Temporary</option></select></label>
     {preferences[category].duration === 'temporary' && <label>Seconds without interaction<input type="number" min={0.1} max={30} step={0.1} defaultValue={preferences[category].seconds} key={preferences[category].seconds} onBlur={e => {

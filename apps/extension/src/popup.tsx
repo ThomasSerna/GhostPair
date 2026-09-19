@@ -157,7 +157,7 @@ function Popup() {
       {state?.deviceId && <p className="saved-id">Your address: <code>{formatDeviceId(state.deviceId)}</code></p>}
     </section>}
     <Notifications state={state} error={error} onError={setError}/>
-    <footer><span className="connection-dot"/>Direct connection · No relay<span>v0.4</span></footer>
+    <footer><span className="connection-dot"/>Direct connection · No relay<span>v0.5</span></footer>
   </main>;
 }
 

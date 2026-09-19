@@ -28,7 +28,8 @@ for (const name of process.argv.slice(2).length ? process.argv.slice(2) : ['chro
       // Capture a reference only in this fixture, without opening the production shadow root.
       const attach = Element.prototype.attachShadow;
       Element.prototype.attachShadow = function (options) { const shadow = attach.call(this, options); if (this.hasAttribute('data-ghostpair-visual')) globalThis.preview = shadow; return shadow; };
-      globalThis.chrome = { runtime: { id: 'fixture', onMessage: { addListener: fn => { globalThis.controller = fn; }, removeListener() {} }, sendMessage: async () => ({}) } };
+      globalThis.localMessages = [];
+      globalThis.chrome = { runtime: { id: 'fixture', onMessage: { addListener: fn => { globalThis.controller = fn; }, removeListener() {} }, sendMessage: async message => { localMessages.push(message); return {}; } } };
     });
     const config = { mode: 'visual', revision: 0, preferences: { notices: false, text: { duration: 'persistent', seconds: 10 }, other: { duration: 'persistent', seconds: 3 }, accentColor: '#7871e8' } };
     const install = async (generation = 1) => page.evaluate(`(${installDomControl.toString()})('fixture',${generation},true,${JSON.stringify(config)})`);
@@ -131,10 +132,25 @@ for (const name of process.argv.slice(2).length ? process.argv.slice(2) : ['chro
     assert.equal(await page.locator('#text').inputValue(), 'Original');
     assert.deepEqual(await page.evaluate(() => events.filter(([type, id]) => id === 'text' && ['input', 'change', 'beforeinput'].includes(type))), []);
     await page.screenshot({ path: resolve(artifactRoot, `visual-host-edit-${name}.png`) });
+    // A native drag retains its source when remote editing changes that source
+    // after the transfer's read step, but before its deletion acknowledgment.
+    await page.keyboard.press('Control+a');
+    await page.mouse.move(field.x + 15, field.y + field.height / 2); await page.mouse.down();
+    await page.mouse.move(field.x + 30, field.y + field.height / 2, { steps: 5 });
+    await page.mouse.move(field.x + field.width + 30, field.y + field.height + 25, { steps: 10 }); await page.mouse.up();
+    const token = await page.evaluate(() => localMessages.findLast(message => message.operation === 'drag.start')?.token);
+    assert.ok(token, 'native selected text started a drag');
+    assert.equal((await send(undefined, { operation: 'visual.drag.read', token })).text, 'Paste🙂 á漢🙂語 remote');
+    assert.equal((await send(undefined, { operation: 'visual.clear', category: 'text' })).protected, true);
+    await key('a', 2); await text('Concurrent remote edit');
+    await send(undefined, { operation: 'visual.drag.delete', token });
+    assert.ok((await contents()).includes('Concurrent remote edit'), 'stale deletion preserves the concurrently edited source');
+    await send(undefined, { operation: 'visual.drag.finish', token });
+    assert.equal(await page.locator('#text').inputValue(), 'Original');
     await send(undefined, { operation: 'visual.clear' });
     assert.equal(await page.locator('[data-ghostpair-visual]').count(), 0);
     await cdp.detach();
-    results.push({ hostEditing: true, localClipboardEvents: true, imeConcurrency: true, browser: name, nonMutation: true, editing: true, geometry: true, notices: true, adaptiveStyles: true, liveColors: true, staleInputRejected: true });
+    results.push({ hostEditing: true, localClipboardEvents: true, imeConcurrency: true, dragConcurrency: true, browser: name, nonMutation: true, editing: true, geometry: true, notices: true, adaptiveStyles: true, liveColors: true, staleInputRejected: true });
   } finally { await browser.close(); }
 }
 await writeFile(resolve(artifactRoot, 'visual-results.json'), JSON.stringify(results, null, 2));
