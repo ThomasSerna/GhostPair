@@ -20,6 +20,7 @@ export function SimulationPreferences({ preferences, busy, onChange }: {
       if (seconds !== preferences[category].seconds) onChange({ ...preferences, [category]: { ...preferences[category], seconds } });
     }}/><small className="helper">0.1–30 seconds, in steps of 0.1.</small></label>}
     </fieldset>)}
+    <label className="check"><input type="checkbox" checked={preferences.clickAnimations} disabled={busy} onChange={e => onChange({ ...preferences, clickAnimations: e.target.checked })}/><span>Click animations<small>Show brief circles at click positions. Buttons, choices and typing remain visible when disabled.</small></span></label>
     <fieldset className="simulation-colors" disabled={busy}>
       <legend>Simulation color</legend>
       <div className="color-options">{colors.map(([name, color]) => <label key={color}>

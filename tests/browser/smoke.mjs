@@ -49,7 +49,14 @@ async function point(host, viewer, selector) {
   const xy = await host.locator(selector).evaluate(element => { const box = element.getBoundingClientRect(); return { x: (box.left + box.width / 2) / innerWidth, y: (box.top + box.height / 2) / innerHeight }; });
   const box = await viewer.locator('video').boundingBox(); assert.ok(box); return { x: box.x + xy.x * box.width, y: box.y + xy.y * box.height };
 }
-async function click(host, viewer, selector) { await videoReady(viewer, host.url()); const xy = await point(host, viewer, selector); await viewer.mouse.click(xy.x, xy.y); }
+async function click(host, viewer, selector) {
+  // Native-visibility guest profiles do not force focus on CDP input. Host-side
+  // tab authorization can move it away, so restore the user's viewer first.
+  await viewer.bringToFront();
+  await poll(() => viewer.evaluate(() => !document.hidden), 'viewer visible for click');
+  await videoReady(viewer, host.url());
+  const xy = await point(host, viewer, selector); await viewer.mouse.click(xy.x, xy.y);
+}
 async function join(viewer, deviceId, password) {
   await viewer.bringToFront();
   await poll(() => viewer.evaluate(() => !document.hidden), 'connection page visible');

@@ -30,7 +30,7 @@ button{font:inherit;font-weight:600;color:inherit;background:var(--button);paddi
 export async function visualStyles(page, name) {
   await page.setViewportSize({ width: 1100, height: 900 });
   await page.setContent(fixture);
-  const configuration = { mode: 'visual', revision: 0, preferences: { notices: false, text: { duration: 'persistent', seconds: 0.5 }, other: { duration: 'persistent', seconds: 0.5 }, accentColor: '#7871e8' } };
+  const configuration = { mode: 'visual', revision: 0, preferences: { notices: false, clickAnimations: true, text: { duration: 'persistent', seconds: 0.5 }, other: { duration: 'persistent', seconds: 0.5 }, accentColor: '#7871e8' } };
   await page.evaluate(`(${installDomControl.toString()})('styles',1,true,${JSON.stringify(configuration)})`);
   const send = async (command, extra = {}) => {
     const reply = await page.evaluate(({ command, extra }) => {
@@ -53,7 +53,7 @@ export async function visualStyles(page, name) {
     return [...preview.children].filter(e => e.tagName === 'DIV' && Math.abs(parseFloat(e.style.left) - box.left) < 1 && Math.abs(parseFloat(e.style.top) - box.top) < 1 && Math.abs(parseFloat(e.style.width) - box.width) < 1).map(e => {
       const css = getComputedStyle(e);
       return { text: e.textContent, background: css.backgroundColor, border: css.borderTopWidth, color: css.borderTopColor, radius: css.borderTopLeftRadius, display: css.display };
-    });
+    }).filter(e => e.display !== 'none');
   }, selector);
   const textStyleMatches = async id => {
     const result = await page.evaluate(id => {
@@ -78,7 +78,7 @@ export async function visualStyles(page, name) {
     assert.ok((await overlays(`#${id}-r1`)).every(e => e.border === '0px'));
     assert.equal((await overlays(`#${id}-r2`)).length, 0);
     assert.ok((await overlays(`#${id}-r2 .indicator`)).some(e => e.border === '2px'));
-    assert.equal((await overlays(`#${id}-plain`)).length, 0);
+    assert.ok((await overlays(`#${id}-plain`)).some(e => e.border === '2px'), 'unrecognized controls retain a visible fallback');
   }
   await page.clock.runFor(600);
   await click('#compact');
@@ -92,7 +92,8 @@ export async function visualStyles(page, name) {
   await send(undefined, { operation: 'configure', configuration });
   await page.clock.runFor(80);
   await textStyleMatches('light-text');
-  assert.ok((await overlays('#light-card .indicator')).some(e => e.color === 'rgb(18, 171, 205)'));
+  const pageColor = await page.locator('#light-card .indicator').evaluate(e => getComputedStyle(e).color);
+  assert.ok((await overlays('#light-card .indicator')).some(e => e.color === pageColor));
   assert.deepEqual(await snapshot(), original);
   await page.screenshot({ path: resolve(artifactRoot, `visual-styles-${name}-updated.png`), caret: 'initial' });
 

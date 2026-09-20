@@ -5,6 +5,7 @@ import { chromium } from 'playwright';
 import { installDomControl } from '../../apps/extension/src/core/dom-control.ts';
 import { artifactRoot, browsers } from './helpers.mjs';
 import { visualStyles } from './visual-styles.mjs';
+import { selectionStyles } from './selection-styles.mjs';
 
 const fixture = `<!doctype html><meta charset="utf-8"><title>Visual simulation fixture</title>
 <style>body{font:18px system-ui;margin:30px;background:#fff;color:#222}input,textarea,button{font:inherit;padding:8px;margin:10px}label{display:block}#scroll{height:100px;overflow:auto;border:1px solid #aaa}#spacer{height:500px}</style>
@@ -27,11 +28,12 @@ for (const name of process.argv.slice(2).length ? process.argv.slice(2) : ['chro
     await page.evaluate(() => {
       // Capture a reference only in this fixture, without opening the production shadow root.
       const attach = Element.prototype.attachShadow;
-      Element.prototype.attachShadow = function (options) { const shadow = attach.call(this, options); if (this.hasAttribute('data-ghostpair-visual')) globalThis.preview = shadow; return shadow; };
+      globalThis.replicaRoots = new WeakMap();
+      Element.prototype.attachShadow = function (options) { const shadow = attach.call(this, options); replicaRoots.set(this, shadow); if (this.hasAttribute('data-ghostpair-visual')) globalThis.preview = shadow; return shadow; };
       globalThis.localMessages = [];
       globalThis.chrome = { runtime: { id: 'fixture', onMessage: { addListener: fn => { globalThis.controller = fn; }, removeListener() {} }, sendMessage: async message => { localMessages.push(message); return {}; } } };
     });
-    const config = { mode: 'visual', revision: 0, preferences: { notices: false, text: { duration: 'persistent', seconds: 10 }, other: { duration: 'persistent', seconds: 3 }, accentColor: '#7871e8' } };
+    const config = { mode: 'visual', revision: 0, preferences: { notices: false, clickAnimations: true, text: { duration: 'persistent', seconds: 10 }, other: { duration: 'persistent', seconds: 3 }, accentColor: '#7871e8' } };
     const install = async (generation = 1) => page.evaluate(`(${installDomControl.toString()})('fixture',${generation},true,${JSON.stringify(config)})`);
     await install();
     const send = async (command, extra = {}) => {
@@ -78,6 +80,7 @@ for (const name of process.argv.slice(2).length ? process.argv.slice(2) : ['chro
     assert.equal(await page.evaluate(() => { const overlay = [...preview.querySelectorAll('div')].find(e => e.textContent === 'Attached to field'); return Math.round(parseFloat(overlay.style.top)) === Math.round(document.querySelector('#moving').getBoundingClientRect().top); }), true);
     await page.locator('#moving').evaluate(e => e.remove()); await page.clock.runFor(80); assert.ok(!(await contents()).includes('Attached to field'));
     await click('#text'); await key('a', 2); await text('A long simulated line '.repeat(8));
+    await page.clock.runFor(80); // Allow the throttled draw and the caret's scroll adjustment to settle.
     assert.ok(await page.evaluate(() => [...preview.querySelectorAll('div')].some(e => e.textContent.startsWith('A long simulated line') && e.scrollLeft > 0)));
     assert.equal(await page.locator('#text').evaluate(e => e.scrollLeft), 0);
     config.preferences.notices = true;
@@ -97,6 +100,7 @@ for (const name of process.argv.slice(2).length ? process.argv.slice(2) : ['chro
     await send(undefined, { operation: 'dispose', controlRevision: 1 });
     assert.equal(await page.locator('[data-ghostpair-visual]').count(), 0);
     await visualStyles(page, name);
+    await selectionStyles(page, name);
     // Real local keyboard/selection with an isolated, extension-owned editor.
     await page.setContent(fixture); config.mode = 'visual'; config.revision = 0; await install();
     await click('#text'); await key('a', 2); await text('Guest');

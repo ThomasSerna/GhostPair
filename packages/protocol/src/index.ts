@@ -58,6 +58,7 @@ export const VisualPreferencesSchema = z.preprocess(value => {
   return value;
 }, z.object({
   notices: z.boolean().default(false),
+  clickAnimations: z.boolean().default(true),
   text: VisualLifetimeSchema.default({ duration: 'persistent', seconds: 10 }),
   other: VisualLifetimeSchema.default({ duration: 'persistent', seconds: 3 }),
   accentColor: z.string().regex(/^#[\da-f]{6}$/i, 'Choose a six-digit hex color.').transform(value => value.toLowerCase()).default('#7871e8'),

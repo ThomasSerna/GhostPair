@@ -1,7 +1,7 @@
 import type { ControlCommand, ControlConfiguration, VisualActivity, VisualCategory } from '@ghostpair/protocol';
 
 /** Self-contained: Chrome serializes this function into the page's ISOLATED world. */
-export function installDomControl(captureId: string, generation: number, root = true, configuration: ControlConfiguration = { mode: 'visual', revision: 0, preferences: { notices: false, text: { duration: 'persistent', seconds: 10 }, other: { duration: 'persistent', seconds: 3 }, accentColor: '#7871e8' } }) {
+export function installDomControl(captureId: string, generation: number, root = true, configuration: ControlConfiguration = { mode: 'visual', revision: 0, preferences: { notices: false, clickAnimations: true, text: { duration: 'persistent', seconds: 10 }, other: { duration: 'persistent', seconds: 3 }, accentColor: '#7871e8' } }) {
   type Context = { captureId: string; generation: number; ready: boolean; geometry: string; dispose: () => void; release: () => void; configure: (value: ControlConfiguration) => void };
   const scope = globalThis as typeof globalThis & { __ghostpairControl?: Context };
   const geometry = () => ({ viewportWidth: innerWidth, viewportHeight: innerHeight, offsetLeft: visualViewport?.offsetLeft ?? 0, offsetTop: visualViewport?.offsetTop ?? 0, scale: visualViewport?.scale ?? 1 });
@@ -28,7 +28,8 @@ export function installDomControl(captureId: string, generation: number, root = 
   scope.__ghostpairControl = context;
 
   // All preview data and nodes belong to the extension, never to a page control.
-  type Preview = { id: string; revision: number; editor?: HTMLInputElement | HTMLTextAreaElement; composing?: boolean; selecting?: boolean; node: HTMLDivElement; marker?: HTMLDivElement; cursor?: HTMLSpanElement; value?: string; anchor: number; caret: number; checked?: boolean; radio?: boolean; until?: number };
+  type Replica = { key: string; root: ShadowRoot; surface: HTMLElement; container: HTMLElement; useful: boolean };
+  type Preview = { id: string; revision: number; editor?: HTMLInputElement | HTMLTextAreaElement; composing?: boolean; selecting?: boolean; node: HTMLDivElement; marker?: HTMLDivElement; cursor?: HTMLSpanElement; value?: string; anchor: number; caret: number; checked?: boolean; radio?: boolean; until?: number; replica?: Replica };
   const previews = new Map<HTMLElement, Preview>();
   const editors = new WeakMap<Element, HTMLElement>();
   const deferredInput: { command: ControlCommand; respond: (result: unknown) => void; timer: ReturnType<typeof setTimeout> }[] = [];
@@ -73,16 +74,20 @@ export function installDomControl(captureId: string, generation: number, root = 
   let virtualFocus: Element | null = null;
   let visualDown: Element | null = null;
   let visualButton = 'left';
+  let keyboardFocus = false;
   const visualKeys = new Map<string, Element | null>();
   let layer: HTMLDivElement | undefined, shadow: ShadowRoot | undefined, focusMark: HTMLDivElement | undefined, notice: HTMLDivElement | undefined;
   let drawing: number | undefined, drawnAt = 0, noticeUntil = 0, lastNotice = -Infinity;
   const halos: { node: HTMLDivElement; x: number; y: number; until: number }[] = [];
+  const focusReplica: { replica?: Replica } = {};
+  const styleCache = new Map<Document | ShadowRoot, { at: number; css: string; sheet: CSSStyleSheet; complete: boolean; version: number }>();
 
   function configure(value: ControlConfiguration) {
     if (value.revision < configuration.revision) throw new Error('The interaction mode changed.');
     if (value.revision !== configuration.revision || value.mode !== configuration.mode) { release(); clearVisual(); }
     configuration = value;
     updateAccent();
+    if (value.preferences.clickAnimations === false) { for (const halo of halos) halo.node.remove(); halos.length = 0; scheduleDraw(); }
     if (!value.preferences.notices) { notice?.remove(); notice = undefined; noticeUntil = 0; }
   }
   function updateAccent() {
@@ -119,6 +124,7 @@ export function installDomControl(captureId: string, generation: number, root = 
     if (drawing !== undefined) cancelAnimationFrame(drawing);
     drawing = undefined; layer?.remove(); layer = undefined; shadow = undefined; focusMark = undefined; notice = undefined;
     previews.clear(); halos.length = 0; virtualFocus = null; visualDown = null; visualKeys.clear(); noticeUntil = 0; lastNotice = -Infinity;
+    focusReplica.replica = undefined; styleCache.clear();
   }
   function rectStyle(element: Element, overlay: HTMLElement) {
     const box = element.getBoundingClientRect(), style = getComputedStyle(element);
@@ -187,7 +193,12 @@ export function installDomControl(captureId: string, generation: number, root = 
   function choiceSurface(element: HTMLElement): HTMLElement {
     if (element instanceof HTMLInputElement) {
       const label = Array.from(element.labels ?? []).find(label => visibleSurface(label) && label.querySelectorAll(choices).length <= 1);
-      if (label) return label;
+      if (label) {
+        if (label.contains(element)) return label;
+        const wrapper = label.parentElement;
+        if (wrapper && wrapper.contains(element) && !wrapper.matches('form,fieldset,body,html,[role="group"],[role="radiogroup"]') && wrapper.querySelectorAll('input,button,select,textarea,' + choices).length === 1) return wrapper;
+        return visibleSurface(element) ? element : label;
+      }
     }
     // Only adopt a nearby option with one control, never a form or a group.
     if (element.matches('[role="checkbox"],[role="radio"]') && element.textContent?.trim()) return element;
@@ -213,26 +224,242 @@ export function installDomControl(captureId: string, generation: number, root = 
     const leaves = candidates.filter(candidate => !candidates.some(other => other !== candidate && candidate.contains(other)));
     return leaves.length === 1 ? leaves[0] : undefined;
   }
-  function paintOutline(element: Element, overlay: HTMLDivElement, selected: boolean, tint: number) {
+  // Only allow passive markup and resource-free CSS in the isolated replicas.
+  function safeDeclarations(style: CSSStyleDeclaration) {
+    // CSSOM expands variable-bearing shorthands into empty longhands. Preserve
+    // its serialized declarations, splitting only outside strings/functions.
+    const parts: string[] = [];
+    let start = 0, depth = 0, quote = '';
+    const css = style.cssText;
+    for (let i = 0; i <= css.length; i++) {
+      const char = css[i];
+      if (char === '\\') { i++; continue; }
+      if (quote) { if (char === quote) quote = ''; continue; }
+      if (char === '"' || char === "'") { quote = char; continue; }
+      if (char === '(' || char === '[') depth++;
+      if (char === ')' || char === ']') depth--;
+      if (i === css.length || char === ';' && depth === 0) {
+        const declaration = css.slice(start, i);
+        if (!/(?:url|image-set|src)\s*\(|\\|@import/i.test(declaration)) parts.push(declaration);
+        start = i + 1;
+      }
+    }
+    return parts.join(';') + ';';
+  }
+  function replicaStyles(tree: Document | ShadowRoot) {
+    const cached = styleCache.get(tree), now = performance.now();
+    if (cached && now - cached.at < 500) return cached;
+    let complete = true, count = 0, size = 0;
+    const selectors = (value: string) => value
+      .replace(/:root(?![\w-])/g, '[data-gp-root]')
+      .replace(/:host\(([^()]*)\)/g, '[data-gp-host]$1').replace(/:host(?![\w-])/g, '[data-gp-host]')
+      .replace(/:focus-visible(?![\w-])/g, '[data-gp-focus-visible]').replace(/:focus-within(?![\w-])/g, '[data-gp-focus-within]')
+      .replace(/:focus(?![\w-])/g, '[data-gp-focus]').replace(/:active(?![\w-])/g, '[data-gp-active]');
+    const rules = (list: CSSRuleList): string => Array.from(list).map(rule => {
+      if (++count > 4000 || size > 1024 * 1024) { complete = false; return ''; }
+      let css = '';
+      if (rule instanceof CSSStyleRule) {
+        css = `${selectors(rule.selectorText)}{${safeDeclarations(rule.style)}${rules(rule.cssRules)}}`;
+      } else if (rule instanceof CSSImportRule) {
+        try {
+          if (rule.styleSheet) {
+            css = rules(rule.styleSheet.cssRules);
+            if (rule.supportsText) css = `@supports (${rule.supportsText}){${css}}`;
+            if (rule.media.mediaText) css = `@media ${rule.media.mediaText}{${css}}`;
+            if (rule.layerName !== null) css = `@layer ${rule.layerName}{${css}}`;
+          } else complete = false;
+        } catch { complete = false; }
+      } else if ('cssRules' in rule && /^@(media|supports|layer|container)\b/.test(rule.cssText)) {
+        css = `${rule.cssText.slice(0, rule.cssText.indexOf('{'))}{${rules((rule as CSSGroupingRule).cssRules)}}`;
+      } else if (/^@layer [^{]+;$/.test(rule.cssText)) css = rule.cssText;
+      else if (rule.constructor.name === 'CSSNestedDeclarations') css = safeDeclarations((rule as CSSStyleRule).style);
+      size += css.length; return css;
+    }).join('\n');
+    const css = [...Array.from(tree.styleSheets), ...tree.adoptedStyleSheets].map(sheet => {
+      if (sheet.disabled) return '';
+      try { const text = rules(sheet.cssRules); return sheet.media.mediaText ? `@media ${sheet.media.mediaText}{${text}}` : text; }
+      catch { complete = false; return ''; }
+    }).join('\n');
+    const sheet = cached?.css === css ? cached.sheet : new CSSStyleSheet();
+    if (cached?.css !== css) sheet.replaceSync(css);
+    const result = { at: now, css, sheet, complete, version: (cached?.version ?? 0) + (cached?.css !== css || cached.complete !== complete ? 1 : 0) };
+    styleCache.set(tree, result); return result;
+  }
+  function choiceState(element: Element) {
+    return element instanceof HTMLElement && previews.get(element)?.checked !== undefined ? previews.get(element)!.checked!
+      : element instanceof HTMLInputElement ? element.checked : element.getAttribute('aria-checked') === 'true';
+  }
+  function nativeSize(element: HTMLElement) {
+    const css = getComputedStyle(element);
+    const dimension = (axis: 'width' | 'height') => {
+      const sides = axis === 'width' ? ['left', 'right'] : ['top', 'bottom'];
+      const value = parseFloat(css[axis]);
+      return Number.isFinite(value) ? value + (css.boxSizing === 'border-box' ? 0 : sides.reduce((n, side) => n + parseFloat(css.getPropertyValue(`padding-${side}`)) + parseFloat(css.getPropertyValue(`border-${side}-width`)), 0))
+        : axis === 'width' ? element.offsetWidth : element.offsetHeight;
+    };
+    return { width: dimension('width') || 1, height: dimension('height') || 1 };
+  }
+  function stateSignature(elements: Element[]) {
+    const properties = ['appearance', 'accent-color', 'background', 'color', 'border', 'border-radius', 'box-shadow', 'outline', 'opacity', 'visibility', 'display', 'transform', 'width', 'height', 'content', 'fill', 'stroke', 'font-weight'];
+    return elements.flatMap(element => ['', '::before', '::after'].map(pseudo => {
+      const style = getComputedStyle(element, pseudo || null);
+      return properties.map(property => style.getPropertyValue(property)).join('|');
+    })).join('\n');
+  }
+  function paintReplica(element: HTMLElement, surface: HTMLElement, overlay: HTMLDivElement, holder: { replica?: Replica }, active = false) {
+    const tree = element.getRootNode();
+    if (!(tree instanceof Document || tree instanceof ShadowRoot) || !(surface.contains(element) || surface instanceof HTMLLabelElement && surface.control === element)) return false;
+    const styles = replicaStyles(tree), ancestors: HTMLElement[] = [];
+    if (!styles.complete) { if (holder.replica) holder.replica.container.style.display = 'none'; return false; }
+    for (let current = surface.parentElement; current && ancestors.length < 32; current = current.parentElement) ancestors.unshift(current);
+    if (tree instanceof ShadowRoot && tree.host instanceof HTMLElement) ancestors.unshift(tree.host);
+    const peers = Array.from(tree.querySelectorAll<HTMLElement>(choices)).filter(other =>
+      other === element || element instanceof HTMLInputElement && element.type === 'radio' && other instanceof HTMLInputElement && other.type === 'radio' && Boolean(element.name) && other.name === element.name && other.form === element.form
+      || element.getAttribute('role') === 'radio' && Boolean(element.closest('[role="radiogroup"]')) && other.getAttribute('role') === 'radio' && other.closest('[role="radiogroup"]') === element.closest('[role="radiogroup"]'));
+    const dimensions = nativeSize(surface), focused = virtualFocus === element;
+    const hostStyle = tree instanceof ShadowRoot ? getComputedStyle(tree.host) : undefined;
+    const key = [styles.version, surface.outerHTML, ...ancestors.map(e => `${e.tagName}:${Array.from(e.attributes).map(a => `${a.name}=${a.value}`).join(';')}`),
+      ...peers.map(e => `${e.outerHTML}:${choiceState(e)}`), focused, active, keyboardFocus, innerWidth, innerHeight, dimensions.width, dimensions.height,
+      getComputedStyle(surface).color, getComputedStyle(surface).font, getComputedStyle(surface).colorScheme,
+      hostStyle ? Array.from(hostStyle).filter(name => name.startsWith('--')).map(name => name + ':' + hostStyle.getPropertyValue(name)).join(';') : ''].join('\n');
+    if (holder.replica?.key !== key || holder.replica.root.host !== overlay) {
+      const previous = holder.replica?.root;
+      const isolated = previous?.host === overlay ? previous : overlay.attachShadow({ mode: 'closed' });
+      isolated.replaceChildren();
+      isolated.adoptedStyleSheets = [styles.sheet];
+      const reset = document.createElement('style');
+      reset.textContent = ':host{pointer-events:none!important}*,*::before,*::after{pointer-events:none!important;animation:none!important;transition:none!important;caret-color:transparent!important}';
+      isolated.append(reset);
+      const container = document.createElement('div');
+      container.style.cssText = 'all:initial;position:absolute;left:0;top:0;transform-origin:0 0;';
+      // "all" does not reset custom properties inherited through a shadow host.
+      // Start with an empty context; only sanitized page declarations seed it.
+      for (const name of Array.from(getComputedStyle(overlay)).filter(name => name.startsWith('--'))) container.style.setProperty(name, 'initial');
+      isolated.append(container);
+      const pairs = new Map<Element, Element>();
+      let remaining = 512, safe = true;
+      const htmlTags = new Set('html body div span label input button a p section article main form fieldset legend ul ol li strong b em i small s u br h1 h2 h3 h4'.split(' '));
+      const svgTags = new Set('svg g path circle ellipse rect line polyline polygon defs linearGradient radialGradient stop title'.split(' '));
+      const attributes = /^(?:id|class|role|type|name|for|title|dir|lang|checked|disabled|aria-[\w-]+|data-[\w-]+|viewBox|d|fill|fill-rule|clip-rule|stroke|stroke-width|stroke-linecap|stroke-linejoin|cx|cy|r|rx|ry|x|y|x1|x2|y1|y2|width|height|points|transform|offset|stop-color|stop-opacity)$/;
+      function copy(source: Element, deep: boolean, contextOnly = false): Element | null {
+        if (--remaining < 0) { safe = false; return null; }
+        const svg = source instanceof SVGElement;
+        const allowed = (svg ? svgTags : htmlTags).has(source.localName);
+        if (!allowed && !contextOnly || source instanceof HTMLInputElement && !source.matches(choices)) { safe = false; return null; }
+        const target = svg && allowed ? document.createElementNS('http://www.w3.org/2000/svg', source.localName) : document.createElement(allowed ? source.localName : 'div');
+        for (const attr of source.attributes) if (attributes.test(attr.name) && !attr.name.startsWith('data-gp-') && !/(?:url\s*\(|\\)/i.test(attr.value)) target.setAttribute(attr.name, attr.value);
+        if (source instanceof HTMLElement || source instanceof SVGElement) (target as HTMLElement).style.cssText = safeDeclarations(source.style);
+        if (target instanceof HTMLButtonElement) target.type = 'button';
+        if (target instanceof HTMLInputElement && source instanceof HTMLInputElement) { target.checked = choiceState(source); target.indeterminate = source.indeterminate; }
+        else if (source.matches(choices)) target.setAttribute('aria-checked', String(choiceState(source)));
+        pairs.set(source, target);
+        if (deep) for (const child of source.childNodes) {
+          if (child.nodeType === Node.TEXT_NODE) target.append(document.createTextNode(child.textContent ?? ''));
+          else if (child instanceof Element) { const replica = copy(child, true); if (replica) target.append(replica); }
+        }
+        return target;
+      }
+      let context: Element = container;
+      for (const ancestor of ancestors) {
+        const replica = copy(ancestor, false, true) as HTMLElement | null;
+        if (!replica) continue;
+        if (ancestor === document.documentElement) replica.dataset.gpRoot = '';
+        if (tree instanceof ShadowRoot && ancestor === tree.host) replica.dataset.gpHost = '';
+        // Keep selector ancestry and inheritance without reproducing the page layout.
+        for (const [name, value] of Object.entries({ display: 'block', position: 'static', margin: '0', padding: '0', border: '0', transform: 'none', overflow: 'visible', width: `${nativeSize(ancestor).width}px`, height: 'auto', 'min-height': '0' })) replica.style.setProperty(name, value, 'important');
+        const inherited = getComputedStyle(ancestor);
+        for (const name of Array.from(inherited).filter(name => tree instanceof ShadowRoot && ancestor === tree.host && name.startsWith('--'))) {
+          const value = inherited.getPropertyValue(name);
+          if (!/(?:url|image-set)\s*\(|\\/i.test(value)) replica.style.setProperty(name, value);
+        }
+        if (tree instanceof ShadowRoot && ancestor === tree.host) for (const name of ['font', 'color', 'direction', 'color-scheme']) replica.style.setProperty(name, inherited.getPropertyValue(name));
+        context.append(replica); context = replica;
+      }
+      const replicaSurface = copy(surface, true) as HTMLElement | null;
+      if (!replicaSurface) { container.style.display = 'none'; holder.replica = { key, root: isolated, surface: container, container, useful: false }; return false; }
+      context.append(replicaSurface);
+      // Preserve radio peers for relational selectors without displaying other options.
+      for (const peer of peers) if (!pairs.has(peer)) {
+        let source: Element = peer;
+        const path: Element[] = [];
+        while (!pairs.has(source) && source.parentElement) { path.unshift(source); source = source.parentElement; }
+        let target = pairs.get(source);
+        if (!target) continue;
+        for (const entry of path) {
+          let replica = pairs.get(entry);
+          if (!replica) {
+            replica = copy(entry, entry === peer) ?? undefined; if (!replica) break;
+            (replica as HTMLElement).style.setProperty('display', 'none', 'important');
+            const following = Array.from(entry.parentElement?.children ?? []).slice(Array.from(entry.parentElement?.children ?? []).indexOf(entry) + 1).map(e => pairs.get(e)).find(e => e?.parentElement === target);
+            target.insertBefore(replica, following ?? null);
+          }
+          target = replica;
+        }
+      }
+      replicaSurface.dataset.gpSurface = '';
+      for (const [name, value] of Object.entries({ position: 'relative', left: '0', top: '0', right: 'auto', bottom: 'auto', margin: '0', transform: 'none', 'box-sizing': 'border-box', width: `${dimensions.width}px`, 'min-width': '0', 'max-width': 'none' })) replicaSurface.style.setProperty(name, value, 'important');
+      if (getComputedStyle(surface).display === 'inline') replicaSurface.style.setProperty('display', 'inline-block', 'important');
+      const target = pairs.get(element) as HTMLElement | undefined;
+      if (!target) { container.style.display = 'none'; holder.replica = { key, root: isolated, surface: replicaSurface, container, useful: false }; return false; }
+      const visualNodes = [replicaSurface, ...replicaSurface.querySelectorAll('*')];
+      function state(checked: boolean, focus: boolean, pressed: boolean) {
+        // Probing a native radio's opposite state also unchecks its peers.
+        // Restore the complete virtual group before each measurement.
+        for (const [source, replica] of pairs) {
+          if (replica instanceof HTMLInputElement && source.matches(choices)) replica.checked = choiceState(source);
+          replica.toggleAttribute('data-gp-focus-within', focus && replica.contains(target!));
+        }
+        if (target instanceof HTMLInputElement) target.checked = checked;
+        else if (element.matches(choices)) target!.setAttribute('aria-checked', String(checked));
+        target!.toggleAttribute('data-gp-focus', focus);
+        target!.toggleAttribute('data-gp-focus-visible', focus && keyboardFocus);
+        target!.toggleAttribute('data-gp-active', pressed);
+      }
+      const checked = choiceState(element);
+      state(!checked, false, false);
+      const before = stateSignature(visualNodes);
+      state(checked, focused, active);
+      const changed = before !== stateSignature(visualNodes);
+      const native = target instanceof HTMLInputElement && getComputedStyle(target).appearance !== 'none' && visibleSurface(element);
+      const useful = safe && (native || styles.complete && changed);
+      holder.replica = { key, root: isolated, surface: replicaSurface, container, useful };
+    }
+    const replica = holder.replica;
+    const container = replica.container;
+    container.style.display = replica.useful ? 'block' : 'none';
+    if (!replica.useful) return false;
+    const { box } = rectStyle(surface, overlay);
+    container.style.transform = `scale(${box.width / dimensions.width},${box.height / dimensions.height})`;
+    Object.assign(overlay.style, effectiveBackground(surface.parentElement ?? surface), { border: '0', padding: '0', boxShadow: 'none' });
+    overlay.dataset.gpReplica = ''; overlay.setAttribute('aria-hidden', 'true'); overlay.inert = true;
+    return true;
+  }
+  function pageAccent(element: Element) {
+    const css = getComputedStyle(element);
+    return css.accentColor !== 'auto' ? css.accentColor : css.color !== 'rgba(0, 0, 0, 0)' ? css.color : configuration.preferences.accentColor;
+  }
+  function paintOutline(element: Element, overlay: HTMLDivElement, selected: boolean, tint: number, accent = 'var(--gp-accent)') {
     const { box, style } = rectStyle(element, overlay);
     const profile = surfaceStyle(element, box, style);
     Object.assign(overlay.style, {
       borderTopLeftRadius: profile.borderTopLeftRadius, borderTopRightRadius: profile.borderTopRightRadius,
       borderBottomLeftRadius: profile.borderBottomLeftRadius, borderBottomRightRadius: profile.borderBottomRightRadius,
-      border: selected ? '2px solid var(--gp-accent)' : '0',
-      background: selected ? `color-mix(in srgb,var(--gp-accent) ${tint}%,transparent)` : 'transparent',
+      border: selected ? `2px solid ${accent}` : '0',
+      background: selected ? `color-mix(in srgb,${accent} ${tint}%,transparent)` : 'transparent',
       boxShadow: selected ? `inset 0 0 0 1px color-mix(in srgb,${style.color} 20%,transparent)` : 'none',
     });
   }
   function paintChoice(element: HTMLElement, preview: Preview) {
     const surface = choiceSurface(element), indicator = choiceIndicator(element, surface);
+    if (paintReplica(element, surface, preview.node, preview)) { preview.marker?.remove(); preview.marker = undefined; return; }
     preview.node.style.display = 'none';
-    if (!indicator) { preview.marker?.remove(); preview.marker = undefined; return; }
     preview.marker ??= node();
+    if (!indicator) { paintOutline(surface, preview.marker, preview.checked === true, 8, pageAccent(surface)); return; }
     const { box, style } = rectStyle(indicator, preview.marker);
     const profile = surfaceStyle(indicator, box, style);
+    const accent = pageAccent(indicator);
     Object.assign(preview.marker.style, profile, effectiveBackground(indicator), {
-      padding: '0', border: '2px solid var(--gp-accent)',
+      padding: '0', border: `${Math.max(1, parseFloat(style.borderTopWidth))}px solid ${accent}`,
       boxShadow: `inset 0 0 0 1px color-mix(in srgb,${style.color} 20%,transparent)`,
     });
     if (preview.radio) preview.marker.style.borderRadius = '50%';
@@ -240,8 +467,8 @@ export function installDomControl(captureId: string, generation: number, root = 
     let mark = preview.marker.firstElementChild as HTMLSpanElement | null;
     if (!mark) { mark = document.createElement('span'); preview.marker.append(mark); }
     mark.style.cssText = preview.radio
-      ? 'position:absolute;inset:22%;border-radius:50%;background:var(--gp-accent)'
-      : 'position:absolute;left:30%;top:10%;width:32%;height:60%;border:solid var(--gp-accent);border-width:0 2px 2px 0;transform:rotate(45deg)';
+      ? `position:absolute;inset:22%;border-radius:50%;background:${accent}`
+      : `position:absolute;left:30%;top:10%;width:32%;height:60%;border:solid ${accent};border-width:0 2px 2px 0;transform:rotate(45deg)`;
     mark.style.display = preview.checked ? 'block' : 'none';
   }
   function draw(time: number) {
@@ -270,13 +497,20 @@ export function installDomControl(captureId: string, generation: number, root = 
           if (cursor.bottom > box.bottom - inset) preview.node.scrollTop += cursor.bottom - box.bottom + inset;
           else if (cursor.top < box.top + inset) preview.node.scrollTop -= box.top + inset - cursor.top;
         }
-      } else paintOutline(element, preview.node, true, 18);
+      } else if (!paintReplica(element, element, preview.node, preview, true)) paintOutline(element, preview.node, true, 18, pageAccent(element));
     }
     const paintFocus = virtualFocus instanceof HTMLElement && !(virtualFocus instanceof HTMLIFrameElement || virtualFocus instanceof HTMLFrameElement) && !disabled(virtualFocus);
     if (paintFocus && virtualFocus instanceof HTMLElement) {
-      const indicator = virtualFocus.matches(choices) ? choiceIndicator(virtualFocus, choiceSurface(virtualFocus)) : virtualFocus;
-      if (indicator) { focusMark ??= node(); paintOutline(indicator, focusMark, true, 0); }
-      else { focusMark?.remove(); focusMark = undefined; }
+      const drawn = previews.get(virtualFocus);
+      if (drawn?.checked !== undefined || drawn?.until !== undefined) { focusMark?.remove(); focusMark = undefined; focusReplica.replica = undefined; }
+      else {
+        focusMark ??= node();
+        if (editable(virtualFocus) || virtualFocus.isContentEditable) paintOutline(virtualFocus, focusMark, true, 0);
+        else if (!paintReplica(virtualFocus, virtualFocus, focusMark, focusReplica)) {
+          if (keyboardFocus) paintOutline(virtualFocus, focusMark, true, 0, pageAccent(virtualFocus));
+          else focusMark.style.display = 'none';
+        }
+      }
     } else { focusMark?.remove(); focusMark = undefined; }
     for (let i = halos.length - 1; i >= 0; i--) {
       const halo = halos[i]!;
@@ -295,7 +529,9 @@ export function installDomControl(captureId: string, generation: number, root = 
     noticeUntil = now + 1500; lastNotice = now; scheduleDraw();
   }
   function halo(x: number, y: number) {
+    if (configuration.preferences.clickAnimations === false) return;
     const dot = node(); dot.style.cssText = `left:${x - 15}px;top:${y - 15}px;width:30px;height:30px;border:2px solid var(--gp-accent);border-radius:50%;background:color-mix(in srgb,var(--gp-accent) 12%,transparent);`;
+    dot.dataset.gpClick = '';
     halos.push({ node: dot, x, y, until: performance.now() + 500 }); scheduleDraw();
   }
   function previewFor(element: HTMLElement) {
@@ -488,8 +724,10 @@ export function installDomControl(captureId: string, generation: number, root = 
   function setVirtualFocus(element: Element | null) {
     const previous = virtualFocus;
     virtualFocus = element && !disabled(element) ? element : null;
+    if (previous !== virtualFocus) { focusMark?.remove(); focusMark = undefined; focusReplica.replica = undefined; }
     if (previous instanceof HTMLElement && previous !== virtualFocus) { const preview = previews.get(previous); if (preview?.value !== undefined) paintText(previous, preview); }
     if (virtualFocus instanceof HTMLElement && (editable(virtualFocus) || virtualFocus.isContentEditable)) paintText(virtualFocus, textPreview(virtualFocus));
+    if (virtualFocus instanceof HTMLElement && virtualFocus.matches(choices)) markChecked(virtualFocus, choiceState(virtualFocus), virtualFocus.matches('input[type="radio"],[role="radio"]'));
     if (virtualFocus && !(virtualFocus instanceof HTMLIFrameElement || virtualFocus instanceof HTMLFrameElement)) { ensureLayer(); scheduleDraw(); }
   }
   function markChecked(element: HTMLElement, checked: boolean, radio: boolean) {
@@ -529,7 +767,7 @@ export function installDomControl(captureId: string, generation: number, root = 
     if (command.type === 'pointer') {
       if (command.event === 'move') return;
       const hit = targetAt(command.x, command.y);
-      if (command.event === 'down') { visualDown = hit; visualButton = command.button; setVirtualFocus(semantic(hit)); return 'focus'; }
+      if (command.event === 'down') { keyboardFocus = false; visualDown = hit; visualButton = command.button; setVirtualFocus(semantic(hit)); return 'focus'; }
       const clicked = hit && visualButton === command.button ? commonAncestor(visualDown, hit) : null; visualDown = null;
       if (!hit || !clicked) return;
       const element = semantic(clicked);
@@ -539,6 +777,7 @@ export function installDomControl(captureId: string, generation: number, root = 
     }
     if (command.type === 'text') { if (command.text === ' ' && spaceActivates(virtualFocus)) return; return insertVisual(command.text); }
     if (command.type !== 'key') return;
+    keyboardFocus = true;
     const element = virtualFocus;
     if (command.event === 'up') {
       const held = visualKeys.get(command.code); visualKeys.delete(command.code);

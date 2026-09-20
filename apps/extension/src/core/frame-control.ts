@@ -21,7 +21,7 @@ export class FrameControl {
   private keys = new Map<string, Owner>();
   private canceledKeys = new Set<string>();
   private drag?: { token: string; frame: Frame; started: number };
-  private configuration: ControlConfiguration = { mode: 'visual', revision: 0, preferences: { notices: false, text: { duration: 'persistent', seconds: 10 }, other: { duration: 'persistent', seconds: 3 }, accentColor: '#7871e8' } };
+  private configuration: ControlConfiguration = { mode: 'visual', revision: 0, preferences: { notices: false, clickAnimations: true, text: { duration: 'persistent', seconds: 10 }, other: { duration: 'persistent', seconds: 3 }, accentColor: '#7871e8' } };
   private expiry: Partial<Record<VisualCategory, ReturnType<typeof setTimeout>>> = {};
   private lastActivity: Partial<Record<VisualCategory, number>> = {};
   private resetExpiry() {

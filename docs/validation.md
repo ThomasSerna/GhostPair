@@ -1,5 +1,17 @@
 # GhostPair validation
 
+## Click visibility and page selection styles: September 20, 2026
+
+The update retains extension version 0.5.0 and peer protocol 4. All **139 unit tests in 15 files**, workspace TypeScript checks and production builds passed. Tests cover default-on/explicit-off click preferences, legacy migration, persistence across restart and configuration propagation to authorized frames without a control revision change.
+
+The visual suite passed in Chrome 153.0.8010.50 and Edge 153.0.4234.48. A separate page driven by real browser clicks provides the style oracle for four-answer radio groups, native checkboxes, hidden-input siblings, separate labels, whole-card selection, ARIA controls, pseudoelements and SVG. Checks compare selected and unselected styles, group-dependent CSS variables, dark themes, scaled geometry, open shadow roots and inherited host theme changes. Disabling circles immediately removes existing animations while buttons, text and choices remain active; re-enabling restores them. The fixture verifies unchanged original markup, values, focus and event logs.
+
+Additional cases exercise inaccessible-CSS fallback and exclude copied handlers, custom-element construction and external CSS assets. Existing clipboard, local editing, IME and drag concurrency checks pass. The UI inspection passed seven screenshot scenarios, including the click toggle before and during hosting. Light/dark source-versus-simulation and preference screenshots were inspected. The embedded-frame suite passed in both browsers, and all 40 Live-control questionnaire comparisons passed.
+
+The final complete native-session run passed **Chrome→Chrome, Edge→Edge and Chrome→Edge**, including root/embedded visual interactions with circles disabled, host editing, expiry, Live control and session lifecycle checks. Earlier runs timed out on the first Live-control click after authorizing a second tab. The native-visibility test driver now explicitly brings the guest viewer back to the foreground before clicking; it previously depended on focus left by host authorization. The final run passed all three pairings with this harness correction. No production focus or Live-control behavior was changed.
+
+Evidence is under `tests/browser/.artifacts`, including `selection-*-simulated.png`, `selection-*-real.png`, `selection-*-dark.png` and the visual, frame and questionnaire JSON reports. These are controlled fixture results: inaccessible stylesheets, application-managed class changes, external image assets and closed widgets retain the documented fallback/compatibility limits.
+
 ## Environment and commands
 
 Automated browser checks use Windows, Node.js 24, and Playwright with temporary profiles under `tests/browser/.artifacts`. They do not use installed personal profiles. Runs are headless unless explicitly documented otherwise; no argument suppresses native capture or debugging warnings.

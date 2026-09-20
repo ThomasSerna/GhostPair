@@ -14,7 +14,7 @@ try {
   browser = await chromium.launch({ executablePath: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe', headless: true });
   const context = await browser.newContext({ viewport: { width: 398, height: 790 } });
   await context.addInitScript(() => {
-    const state = { role: null, status: 'idle', paused: false, controlEnabled: true, controlMode: 'visual', controlRevision: 0, visualPreferences: { notices: false, text: { duration: 'persistent', seconds: 10 }, other: { duration: 'persistent', seconds: 3 }, accentColor: '#7871e8' }, clipboardEnabled: false, remoteClipboardEnabled: false, tabs: [], generation: 0, settings: { signalingUrl: 'http://127.0.0.1:8787', stunUrls: ['stun:stun.example.com:3478'] } };
+    const state = { role: null, status: 'idle', paused: false, controlEnabled: true, controlMode: 'visual', controlRevision: 0, visualPreferences: { notices: false, clickAnimations: true, text: { duration: 'persistent', seconds: 10 }, other: { duration: 'persistent', seconds: 3 }, accentColor: '#7871e8' }, clipboardEnabled: false, remoteClipboardEnabled: false, tabs: [], generation: 0, settings: { signalingUrl: 'http://127.0.0.1:8787', stunUrls: ['stun:stun.example.com:3478'] } };
     if (location.search === '?host') { state.role = 'host'; state.status = 'connected'; }
     globalThis.uiState = state;
     const noEvent = { addListener() {}, removeListener() {} };
@@ -29,6 +29,9 @@ try {
   await page.getByRole('button', { name: 'Share current tab →' }).waitFor();
   await page.screenshot({ path: resolve(output, 'popup.png'), fullPage: true });
   await page.getByRole('button', { name: 'Open settings' }).click();
+  assert.equal(await page.getByLabel('Click animations').isChecked(), true);
+  await page.getByLabel('Click animations').uncheck();
+  assert.equal(await page.evaluate(() => uiState.visualPreferences.clickAnimations), false);
   assert.equal(await page.getByLabel('Purple', { exact: true }).isChecked(), true);
   await page.getByLabel('Blue', { exact: true }).check();
   assert.equal(await page.evaluate(() => uiState.visualPreferences.accentColor), '#3b82f6');
@@ -39,6 +42,10 @@ try {
   await page.getByLabel('Interaction mode').waitFor();
   assert.equal(await page.getByLabel('Interaction mode').inputValue(), 'visual');
   assert.equal(await page.getByLabel('Simulation notices').isChecked(), false);
+  assert.equal(await page.getByLabel('Click animations').isChecked(), true);
+  await page.getByLabel('Click animations').uncheck();
+  assert.equal(await page.evaluate(() => uiState.visualPreferences.clickAnimations), false);
+  await page.getByLabel('Click animations').check();
   await page.screenshot({ path: resolve(output, 'simulation-default.png'), fullPage: true });
   const textPreferences = page.getByRole('group', { name: 'Simulated text', exact: true }), otherPreferences = page.getByRole('group', { name: 'Other simulations', exact: true });
   await textPreferences.getByRole('combobox').selectOption('temporary');
@@ -48,7 +55,7 @@ try {
   await textPreferences.getByLabel('Seconds without interaction').blur();
   await page.getByLabel('Simulation notices').check();
   await page.screenshot({ path: resolve(output, 'simulation-temporary.png'), fullPage: true });
-  assert.deepEqual(await page.evaluate(() => uiState.visualPreferences), { notices: true, text: { duration: 'temporary', seconds: 0.5 }, other: { duration: 'temporary', seconds: 3 }, accentColor: '#7871e8' });
+  assert.deepEqual(await page.evaluate(() => uiState.visualPreferences), { notices: true, clickAnimations: true, text: { duration: 'temporary', seconds: 0.5 }, other: { duration: 'temporary', seconds: 3 }, accentColor: '#7871e8' });
   for (const invalid of ['0', '0.25', '31', '']) {
     await textPreferences.getByLabel('Seconds without interaction').fill(invalid);
     await textPreferences.getByLabel('Seconds without interaction').blur();

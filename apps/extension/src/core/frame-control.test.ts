@@ -35,11 +35,25 @@ function harness() {
   const control = new FrameControl(() => usable);
   const input = (type = 'pointer', extras: object = {}): any => type === 'pointer' ? { ...p, controlRevision: 0, type, event: 'down', x: 450, y: 175, button: 'left', buttons: 1, modifiers: 0, clickCount: 1, ...extras } : { ...p, controlRevision: 0, type, text: 'hello', ...extras };
   const key = (event: 'down' | 'up', extras: object = {}): Extract<ControlCommand, { type: 'key' }> => ({ ...p, type: 'key', controlRevision: 0, event, key: 'Shift', code: 'ShiftLeft', keyCode: 16, modifiers: 8, repeat: false, ...extras });
-  const live = { mode: 'live' as const, revision: 0, preferences: { notices: false, text: { duration: 'persistent' as const, seconds: 10 }, other: { duration: 'persistent' as const, seconds: 3 }, accentColor: '#7871e8' } };
+  const live = { mode: 'live' as const, revision: 0, preferences: { notices: false, clickAnimations: true, text: { duration: 'persistent' as const, seconds: 10 }, other: { duration: 'persistent' as const, seconds: 3 }, accentColor: '#7871e8' } };
   void control.configure(live);
   return { control, topology, frame, routes, indices, operations, committed, sendMessage, scripting, navigation, input, key, disable: () => { usable = false; } };
 }
 afterEach(() => vi.unstubAllGlobals());
+
+it('updates click visibility throughout authorized frames without releasing virtual state', async () => {
+  const h = harness(); await h.control.bind(p);
+  const preferences = { notices: false, clickAnimations: true, text: { duration: 'persistent' as const, seconds: 10 }, other: { duration: 'persistent' as const, seconds: 3 }, accentColor: '#7871e8' };
+  await h.control.configure({ mode: 'visual', revision: 1, preferences });
+  await h.control.execute({ ...h.input(), controlRevision: 1 });
+  h.operations.length = 0;
+  await h.control.configure({ mode: 'visual', revision: 1, preferences: { ...preferences, clickAnimations: false } });
+  expect(h.operations.map(e => e.id).sort()).toEqual(['a', 'b', 'nested', 'root']);
+  expect(h.operations.every(e => e.message.operation === 'configure' && e.message.configuration.revision === 1 && e.message.configuration.preferences.clickAnimations === false)).toBe(true);
+  await h.control.execute({ ...h.input('text'), controlRevision: 1 });
+  expect(h.committed.at(-1)?.id).toBe('nested');
+  await h.control.clear();
+});
 
 it('cancels an in-flight route and queued or delayed input before changing mode', async () => {
   const h = harness(); await h.control.bind(p); h.routes.clear();
@@ -51,7 +65,7 @@ it('cancels an in-flight route and queued or delayed input before changing mode'
   const first = h.control.execute(h.input()).catch(error => error);
   await entered.promise;
   const queued = h.control.execute(h.input('text')).catch(error => error);
-  await h.control.configure({ mode: 'visual', revision: 1, preferences: { notices: false, text: { duration: 'persistent', seconds: 10 }, other: { duration: 'persistent', seconds: 3 }, accentColor: '#7871e8' } });
+  await h.control.configure({ mode: 'visual', revision: 1, preferences: { notices: false, clickAnimations: true, text: { duration: 'persistent', seconds: 10 }, other: { duration: 'persistent', seconds: 3 }, accentColor: '#7871e8' } });
   gate.resolve({ ok: true, token: 'old' });
   expect(await first).toBeInstanceOf(Error); expect(await queued).toBeInstanceOf(Error);
   await expect(h.control.execute(h.input('text'))).rejects.toThrow('mode changed');
@@ -64,7 +78,7 @@ it('tracks virtual iframe focus and expires categories independently', async () 
   vi.useFakeTimers();
   try {
     const h = harness(); await h.control.bind(p);
-    const preferences = { notices: true, text: { duration: 'temporary' as const, seconds: 1 }, other: { duration: 'temporary' as const, seconds: 0.5 }, accentColor: '#7871e8' };
+    const preferences = { notices: true, clickAnimations: true, text: { duration: 'temporary' as const, seconds: 1 }, other: { duration: 'temporary' as const, seconds: 0.5 }, accentColor: '#7871e8' };
     await h.control.configure({ mode: 'visual', revision: 1, preferences });
     const original = h.sendMessage.getMockImplementation()!, types = new Map<string, string>();
     h.sendMessage.mockImplementation(async (...args) => {
@@ -88,7 +102,7 @@ it('recalculates lifetime changes without clearing persistent categories', async
   vi.useFakeTimers();
   try {
     const h = harness(); await h.control.bind(p); h.routes.clear();
-    const preferences = { notices: false, text: { duration: 'persistent' as const, seconds: 10 }, other: { duration: 'temporary' as const, seconds: 2 }, accentColor: '#7871e8' };
+    const preferences = { notices: false, clickAnimations: true, text: { duration: 'persistent' as const, seconds: 10 }, other: { duration: 'temporary' as const, seconds: 2 }, accentColor: '#7871e8' };
     await h.control.configure({ mode: 'visual', revision: 1, preferences });
     const original = h.sendMessage.getMockImplementation()!;
     h.sendMessage.mockImplementation(async (...args) => ({ ...await original(...args), ...(args[1].operation === 'commit' ? { visualActivity: { category: 'other', kind: 'click' } } : {}) }));
@@ -203,7 +217,7 @@ it('disposes an installation that finishes after its capture was cleared', async
 
 async function localHarness() {
   const h = harness(); await h.control.bind(p);
-  await h.control.configure({ mode: 'visual', revision: 1, preferences: { notices: false, text: { duration: 'temporary', seconds: 1 }, other: { duration: 'persistent', seconds: 3 }, accentColor: '#7871e8' } });
+  await h.control.configure({ mode: 'visual', revision: 1, preferences: { notices: false, clickAnimations: true, text: { duration: 'temporary', seconds: 1 }, other: { duration: 'persistent', seconds: 3 }, accentColor: '#7871e8' } });
   const local = (operation: string, fields: object = {}, documentId = 'a', frameId = 1) => h.control.localVisual({ ...p, controlRevision: 1, operation, ...fields }, { tab: { id: p.tabId } as chrome.tabs.Tab, documentId, frameId });
   return { ...h, local };
 }

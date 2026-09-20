@@ -63,12 +63,14 @@ afterEach(() => vi.unstubAllGlobals());
 describe('background connection ownership and settings', () => {
   it('persists preview preferences independently and starts each new session in visual mode', async () => {
     const h = await harness();
-    expect((await h.send('ui.status')).state).toMatchObject({ controlMode: 'visual', visualPreferences: { notices: false, text: { duration: 'persistent', seconds: 10 }, other: { duration: 'persistent', seconds: 3 } } });
+    expect((await h.send('ui.status')).state).toMatchObject({ controlMode: 'visual', visualPreferences: { notices: false, clickAnimations: true, text: { duration: 'persistent', seconds: 10 }, other: { duration: 'persistent', seconds: 3 } } });
     await h.send('ui.host.start', { password: 'Eight-42' });
-    const preferences = { notices: true, text: { duration: 'temporary', seconds: 0.5 }, other: { duration: 'temporary', seconds: 0.5 }, accentColor: '#12abcd' };
+    const preferences = { notices: true, clickAnimations: false, text: { duration: 'temporary', seconds: 0.5 }, other: { duration: 'temporary', seconds: 0.5 }, accentColor: '#12abcd' };
     const saved = await h.send('ui.visual.preferences', { preferences });
     expect(saved.state.status).toBe('starting');
     expect(saved.state.visualPreferences).toEqual(preferences);
+    expect(saved.state.controlRevision).toBe(0);
+    expect(capture.configure).toHaveBeenLastCalledWith({ mode: 'visual', revision: 0, preferences });
     const mode = await h.send('ui.control.mode', { mode: 'live' });
     expect(mode.state).toMatchObject({ controlMode: 'live', controlRevision: 1 });
     expect(capture.configure).toHaveBeenLastCalledWith({ mode: 'live', revision: 1, preferences });
@@ -80,7 +82,7 @@ describe('background connection ownership and settings', () => {
   });
   it('upgrades legacy visual preferences and saves colors before hosting', async () => {
     const legacy = { notices: true, duration: 'temporary', seconds: 12 };
-    const migrated = { notices: true, text: { duration: 'temporary', seconds: 12 }, other: { duration: 'temporary', seconds: 12 } };
+    const migrated = { notices: true, clickAnimations: true, text: { duration: 'temporary', seconds: 12 }, other: { duration: 'temporary', seconds: 12 } };
     const h = await harness({ visualPreferences: legacy });
     expect((await h.send('ui.status')).state.visualPreferences).toEqual({ ...migrated, accentColor: '#7871e8' });
     const preferences = { ...migrated, text: { duration: 'temporary', seconds: 0.5 }, accentColor: '#abcdef' };
