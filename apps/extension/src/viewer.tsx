@@ -26,7 +26,6 @@ function Viewer() {
   const frame = useRef<Presentation | undefined>(undefined);
   const composing = useRef(false);
   const compositionRevision = useRef<number | undefined>(undefined);
-  const heldKeys = useRef(new Map<string, Omit<Extract<ControlCommand, { type: 'key' }>, 'type' | 'event' | 'tabId' | 'generation' | 'captureId' | 'documentId' | 'controlRevision'>>());
   const heldPointer = useRef<Extract<ControlCommand, { type: 'pointer' }> | undefined>(undefined);
   const canceledPointer = useRef(false);
   const peer = useRef<ReturnType<typeof createPeerSession> | undefined>(undefined);
@@ -54,7 +53,7 @@ function Viewer() {
     input.current?.discard();
     composing.current = false; compositionRevision.current = undefined; if (keyboard.current) keyboard.current.value = '';
     if (heldPointer.current) canceledPointer.current = true;
-    heldPointer.current = undefined; heldKeys.current.clear();
+    heldPointer.current = undefined;
     lastClick.current.count = 0;
     if (original) send({ type: 'input.release', tabId: original.tabId, captureId: original.captureId, documentId: original.documentId, generation: original.generation, controlRevision: original.controlRevision });
   }
@@ -166,7 +165,6 @@ function Viewer() {
     if (event.key === 'Escape') { event.preventDefault(); releaseInput(); keyboard.current?.blur(); return; }
     const t = target(); if (!t || composing.current || event.nativeEvent.isComposing) return;
     const fields = { key: event.key, code: event.code, keyCode: event.keyCode, modifiers: modifiers(event), repeat: event.repeat };
-    if (kind === 'down') heldKeys.current.set(event.code, fields); else heldKeys.current.delete(event.code);
     if (!(event.ctrlKey && event.key.toLowerCase() === 'v')) send({ type: 'key', event: kind, ...t, ...fields });
     // Text and IME are committed once through the textarea input/composition events.
     if (event.key.length > 1 || (event.ctrlKey && !['v', 'c', 'x'].includes(event.key.toLowerCase())) || event.metaKey || event.altKey) event.preventDefault();

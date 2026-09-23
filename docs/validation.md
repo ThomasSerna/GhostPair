@@ -1,5 +1,15 @@
 # GhostPair validation
 
+## Audit cleanup: September 22, 2026
+
+All **138 unit tests in 15 files**, workspace TypeScript checks and production builds passed after the audit cleanup. Seven deferred-promise helpers now use `Promise.withResolvers`; icon generation uses Node's `crc32` and produces byte-for-byte identical PNGs at all four sizes. The removed clipboard-schema test exercised an unused wire format; the active clipboard UTF-8 limit and incoming-data tests remain.
+
+The complete documented browser suite passed on Chrome **153.0.8010.53** and Edge **153.0.4234.48**: capture authorization, DOM control, environment/package isolation, all three native session pairings, embedded-frame routing, 40 questionnaire comparisons, visual simulation, and the synthetic benchmark. UI inspection produced seven screenshots with no page errors; all seven were visually checked. Per-suite logs and results are in the ignored `tests/browser/.artifacts/audit-validation` directory.
+
+PostgreSQL integration passed using Docker, including the shared storage contract, restart persistence, migration, dry run and conflict rollback. The Docker image build and container suite passed health/readiness, configured-port, privacy, origin and restart-identity checks. Both normal and store packaging completed for Chrome and Edge.
+
+Before publishing `main`, Render Auto-Deploy was found set to On Commit, changed to **Off**, and verified after a page reload. The live service was still on `97f289c`; no production deployment was requested for this cleanup.
+
 ## Click visibility and page selection styles: September 20, 2026
 
 The update retains extension version 0.5.0 and peer protocol 4. All **139 unit tests in 15 files**, workspace TypeScript checks and production builds passed. Tests cover default-on/explicit-off click preferences, legacy migration, persistence across restart and configuration propagation to authorized frames without a control revision change.

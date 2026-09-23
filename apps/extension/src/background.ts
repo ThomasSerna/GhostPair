@@ -106,7 +106,6 @@ async function stop(reason?: string): Promise<void> {
 async function permissions(host: boolean, clipboard: boolean) { return chrome.permissions.contains({ origins: host ? ['http://*/*', 'https://*/*'] : [`${new URL(state.settings.signalingUrl).origin}/*`], ...(clipboard ? { permissions: ['clipboardRead', 'clipboardWrite'] } : {}) }); }
 async function action(message: Record<string, any>, sender: chrome.runtime.MessageSender): Promise<AppState> {
   switch (message.type) {
-    case 'ui.status': return state;
     case 'ui.notification.dismiss': state = dismissNotification(state, String(message.id)); broadcast(); return state;
     case 'ui.viewer.open': await openViewer(); return state;
     case 'ui.settings.reset': case 'ui.settings.save': {

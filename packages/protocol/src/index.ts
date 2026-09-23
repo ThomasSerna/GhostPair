@@ -3,8 +3,6 @@ import { z } from 'zod';
 export const PROTOCOL_VERSION = 4;
 export const MAX_CLIPBOARD_BYTES = 256 * 1024;
 
-export const MAX_SIGNAL_BYTES = 64 * 1024;
-
 const id = z.string().min(1).max(128);
 export const MIN_PASSWORD_LENGTH = 8;
 export const PasswordSchema = z.string().min(MIN_PASSWORD_LENGTH, 'Use at least 8 characters.').max(256);
@@ -121,14 +119,6 @@ export const ControlCommandSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('reload'), ...target }).strict(),
 ]);
 export type ControlCommand = z.infer<typeof ControlCommandSchema>;
-
-export const ClipboardUpdateSchema = z.object({
-  type: z.literal('clipboard.update'),
-  text: z.string().max(MAX_CLIPBOARD_BYTES),
-  version: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER - 1),
-  origin: z.enum(['host', 'guest']),
-}).strict().refine(v => new TextEncoder().encode(v.text).byteLength <= MAX_CLIPBOARD_BYTES, 'Clipboard exceeds limit');
-export type ClipboardUpdate = z.infer<typeof ClipboardUpdateSchema>;
 
 export function isRelaySignal(payload: SignalPayload): boolean {
   const text = payload.type === 'ice' ? payload.candidate?.candidate ?? '' : payload.sdp;

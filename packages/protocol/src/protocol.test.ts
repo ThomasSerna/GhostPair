@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { VisualPreferencesSchema, PasswordSchema, ClientSignalMessageSchema, ControlCommandSchema, ClipboardUpdateSchema, isRelaySignal, isSupportedUrl, validateSignalingUrl } from './index';
+import { VisualPreferencesSchema, PasswordSchema, ClientSignalMessageSchema, ControlCommandSchema, isRelaySignal, isSupportedUrl, validateSignalingUrl } from './index';
 describe('network boundaries', () => {
   it('migrates click animations on by default and preserves an explicit opt-out', () => {
     for (const saved of [{}, { notices: true, duration: 'temporary', seconds: 4 }, { text: { seconds: 10 }, other: { seconds: 3 } }]) {
@@ -40,9 +40,6 @@ describe('network boundaries', () => {
     expect(ControlCommandSchema.safeParse(release).success).toBe(true);
     expect(ControlCommandSchema.safeParse({ type: 'input.release', controlRevision: 0, tabId: 1 }).success).toBe(false);
     expect(ControlCommandSchema.safeParse({ ...release, x: 0 }).success).toBe(false);
-  });
-  it('enforces UTF-8 clipboard size, not just code unit count', () => {
-    expect(ClipboardUpdateSchema.safeParse({ type: 'clipboard.update', origin: 'host', version: 1, text: '🙂'.repeat(100000) }).success).toBe(false);
   });
   it('rejects relay candidates in SDP and trickle ICE', () => {
     expect(isRelaySignal({ type: 'ice', candidate: { candidate: 'candidate:1 1 UDP 1 1.2.3.4 88 typ relay raddr 0.0.0.0' } })).toBe(true);
