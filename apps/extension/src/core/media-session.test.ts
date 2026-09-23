@@ -1,11 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MediaSession, type MediaSignal, type Presentation } from './media-session';
 
-function deferred<T>() {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>(done => { resolve = done; });
-  return { promise, resolve };
-}
 async function settled() { for (let i = 0; i < 20; i++) await Promise.resolve(); }
 
 class Track {
@@ -98,7 +93,7 @@ describe('generation-scoped video connections', () => {
   });
 
   it('cannot send an old offer after replacement or stop while createOffer is pending', async () => {
-    const h = harness(); const pendingOffer = deferred<RTCSessionDescriptionInit>(); Peer.nextOffer = pendingOffer.promise;
+    const h = harness(); const pendingOffer = Promise.withResolvers<RTCSessionDescriptionInit>(); Peer.nextOffer = pendingOffer.promise;
     const first = h.session.present(presentation(), h.source); await settled();
     const firstPeer = h.peer(); Peer.nextOffer = undefined;
     await h.session.present(presentation(2), h.source);
@@ -107,7 +102,7 @@ describe('generation-scoped video connections', () => {
     expect(h.offers().map(message => message.generation)).toEqual([2]);
     expect(h.original.clones[0].stop).toHaveBeenCalledOnce();
 
-    const next = deferred<RTCSessionDescriptionInit>(); Peer.nextOffer = next.promise;
+    const next = Promise.withResolvers<RTCSessionDescriptionInit>(); Peer.nextOffer = next.promise;
     const last = h.session.present(presentation(3), h.source); await settled(); h.session.stop();
     next.resolve({ type: 'offer', sdp: 'stopped offer' }); await last;
     expect(h.offers().map(message => message.generation)).toEqual([2]);
@@ -183,7 +178,7 @@ describe('generation-scoped video connections', () => {
   });
 
   it('cannot answer or deliver a stream after stop during setRemoteDescription', async () => {
-    const h = harness('guest'); const remote = deferred<void>(); Peer.nextRemote = remote.promise;
+    const h = harness('guest'); const remote = Promise.withResolvers<void>(); Peer.nextRemote = remote.promise;
     const pending = offer(h.session); await settled();
     const oldPeer = h.peer(); const lateTrack = oldPeer.ontrack!;
     h.session.stop(); remote.resolve(); await pending;
@@ -199,7 +194,7 @@ describe('generation-scoped video connections', () => {
     await h.session.receive({ type: 'media.signal', generation: 1, payload: { type: 'answer', sdp: 'old' } });
     expect(h.peer().setRemoteDescription).not.toHaveBeenCalled();
     await h.session.receive({ type: 'media.signal', generation: 2, payload: { type: 'ice', candidate: { candidate: 'candidate' } } });
-    const remote = deferred<void>(); Peer.nextRemote = remote.promise;
+    const remote = Promise.withResolvers<void>(); Peer.nextRemote = remote.promise;
     const pending = h.session.receive({ type: 'media.signal', generation: 2, payload: { type: 'answer', sdp: 'answer' } });
     await settled(); h.session.stop(); remote.resolve(); await pending;
     expect(h.peer().addIceCandidate).not.toHaveBeenCalled();
@@ -249,7 +244,7 @@ describe('generation-scoped video connections', () => {
 
   it('does not expose a stream from an old pending stats result', async () => {
     const h = harness('guest'); await offer(h.session); h.peer().track();
-    const pendingStats = deferred<ReturnType<typeof stats>>(); h.peer().getStats.mockReturnValue(pendingStats.promise);
+    const pendingStats = Promise.withResolvers<ReturnType<typeof stats>>(); h.peer().getStats.mockReturnValue(pendingStats.promise);
     h.peer().connect(); await settled(); await h.session.receive({ type: 'media.reset', generation: 2 });
     pendingStats.resolve(stats()); await settled();
     expect(h.visible()).toHaveLength(0); expect(vi.getTimerCount()).toBe(0); h.session.stop();

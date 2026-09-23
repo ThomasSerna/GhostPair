@@ -1,12 +1,10 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
-import { deflateSync } from 'node:zlib';
+import { crc32, deflateSync } from 'node:zlib';
 import { resolve } from 'node:path';
 
 const output = resolve('apps/extension/public/icons');
 mkdirSync(output, { recursive: true });
-const table = Array.from({ length: 256 }, (_, n) => { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ c >>> 1 : c >>> 1; return c >>> 0; });
-function crc(bytes) { let c = 0xffffffff; for (const b of bytes) c = table[(c ^ b) & 255] ^ c >>> 8; return (c ^ 0xffffffff) >>> 0; }
-function chunk(type, data) { const kind = Buffer.from(type); const result = Buffer.alloc(data.length + 12); result.writeUInt32BE(data.length); kind.copy(result, 4); data.copy(result, 8); result.writeUInt32BE(crc(Buffer.concat([kind, data])), data.length + 8); return result; }
+function chunk(type, data) { const kind = Buffer.from(type); const result = Buffer.alloc(data.length + 12); result.writeUInt32BE(data.length); kind.copy(result, 4); data.copy(result, 8); result.writeUInt32BE(crc32(Buffer.concat([kind, data])), data.length + 8); return result; }
 function color(x, y) {
   const border = Math.hypot(Math.max(0, Math.abs(x - .5) - .26), Math.max(0, Math.abs(y - .5) - .26)) < .23;
   if (!border) return [0, 0, 0, 0];

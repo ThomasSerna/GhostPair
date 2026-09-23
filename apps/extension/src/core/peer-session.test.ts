@@ -2,12 +2,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PROTOCOL_VERSION } from '@ghostpair/protocol';
 import { createPeerSession, JsonChannel } from './peer-session';
 
-function deferred<T>() {
-  let resolve!: (value: T) => void;
-  let reject!: (reason: Error) => void;
-  const promise = new Promise<T>((done, fail) => { resolve = done; reject = fail; });
-  return { promise, resolve, reject };
-}
 async function settled() { for (let i = 0; i < 30; i++) await Promise.resolve(); }
 class Socket {
   static OPEN = 1;
@@ -77,7 +71,7 @@ describe('peer session lifetime', () => {
   });
 
   it('cannot establish a replacement session using a stopped peer route check', async () => {
-    const h = harness(), first = await h.start(), stats = deferred<Map<string, any>>();
+    const h = harness(), first = await h.start(), stats = Promise.withResolvers<Map<string, any>>();
     first.pc.getStats.mockReturnValueOnce(stats.promise); await first.greet(); first.pc.connect();
     const second = await h.start('c'.repeat(32)); await second.greet();
     stats.resolve(directStats()); await settled();
@@ -88,7 +82,7 @@ describe('peer session lifetime', () => {
   });
 
   it('never signals an old local offer through a replacement session socket', async () => {
-    const h = harness(), local = deferred<void>(); Peer.nextLocal = local.promise;
+    const h = harness(), local = Promise.withResolvers<void>(); Peer.nextLocal = local.promise;
     await h.start(); Peer.nextLocal = undefined; const second = await h.start('c'.repeat(32));
     const before = second.socket.send.mock.calls.length; local.resolve(); await settled();
     expect(second.socket.send).toHaveBeenCalledTimes(before);
@@ -97,7 +91,7 @@ describe('peer session lifetime', () => {
 
   it('does not acknowledge a completed old command on a new connection', async () => {
     const h = harness(), first = await h.start(); await first.greet(); first.pc.connect(); await settled();
-    const reply = deferred<any>(); h.dispatch.mockReturnValueOnce(reply.promise);
+    const reply = Promise.withResolvers<any>(); h.dispatch.mockReturnValueOnce(reply.promise);
     first.control.receive({ type: 'command', requestId: 'old-command', command: { type: 'tab.create', controlRevision: 0, url: 'https://example.com' } }); await settled();
     expect(h.dispatch).toHaveBeenCalled();
     const second = await h.start('c'.repeat(32)); await second.greet(); second.pc.connect(); await settled();
@@ -109,7 +103,7 @@ describe('peer session lifetime', () => {
   it('cancels in-flight and queued input before accepting later commands', async () => {
     const h = harness(), first = await h.start(); await first.greet(); first.pc.connect(); await settled();
     await h.session.handle({ type: 'session.state', snapshot });
-    const slow = deferred<any>(); h.dispatch.mockReturnValueOnce(slow.promise);
+    const slow = Promise.withResolvers<any>(); h.dispatch.mockReturnValueOnce(slow.promise);
     first.control.receive({ type: 'command', command: { type: 'text', controlRevision: 0, ...target, text: 'in flight' } }); await settled();
     first.control.receive({ type: 'command', requestId: 'canceled', command: { type: 'text', controlRevision: 0, ...target, text: 'queued' } });
     first.control.receive({ type: 'command', command: { type: 'input.release', controlRevision: 0, ...target } }); await settled();
@@ -145,7 +139,7 @@ describe('peer session lifetime', () => {
 
   it('ends a congested receive queue and never executes its pending actions', async () => {
     const h = harness(), first = await h.start(); await first.greet(); first.pc.connect(); await settled();
-    const slow = deferred<any>(); h.dispatch.mockReturnValueOnce(slow.promise);
+    const slow = Promise.withResolvers<any>(); h.dispatch.mockReturnValueOnce(slow.promise);
     const command = { type: 'command', command: { type: 'text', controlRevision: 0, ...target, text: 'x' } };
     first.control.receive(command); await settled();
     for (let i = 0; i < 256; i++) first.control.receive(command);
@@ -165,7 +159,7 @@ describe('peer session lifetime', () => {
   it('cancels queued input across control withdrawal and restoration', async () => {
     const h = harness(), first = await h.start(); await first.greet(); first.pc.connect(); await settled();
     await h.session.handle({ type: 'session.state', snapshot });
-    const slow = deferred<any>(); h.dispatch.mockReturnValueOnce(slow.promise);
+    const slow = Promise.withResolvers<any>(); h.dispatch.mockReturnValueOnce(slow.promise);
     const send = (text: string) => first.control.receive({ type: 'command', command: { type: 'text', controlRevision: 0, ...target, text } });
     send('in flight'); await settled(); send('queued before revoke');
     await h.session.handle({ type: 'session.state', snapshot: { ...snapshot, controlEnabled: false } });
@@ -179,7 +173,7 @@ describe('peer session lifetime', () => {
   it('acknowledges a successful action that itself changes the presentation', async () => {
     const h = harness(), first = await h.start(); await first.greet(); first.pc.connect(); await settled();
     await h.session.handle({ type: 'session.state', snapshot });
-    const completion = deferred<any>(); h.dispatch.mockReturnValueOnce(completion.promise);
+    const completion = Promise.withResolvers<any>(); h.dispatch.mockReturnValueOnce(completion.promise);
     first.control.receive({ type: 'command', requestId: 'create-tab', command: { type: 'tab.create', controlRevision: 0, url: 'https://example.com' } }); await settled();
     await h.session.handle({ type: 'session.state', snapshot: { ...snapshot, presentation: undefined, generation: 4 } });
     completion.resolve({ ok: true }); await settled();
@@ -197,7 +191,7 @@ describe('peer session lifetime', () => {
 
   it('ends the session when delivery to the host fails and cancels queued input', async () => {
     const h = harness(), first = await h.start(); await first.greet(); first.pc.connect(); await settled();
-    const delivery = deferred<any>(); h.dispatch.mockReturnValueOnce(delivery.promise);
+    const delivery = Promise.withResolvers<any>(); h.dispatch.mockReturnValueOnce(delivery.promise);
     first.control.receive({ type: 'command', command: { type: 'text', controlRevision: 0, ...target, text: 'first' } }); await settled();
     first.control.receive({ type: 'command', command: { type: 'text', controlRevision: 0, ...target, text: 'queued' } });
     delivery.reject(new Error('Extension connection lost')); await settled();
@@ -209,7 +203,7 @@ describe('peer session lifetime', () => {
   it('does not let failed delivery from an old generation end current control', async () => {
     const h = harness(), first = await h.start(); await first.greet(); first.pc.connect(); await settled();
     await h.session.handle({ type: 'session.state', snapshot });
-    const delivery = deferred<any>(); h.dispatch.mockReturnValueOnce(delivery.promise);
+    const delivery = Promise.withResolvers<any>(); h.dispatch.mockReturnValueOnce(delivery.promise);
     first.control.receive({ type: 'command', requestId: 'old', command: { type: 'text', controlRevision: 0, ...target, text: 'old' } }); await settled();
     await h.session.handle({ type: 'session.state', snapshot: { ...snapshot, generation: 4, presentation: { ...presentation, generation: 4 } } });
     first.control.receive({ type: 'command', command: { type: 'text', controlRevision: 0, ...target, generation: 4, text: 'current' } });
@@ -222,7 +216,7 @@ describe('peer session lifetime', () => {
   it('rejects queued and late commands from an old interaction revision without renegotiating video', async () => {
     const h = harness(), first = await h.start(); await first.greet(); first.pc.connect(); await settled();
     await h.session.handle({ type: 'session.state', snapshot });
-    const delivery = deferred<any>(); h.dispatch.mockReturnValueOnce(delivery.promise);
+    const delivery = Promise.withResolvers<any>(); h.dispatch.mockReturnValueOnce(delivery.promise);
     const send = (text: string, controlRevision = 0) => first.control.receive({ type: 'command', command: { type: 'text', controlRevision, ...target, text } });
     send('in flight'); await settled(); send('queued');
     const peers = Peer.instances.length;

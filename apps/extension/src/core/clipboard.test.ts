@@ -8,11 +8,6 @@ function memoryClipboard(value = '') {
     write: vi.fn(async function(this: { value: string }, text: string) { this.value = text; }),
   };
 }
-function deferred<T>() {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>(done => { resolve = done; });
-  return { promise, resolve };
-}
 
 describe('ClipboardSync', () => {
   beforeEach(() => vi.useFakeTimers());
@@ -30,7 +25,7 @@ describe('ClipboardSync', () => {
   });
 
   it('serializes slow reads and cancels polling as soon as the session stops', async () => {
-    const read = deferred<string>(); const adapter = memoryClipboard('initial');
+    const read = Promise.withResolvers<string>(); const adapter = memoryClipboard('initial');
     const send = vi.fn(); const sync = new ClipboardSync('host', adapter, send, vi.fn());
     await sync.start();
     adapter.read.mockImplementationOnce(() => read.promise);

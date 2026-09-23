@@ -2,11 +2,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { type Presentation, type TabInfo } from '@ghostpair/protocol';
 import { MAX_CAPTURED_TABS, TabCapture } from './tab-capture';
 
-function deferred<T>() {
-  let resolve!: (value: T) => void, reject!: (error: Error) => void;
-  const promise = new Promise<T>((done, fail) => { resolve = done; reject = fail; });
-  return { promise, resolve, reject };
-}
 function event() {
   const addListener = vi.fn();
   return { addListener, emit: (...args: any[]) => { for (const [listener] of addListener.mock.calls) listener(...args); } };
@@ -148,7 +143,7 @@ describe('TabCapture authorization and scoped control', () => {
   });
 
   it('rejects a pending action if control is withdrawn and restored while resolving its tab', async () => {
-    const h = harness(); await h.share(); const waiting = deferred<any>();
+    const h = harness(); await h.share(); const waiting = Promise.withResolvers<any>();
     h.browser.tabs.get.mockReturnValueOnce(waiting.promise);
     const operation = h.capture.execute({ type: 'text', controlRevision: 0, ...h.target(), text: 'stale' });
     await h.capture.setControl(false); await h.capture.setControl(true); waiting.resolve(h.tabs.get(12));
@@ -157,7 +152,7 @@ describe('TabCapture authorization and scoped control', () => {
 
   it('changes interaction modes without changing presentation and rejects stale input or navigation', async () => {
     const h = harness(); await h.share(); const presentation = h.current(), target = h.target();
-    const waiting = deferred<any>(); h.browser.tabs.get.mockReturnValueOnce(waiting.promise);
+    const waiting = Promise.withResolvers<any>(); h.browser.tabs.get.mockReturnValueOnce(waiting.promise);
     const pending = h.capture.execute({ type: 'text', controlRevision: 0, ...target, text: 'old preview' });
     await h.capture.configure({ mode: 'live', revision: 1, preferences: { notices: false, clickAnimations: true, text: { duration: 'persistent', seconds: 10 }, other: { duration: 'persistent', seconds: 3 }, accentColor: '#7871e8' } });
     waiting.resolve(h.tabs.get(12)); await expect(pending).rejects.toThrow('outside');
@@ -208,21 +203,21 @@ describe('TabCapture authorization and scoped control', () => {
   });
 
   it('does not consume an expired startup after Stop while the stream id is pending', async () => {
-    const h = harness(); await h.capture.start(4); const stream = deferred<string>(); h.browser.tabCapture.getMediaStreamId.mockReturnValueOnce(stream.promise);
+    const h = harness(); await h.capture.start(4); const stream = Promise.withResolvers<string>(); h.browser.tabCapture.getMediaStreamId.mockReturnValueOnce(stream.promise);
     const authorization = h.capture.authorize(12); await settled(); await h.capture.stop();
     stream.resolve('stale-stream'); await expect(authorization).rejects.toThrow('canceled');
     expect(h.hooks.acquire).not.toHaveBeenCalled(); expect(h.current()).toBeUndefined();
   });
 
   it('releases a source acquired after Stop and cannot publish its document', async () => {
-    const h = harness(); await h.capture.start(4); const acquired = deferred<void>(); h.hooks.acquire.mockReturnValueOnce(acquired.promise);
+    const h = harness(); await h.capture.start(4); const acquired = Promise.withResolvers<void>(); h.hooks.acquire.mockReturnValueOnce(acquired.promise);
     const authorization = h.capture.authorize(12); await settled(); const captureId = h.hooks.acquire.mock.calls[0][1];
     await h.capture.stop(); acquired.resolve(); await authorization;
     expect(h.hooks.release).toHaveBeenCalledExactlyOnceWith(captureId); expect(h.browser.scripting.executeScript).not.toHaveBeenCalled(); expect(h.current()).toBeUndefined();
   });
 
   it('cannot publish an injection result that completes after navigation or Stop', async () => {
-    const h = harness(); await h.capture.start(4); const injected = deferred<any[]>(); h.browser.scripting.executeScript.mockReturnValueOnce(injected.promise);
+    const h = harness(); await h.capture.start(4); const injected = Promise.withResolvers<any[]>(); h.browser.scripting.executeScript.mockReturnValueOnce(injected.promise);
     const authorization = h.capture.authorize(12); await settled();
     h.browser.tabs.onUpdated.emit(12, { status: 'loading' }, h.tabs.get(12)); await h.capture.stop();
     injected.resolve([{ documentId: 'old-document', result: h.geometry }]); await authorization;
@@ -231,7 +226,7 @@ describe('TabCapture authorization and scoped control', () => {
   });
 
   it('rechecks a tab that leaves the shared window during capture acquisition', async () => {
-    const h = harness(); await h.capture.start(4); const acquired = deferred<void>(); h.hooks.acquire.mockReturnValueOnce(acquired.promise);
+    const h = harness(); await h.capture.start(4); const acquired = Promise.withResolvers<void>(); h.hooks.acquire.mockReturnValueOnce(acquired.promise);
     const authorization = h.capture.authorize(12); await settled(); const captureId = h.hooks.acquire.mock.calls[0][1];
     h.tabs.get(12).windowId = 7; h.browser.tabs.onDetached.emit(12, { oldWindowId: 4 });
     acquired.resolve(); await authorization.catch(() => undefined);
@@ -239,7 +234,7 @@ describe('TabCapture authorization and scoped control', () => {
   });
 
   it('cannot publish a native capture canceled before acquisition completes', async () => {
-    const h = harness(); await h.capture.start(4); const acquired = deferred<void>(); h.hooks.acquire.mockReturnValueOnce(acquired.promise);
+    const h = harness(); await h.capture.start(4); const acquired = Promise.withResolvers<void>(); h.hooks.acquire.mockReturnValueOnce(acquired.promise);
     const authorization = h.capture.authorize(12); await settled();
     h.browser.tabCapture.onStatusChanged.emit({ tabId: 12, status: 'stopped' });
     expect(h.hooks.detached).toHaveBeenCalledOnce(); acquired.resolve();
@@ -249,7 +244,7 @@ describe('TabCapture authorization and scoped control', () => {
   });
 
   it('does not publish a stale injection error after the session was stopped', async () => {
-    const h = harness(); await h.capture.start(4); const injected = deferred<any[]>(); h.browser.scripting.executeScript.mockReturnValueOnce(injected.promise);
+    const h = harness(); await h.capture.start(4); const injected = Promise.withResolvers<any[]>(); h.browser.scripting.executeScript.mockReturnValueOnce(injected.promise);
     const authorization = h.capture.authorize(12); await settled(); await h.capture.stop();
     injected.reject(new Error('The old document was removed')); await authorization;
     expect(h.hooks.error).not.toHaveBeenCalled(); expect(h.current()).toBeUndefined();

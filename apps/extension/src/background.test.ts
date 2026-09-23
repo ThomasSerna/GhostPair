@@ -7,11 +7,6 @@ const capture = vi.hoisted(() => ({
 }));
 vi.mock('./core/tab-capture', () => ({ TabCapture: class { constructor() { return capture; } } }));
 
-function deferred<T>() {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>(done => { resolve = done; });
-  return { promise, resolve };
-}
 function event() {
   const addListener = vi.fn();
   return { addListener, emit: (...args: any[]) => { for (const [listener] of addListener.mock.calls) listener(...args); } };
@@ -140,27 +135,27 @@ describe('background cancellation', () => {
     expect(current.notification.message).toContain('site access was removed');
   });
   it('does not start capture or transport if Stop arrives during the permission check', async () => {
-    const h = await harness(); const permission = deferred<boolean>(); h.browser.permissions.contains.mockReturnValueOnce(permission.promise);
+    const h = await harness(); const permission = Promise.withResolvers<boolean>(); h.browser.permissions.contains.mockReturnValueOnce(permission.promise);
     const starting = h.send('ui.host.start', { password: 'Eight-42' }); await settled(); expect(h.browser.permissions.contains).toHaveBeenCalled();
     expect((await h.send('ui.stop')).state.status).toBe('idle'); permission.resolve(true); await starting;
     expect((await h.send('ui.status')).state.role).toBeNull(); expect(capture.start).not.toHaveBeenCalled(); expect(h.hasOffscreenMessage('session.start')).toBe(false);
   });
   it('does not authorize after capture preparation completes following Stop', async () => {
-    const h = await harness(); const prepared = deferred<void>(); capture.start.mockReturnValueOnce(prepared.promise);
+    const h = await harness(); const prepared = Promise.withResolvers<void>(); capture.start.mockReturnValueOnce(prepared.promise);
     const starting = h.send('ui.host.start', { password: 'Eight-42' }); await settled();
     expect(capture.start).toHaveBeenCalledWith(7); await h.send('ui.stop'); prepared.resolve(); await starting;
     expect((await h.send('ui.status')).state.role).toBeNull(); expect(capture.authorize).not.toHaveBeenCalled();
     expect(h.hasOffscreenMessage('session.start')).toBe(false); expect(capture.stop).toHaveBeenCalled();
   });
   it('does not register after Stop while acquiring an authorized capture', async () => {
-    const h = await harness(); const acquired = deferred<void>(); capture.authorize.mockReturnValueOnce(acquired.promise);
+    const h = await harness(); const acquired = Promise.withResolvers<void>(); capture.authorize.mockReturnValueOnce(acquired.promise);
     const starting = h.send('ui.host.start', { password: 'Eight-42' }); await settled();
     expect(capture.authorize).toHaveBeenCalledWith(12); await h.send('ui.stop'); acquired.resolve(); await starting;
     expect(h.hasOffscreenMessage('identity.register')).toBe(false); expect(h.hasOffscreenMessage('session.start')).toBe(false);
     expect((await h.send('ui.status')).state.status).toBe('idle');
   });
   it('stops transport immediately while capture cleanup and registration are pending', async () => {
-    const h = await harness(); const registration = deferred<unknown>(); const stoppedCapture = deferred<void>();
+    const h = await harness(); const registration = Promise.withResolvers<unknown>(); const stoppedCapture = Promise.withResolvers<void>();
     h.runtime.sendMessage.mockImplementation(async message => message.type === 'identity.register' ? registration.promise : { ok: true });
     const starting = h.send('ui.host.start', { password: 'Eight-42' }); await settled(); expect(h.hasOffscreenMessage('identity.register')).toBe(true);
     capture.stop.mockReturnValueOnce(stoppedCapture.promise); const stopping = h.send('ui.stop'); await settled(); expect(h.hasOffscreenMessage('session.stop')).toBe(true);

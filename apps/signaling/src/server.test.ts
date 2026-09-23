@@ -350,13 +350,8 @@ describe('signaling security and lifecycle', () => {
   });
 });
 
-function gate<T>() {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>(done => { resolve = done; }); return { promise, resolve };
-}
-
 it('reserves authentication capacity before asynchronous identity lookup and rejects disconnected completions', async () => {
-  const store = new Devices(':memory:'), lookup = gate<boolean>();
+  const store = new Devices(':memory:'), lookup = Promise.withResolvers<boolean>();
   store.authenticate = vi.fn(() => lookup.promise);
   const app = await start({ maxAuthConcurrency: 1 }, store);
   const identity = await app.register(), first = await app.connect(), second = await app.connect();
@@ -371,7 +366,7 @@ it('reserves authentication capacity before asynchronous identity lookup and rej
 });
 
 it('does not resurrect authentication after the socket timeout', async () => {
-  const store = new Devices(':memory:'), lookup = gate<boolean>(); store.authenticate = () => lookup.promise;
+  const store = new Devices(':memory:'), lookup = Promise.withResolvers<boolean>(); store.authenticate = () => lookup.promise;
   const app = await start({ authTimeoutMs: 75 }, store), identity = await app.register(), peer = await app.connect();
   peer.send({ type: 'host.open', ...identity, password });
   await until(() => peer.socket.readyState === WebSocket.CLOSED);
@@ -380,7 +375,7 @@ it('does not resurrect authentication after the socket timeout', async () => {
 });
 
 it('drains pending identity work before closing storage on shutdown', async () => {
-  const store = new Devices(':memory:'), lookup = gate<boolean>(); store.authenticate = () => lookup.promise;
+  const store = new Devices(':memory:'), lookup = Promise.withResolvers<boolean>(); store.authenticate = () => lookup.promise;
   const close = vi.spyOn(store, 'close');
   const app = await start({}, store), identity = await app.register(), peer = await app.connect();
   peer.send({ type: 'host.open', ...identity, password }); await until(() => app.server.stats.activeAuth === 1);

@@ -6,11 +6,6 @@ function event() {
   const listeners: ((value: any) => void)[] = [];
   return { addListener: (fn: (value: any) => void) => listeners.push(fn), emit: (value: any) => listeners.forEach(fn => fn(value)) };
 }
-function deferred<T>() {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>(done => { resolve = done; });
-  return { promise, resolve };
-}
 const p: Presentation = { captureId: 'capture', tabId: 12, documentId: 'root', generation: 3, viewportWidth: 900, viewportHeight: 700, offsetLeft: 0, offsetTop: 0, scale: 1 };
 function harness() {
   const frame = (frameId: number, documentId: string, parentFrameId = 0, parentDocumentId = 'root') => ({ frameId, documentId, parentFrameId, parentDocumentId, documentLifecycle: 'active', url: 'https://identical.example/child' });
@@ -57,7 +52,7 @@ it('updates click visibility throughout authorized frames without releasing virt
 
 it('cancels an in-flight route and queued or delayed input before changing mode', async () => {
   const h = harness(); await h.control.bind(p); h.routes.clear();
-  const gate = deferred<any>(), entered = deferred<void>(), original = h.sendMessage.getMockImplementation()!;
+  const gate = Promise.withResolvers<any>(), entered = Promise.withResolvers<void>(), original = h.sendMessage.getMockImplementation()!;
   h.sendMessage.mockImplementation(async (...args) => {
     if (args[1].operation === 'prepare' && args[1].controlRevision === 0) { entered.resolve(); return gate.promise; }
     return original(...args);
@@ -160,7 +155,7 @@ it('retires a navigating subtree without redirecting pointerup or keyup to its r
 });
 
 it('cancels an in-flight preparation and queued text when control is released', async () => {
-  const h = harness(); await h.control.bind(p); const gate = deferred<any>(), entered = deferred<void>();
+  const h = harness(); await h.control.bind(p); const gate = Promise.withResolvers<any>(), entered = Promise.withResolvers<void>();
   const original = h.sendMessage.getMockImplementation()!;
   h.sendMessage.mockImplementation(async (...args) => {
     if (args[1].operation === 'prepare' && args[2].documentId === 'root') { entered.resolve(); return gate.promise; }
@@ -181,7 +176,7 @@ it('never commits after a parent verification reports replacement', async () => 
 
 it('does not release a new generation when an old in-flight route fails', async () => {
   const h = harness(); await h.control.bind(p);
-  const gate = deferred<any>(), entered = deferred<void>(), original = h.sendMessage.getMockImplementation()!;
+  const gate = Promise.withResolvers<any>(), entered = Promise.withResolvers<void>(), original = h.sendMessage.getMockImplementation()!;
   h.sendMessage.mockImplementation(async (...args) => {
     if (args[1].operation === 'prepare' && args[1].generation === p.generation && args[2].documentId === 'root') { entered.resolve(); return gate.promise; }
     return original(...args);
@@ -204,7 +199,7 @@ it('disposes every document on clear with the original presentation generation',
 });
 
 it('disposes an installation that finishes after its capture was cleared', async () => {
-  const h = harness(), gate = deferred<any>(), entered = deferred<void>();
+  const h = harness(), gate = Promise.withResolvers<any>(), entered = Promise.withResolvers<void>();
   h.scripting.executeScript.mockImplementation(async args => {
     if (args.target.documentIds[0] === 'a') { entered.resolve(); return gate.promise; }
     return [{ documentId: args.target.documentIds[0], result: {} }];
