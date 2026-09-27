@@ -1,5 +1,13 @@
 # GhostPair validation
 
+## CI and version releases: September 27, 2026
+
+`npm ci`, workspace type checks, all **140 Vitest unit tests**, the **8 Node test results** for CI/release behavior, production compilation with `GHOSTPAIR_STORE_BUILD=1`, and `node scripts/package.mjs --store` passed. Actionlint **1.7.12** validated the workflow. Both ZIPs were inspected: each contains 18 files, Manifest V3 version 0.5.0, the public Render endpoint, and the required extension entrypoints/icons, with no environment files, source maps or tests.
+
+The release checks cover the initial version, a new version, unchanged-version reruns, interrupted draft uploads, commit/tag conflicts, annotated tags, incomplete upload recovery, checksum mismatch, missing artifacts and API errors. The final gate was exercised with success, failure, cancelled, skipped and empty results; only success passes. These checks run as part of `npm test`.
+
+Render was already running the current application with PostgreSQL variables configured and `/ready` as its health-check path. Both `/health` and `/ready` returned 200. Auto-Deploy was changed from **On Commit** to **After CI Checks Pass** and confirmed after reloading Settings. Browser and PostgreSQL integration suites were not rerun for this automation change; earlier evidence below remains historical, including its then-pending activation status.
+
 ## On-page host controls: September 27, 2026
 
 All **140 unit tests in 15 files**, workspace TypeScript checks and production compilation passed. The added checks cover default visibility and migration, preference persistence in both modes, propagation across authorized frames, and rejection of changes from stale or unauthorized host documents.

@@ -13,7 +13,7 @@
   "scripts": {
     "build": "npm run build -w @ghostpair/protocol && npm run build -w @ghostpair/signaling && npm run build -w @ghostpair/extension",
     "typecheck": "npm run typecheck --workspaces --if-present",
-    "test": "vitest run",
+    "test": "vitest run && node --test scripts/release.test.mjs",
     "dev:server": "npm run dev -w @ghostpair/signaling",
     "dev:extension": "npm run dev -w @ghostpair/extension",
     "package": "npm run build && node scripts/package.mjs",

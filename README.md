@@ -35,7 +35,13 @@ npm.cmd run test:visual
 npm.cmd run package
 ```
 
-Packages are written to `dist/packages/`. Production builds default to `https://ghostpair.onrender.com` through the public-only `.env.production`. Use `npm.cmd run package:store` to validate those endpoints and create store packages. The new server release remains pending PostgreSQL activation; follow [Publishing](docs/publishing.md) before submitting to stores.
+Packages are written to `dist/packages/`. Production builds default to `https://ghostpair.onrender.com` through the public-only `.env.production`. Use `npm.cmd run package:store` to validate those endpoints and create store packages. Download ready-to-load Chrome and Edge ZIPs from [GitHub Releases](https://github.com/ThomasSerna/GhostPair/releases); unzip, enable Developer mode on the browser's extensions page, and choose **Load unpacked**. Follow [Publishing](docs/publishing.md) for version updates and store submission.
+
+### Continuous integration and releases
+
+Every branch push and pull request runs `npm ci`, workspace type checks, unit tests, a production build and package validation in GitHub Actions. **CI required** succeeds only when all verification completes successfully. Browser and PostgreSQL integration checks remain separate commands.
+
+After successful CI on `main`, a new extension version creates a `v<version>` release with the two tested ZIPs. Commits that keep the same version do not change its published release. The first automated release is `v0.5.0`. See [version updates and release recovery](docs/publishing.md#automatic-github-releases).
 
 ### Environment and saved settings
 
@@ -68,7 +74,7 @@ Version 0.5.0 uses peer protocol 4 for visual simulation and interaction revisio
 
 ## Deployment
 
-Production is hosted on Render at **https://ghostpair.onrender.com**, using the repository Dockerfile and branch `main`. Auto-deploy must stay Off until a persistent PostgreSQL provider is configured. See [Render activation](docs/deployment.md) and `deploy/render.env.example` for the remaining connection and verification steps. The planned cutover resets old ephemeral SQLite identities once; later deployments retain PostgreSQL identities. The local SQLite file is not a production backup. [Publishing](docs/publishing.md) covers packages and publisher requirements.
+Production is hosted on Render at **https://ghostpair.onrender.com**, using the repository Dockerfile, PostgreSQL and branch `main`. Auto-deploy is **After CI Checks Pass**, and the health-check path is `/ready`. Each verified push can deploy the server independently of whether the extension version changed. See [Deployment](docs/deployment.md) and `deploy/render.env.example` for configuration and recovery. Keep the database and public URL stable to retain installation identities. [Publishing](docs/publishing.md) covers packages and publisher requirements.
 
 Docker Compose includes Node.js signaling, persistent SQLite, Caddy for HTTPS/WSS, and coturn in STUN-only mode. Use a domain pointing to the server and allow TCP 80/443 and UDP/TCP 3478.
 

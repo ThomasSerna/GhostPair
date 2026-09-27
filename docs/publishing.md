@@ -4,15 +4,39 @@
 
 Release 0.5.0 retains peer protocol 4 and the existing permission set. Both Chrome and Edge are targeted.
 
-The repository generates separate Chrome Web Store and Edge Add-ons packages. Producing a ZIP does not publish an extension or imply store approval. Complete the real-browser checks in [Validation](validation.md), production deployment, and publisher information before submission.
+The repository generates separate Chrome Web Store and Edge Add-ons packages. GitHub Releases distributes downloadable ZIPs automatically; store submission and approval remain separate. Complete the real-browser checks in [Validation](validation.md) and publisher information before submitting to stores.
+
+## Automatic GitHub releases
+
+Every branch push and pull request runs installation, type checking, unit tests, production compilation and store-package validation. The **CI required** check fails unless verification succeeds. Production compilation uses the public defaults in `.env.production`; CI packages that exact build once and retains its ZIPs as an Actions artifact for 14 days.
+
+Only a successful push to `main` can publish a release. The version comes from `apps/extension/package.json`; the packager requires matching versions in the root package, signaling package, protocol package and built manifest. A new version creates tag `v<version>` at the tested commit, automatic release notes, and `ghostpair-chrome-<version>.zip` plus `ghostpair-edge-<version>.zip`. The initial automated release is **v0.5.0**. Later commits with that version leave the release and its assets unchanged. Pushes to other branches and pull requests only validate and retain artifacts.
+
+To release the next version, update all workspaces and the root package without creating tags, then update the manifest to the same version. For example:
+
+```powershell
+npm.cmd version 0.5.1 --workspaces --include-workspace-root --no-git-tag-version
+node --input-type=module -e "import fs from 'node:fs'; const path = 'apps/extension/public/manifest.json'; const manifest = JSON.parse(fs.readFileSync(path, 'utf8')); manifest.version = '0.5.1'; fs.writeFileSync(path, JSON.stringify(manifest, null, 2) + '\n');"
+```
+
+Commit the updated package files, `package-lock.json` and manifest together on `main`, then push. CI creates the tag and release after verification; no manual tag, personal access token, or version bump on ordinary commits is needed. This does not change branch protection or require a pull request for direct work on `main`.
+
+Publication is serialized by version. It creates a draft, uploads both verified ZIPs with checksum checks, then publishes. To recover from an interrupted upload, rerun the original **Publish extension release** job while its Actions artifact remains available; matching completed assets are retained. A draft or existing tag from a different commit fails instead of moving the tag or overwriting assets. Fix that original run or publish a new version. Published releases are never modified by reruns. If artifacts have expired, use a new version and a fresh CI run.
+
+### Install a downloaded ZIP
+
+1. Download the Chrome or Edge ZIP from [Releases](https://github.com/ThomasSerna/GhostPair/releases), not GitHub's source-code archive.
+2. Extract it into a permanent folder. Open `chrome://extensions` or `edge://extensions` and enable **Developer mode**.
+3. Choose **Load unpacked** and select the extracted folder containing `manifest.json`.
+4. For updates, replace files in the same folder and click **Reload**. Keep that folder and avoid uninstalling to retain settings and identity. Update both session participants together.
 
 ## Preparation
 
 1. Obtain Google and Microsoft developer accounts, an HTTPS domain, and a monitored support email address.
-2. Follow [Render activation](deployment.md) to connect PostgreSQL before deploying the pending server release. Public production build defaults are committed in `.env.production`: `https://ghostpair.onrender.com` and external STUN. Override `VITE_SIGNALING_URL` and `VITE_STUN_URLS` through `.env.production.local` or process variables for another deployment. Existing manually saved settings require **Use build defaults** to adopt a new build's defaults.
+2. Confirm production health and the PostgreSQL configuration using [Deployment](deployment.md). Public production build defaults are committed in `.env.production`: `https://ghostpair.onrender.com` and external STUN. Override `VITE_SIGNALING_URL` and `VITE_STUN_URLS` through `.env.production.local` or process variables for another deployment. Existing manually saved settings require **Use build defaults** to adopt a new build's defaults.
 3. Complete publisher fields in `docs/privacy.html`. Node (and the optional Caddy proxy) serves that page at `https://DOMAIN/privacy`.
 4. Run `npm ci`, `npm run typecheck`, `npm test`, browser checks, PostgreSQL/container checks, and `npm run package:store`. The store command validates the effective Vite production configuration, builds fresh assets, checks the recorded build defaults and produces both ZIPs. It rejects loopback/private-address literals, reserved/placeholder domains, credentialed URLs and non-HTTPS signaling. It checks configuration shape, not whether a domain actually hosts a working service; the public service must be verified separately. `npm run package` remains available for development endpoints.
-5. Register store listings and test both packages before final submission. Every valid Chrome/Edge extension ID is accepted by the new server; no server ID configuration is required. The server change takes effect only after the pending Render activation.
+5. Register store listings and test both packages before final submission. Every valid Chrome/Edge extension ID is accepted by the server; no server ID configuration is required.
 6. Upload `dist/packages/ghostpair-chrome-0.5.0.zip` and `ghostpair-edge-0.5.0.zip` to the appropriate accounts. Include real screenshots, privacy policy, and contact details. Peer protocol 4 is unchanged; saved addresses and settings survive the update.
 7. Give reviewers instructions for connecting two installations. Do not provide a permanent password or an unattended production session.
 
@@ -29,12 +53,12 @@ Video and interactions travel directly over WebRTC. Signaling and STUN help esta
 ## Release prerequisites still to supply
 
 - Final Chrome and Edge store listings.
-- PostgreSQL provider configuration and activation of the pending Render server release, plus verified public STUN/network connectivity.
+- Verified public STUN/network connectivity and PostgreSQL backup restoration.
 - Publisher/operator name, country, monitored support email and privacy URL.
 - Actual identity, log and backup retention periods and a deletion process.
 - Final store screenshots and the manual browser/network checks in [Validation](validation.md).
 
-The repository does not invent these facts or create publisher accounts. Production ZIPs now use the real Render URL, but server activation and the remaining publication checks must still be completed. A successful ZIP build is not store submission or approval.
+The repository does not invent these facts or create publisher accounts. Production ZIPs use the real Render URL, but the remaining store publication checks must still be completed. A successful GitHub release is not store submission or approval.
 
 ## Reviewer walkthrough
 

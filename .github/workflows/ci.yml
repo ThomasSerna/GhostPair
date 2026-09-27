@@ -1,0 +1,90 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Install, types, tests and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Check types
+        run: npm run typecheck
+      - name: Unit tests
+        run: npm test
+      - name: Build production
+        run: npm run build
+        env:
+          GHOSTPAIR_STORE_BUILD: '1'
+      - name: Package verified build
+        run: node scripts/package.mjs --store
+      - name: Read extension version
+        id: version
+        run: node --input-type=module -e "import fs from 'node:fs'; const {version} = JSON.parse(fs.readFileSync('apps/extension/package.json', 'utf8')); fs.appendFileSync(process.env.GITHUB_OUTPUT, 'version=' + version + '\n');"
+      - name: Save extension packages
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: extension-${{ github.sha }}
+          path: dist/packages/*.zip
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+
+  ci-required:
+    name: CI required
+    needs: verify
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Require successful verification
+        env:
+          VERIFY_RESULT: ${{ needs.verify.result }}
+        run: |
+          node -e "process.exit(process.env.VERIFY_RESULT === 'success' ? 0 : 1)"
+
+  release:
+    name: Publish extension release
+    needs: [verify, ci-required]
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.ci-required.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    concurrency:
+      group: extension-release-${{ needs.verify.outputs.version }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: extension-${{ github.sha }}
+          path: dist/packages
+      - name: Publish unpublished version
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          RELEASE_VERSION: ${{ needs.verify.outputs.version }}
+        with:
+          script: |
+            const { publishRelease } = await import(`${process.env.GITHUB_WORKSPACE}/scripts/release.mjs`);
+            const result = await publishRelease({ github, repo: context.repo, version: process.env.RELEASE_VERSION, sha: context.sha });
+            core.notice(result);
