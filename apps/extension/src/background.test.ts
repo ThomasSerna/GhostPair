@@ -4,6 +4,7 @@ const capture = vi.hoisted(() => ({
   start: vi.fn(async (_windowId: number) => {}), stop: vi.fn(async () => {}),
   authorize: vi.fn(async (_tabId: number) => {}), release: vi.fn(async (_tabId: number) => {}),
   configure: vi.fn(async () => {}), setControl: vi.fn(async () => {}), setPaused: vi.fn(async () => {}), execute: vi.fn(async () => {}), geometry: vi.fn(),
+  validateHostPage: vi.fn(),
 }));
 vi.mock('./core/tab-capture', () => ({ TabCapture: class { constructor() { return capture; } } }));
 
@@ -56,11 +57,33 @@ async function harness(stored: Record<string, unknown> = {}) {
 afterEach(() => vi.unstubAllGlobals());
 
 describe('background connection ownership and settings', () => {
+  it('saves only allowed visibility preferences from the authorized host panel in either mode', async () => {
+    const h = await harness();
+    const send = (fields: object) => new Promise<any>(resolve => h.runtime.onMessage.emit({ target: 'background', type: 'dom.preferences', ...fields }, { id: h.runtime.id, url: 'https://example.com', frameId: 0, documentId: 'document', tab: { id: 12 } }, resolve));
+    expect((await send({ preference: 'showInteractions', enabled: false })).ok).toBe(false);
+    await h.send('ui.host.start', { password: 'Eight-42' });
+    for (const mode of ['visual', 'live']) {
+      await h.send('ui.control.mode', { mode });
+      expect(await send({ preference: 'showInteractions', enabled: false })).toEqual({ ok: true });
+      expect(await send({ preference: 'clickAnimations', enabled: false })).toEqual({ ok: true });
+      expect((await h.send('ui.status')).state.visualPreferences).toMatchObject({ showInteractions: false, clickAnimations: false });
+      expect(capture.configure).toHaveBeenLastCalledWith(expect.objectContaining({ mode, preferences: expect.objectContaining({ showInteractions: false, clickAnimations: false }) }));
+      expect((await send({ preference: 'notices', enabled: true })).ok).toBe(false);
+      expect((await send({ preference: 'showInteractions', enabled: 'false' })).ok).toBe(false);
+      expect(await send({ preference: 'showInteractions', enabled: true })).toEqual({ ok: true });
+    }
+    capture.validateHostPage.mockImplementationOnce(() => { throw new Error('The shared page changed.'); });
+    expect((await send({ preference: 'showInteractions', enabled: false })).ok).toBe(false);
+    expect(capture.validateHostPage).toHaveBeenCalled();
+    await h.send('ui.stop');
+    const restarted = await harness(h.stored);
+    expect((await restarted.send('ui.status')).state.visualPreferences).toMatchObject({ showInteractions: true, clickAnimations: false });
+  });
   it('persists preview preferences independently and starts each new session in visual mode', async () => {
     const h = await harness();
-    expect((await h.send('ui.status')).state).toMatchObject({ controlMode: 'visual', visualPreferences: { notices: false, clickAnimations: true, text: { duration: 'persistent', seconds: 10 }, other: { duration: 'persistent', seconds: 3 } } });
+    expect((await h.send('ui.status')).state).toMatchObject({ controlMode: 'visual', visualPreferences: { notices: false, clickAnimations: true, showInteractions: true, text: { duration: 'persistent', seconds: 10 }, other: { duration: 'persistent', seconds: 3 } } });
     await h.send('ui.host.start', { password: 'Eight-42' });
-    const preferences = { notices: true, clickAnimations: false, text: { duration: 'temporary', seconds: 0.5 }, other: { duration: 'temporary', seconds: 0.5 }, accentColor: '#12abcd' };
+    const preferences = { notices: true, clickAnimations: false, showInteractions: true, text: { duration: 'temporary', seconds: 0.5 }, other: { duration: 'temporary', seconds: 0.5 }, accentColor: '#12abcd' };
     const saved = await h.send('ui.visual.preferences', { preferences });
     expect(saved.state.status).toBe('starting');
     expect(saved.state.visualPreferences).toEqual(preferences);
@@ -77,7 +100,7 @@ describe('background connection ownership and settings', () => {
   });
   it('upgrades legacy visual preferences and saves colors before hosting', async () => {
     const legacy = { notices: true, duration: 'temporary', seconds: 12 };
-    const migrated = { notices: true, clickAnimations: true, text: { duration: 'temporary', seconds: 12 }, other: { duration: 'temporary', seconds: 12 } };
+    const migrated = { notices: true, clickAnimations: true, showInteractions: true, text: { duration: 'temporary', seconds: 12 }, other: { duration: 'temporary', seconds: 12 } };
     const h = await harness({ visualPreferences: legacy });
     expect((await h.send('ui.status')).state.visualPreferences).toEqual({ ...migrated, accentColor: '#7871e8' });
     const preferences = { ...migrated, text: { duration: 'temporary', seconds: 0.5 }, accentColor: '#abcdef' };

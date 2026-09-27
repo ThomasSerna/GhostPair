@@ -11,6 +11,7 @@ export function SimulationPreferences({ preferences, busy, onChange }: {
   onChange: (preferences: VisualPreferences) => void;
 }) {
   return <>
+    <label className="check"><input type="checkbox" checked={preferences.showInteractions} disabled={busy} onChange={e => onChange({ ...preferences, showInteractions: e.target.checked })}/><span>Show interactions<small>Show GhostPair previews and animations on the shared page. Real page changes in Live control remain visible.</small></span></label>
     {(['text', 'other'] as const).map(category => <fieldset className="simulation-lifetime" key={category} disabled={busy}>
     <legend>{category === 'text' ? 'Simulated text' : 'Other simulations'}</legend>
     <label>Duration<select value={preferences[category].duration} onChange={e => onChange({ ...preferences, [category]: { ...preferences[category], duration: e.target.value } })}><option value="persistent">Until cleared</option><option value="temporary">Temporary</option></select></label>
@@ -20,7 +21,7 @@ export function SimulationPreferences({ preferences, busy, onChange }: {
       if (seconds !== preferences[category].seconds) onChange({ ...preferences, [category]: { ...preferences[category], seconds } });
     }}/><small className="helper">0.1–30 seconds, in steps of 0.1.</small></label>}
     </fieldset>)}
-    <label className="check"><input type="checkbox" checked={preferences.clickAnimations} disabled={busy} onChange={e => onChange({ ...preferences, clickAnimations: e.target.checked })}/><span>Click animations<small>Show brief circles at click positions. Buttons, choices and typing remain visible when disabled.</small></span></label>
+    <label className="check"><input type="checkbox" checked={preferences.clickAnimations} disabled={busy} onChange={e => onChange({ ...preferences, clickAnimations: e.target.checked })}/><span>Click animations<small>Show brief circles at click positions when interactions are visible.</small></span></label>
     <fieldset className="simulation-colors" disabled={busy}>
       <legend>Simulation color</legend>
       <div className="color-options">{colors.map(([name, color]) => <label key={color}>

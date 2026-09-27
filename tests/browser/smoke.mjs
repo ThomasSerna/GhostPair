@@ -80,6 +80,11 @@ try {
       const viewer = await guest.context.newPage(); await viewer.goto(`chrome-extension://${guest.id}/viewer.html`);
       await call(hostUi, 'ui.settings.save', { settings }); await call(viewer, 'ui.settings.save', { settings });
       const page = await host.context.newPage(); await page.goto(`${base}/one`); await authorize(host, page);
+      const panelTabId = await host.worker.evaluate(async url => (await chrome.tabs.query({})).find(tab => tab.url === url).id, page.url());
+      await host.worker.evaluate(tabId => chrome.scripting.executeScript({ target: { tabId }, world: 'ISOLATED', func: () => {
+        const attach = Element.prototype.attachShadow;
+        Element.prototype.attachShadow = function (options) { const shadow = attach.call(this, options); if (this.hasAttribute('data-ghostpair-panel')) globalThis.__gpPanelRoot = shadow; return shadow; };
+      } }), panelTabId);
       const starting = await call(hostUi, 'ui.host.start', { password: 'Eight-42', clipboard: false });
       assert.notEqual(starting.status, 'error', JSON.stringify(starting));
       const waiting = await waitState(hostUi, s => s.status === 'waiting', 'host waiting');
@@ -91,6 +96,21 @@ try {
       await join(viewer, waiting.deviceId, 'Eight-42');
       await waitState(viewer, s => s.status === 'connected', 'direct session connected'); await videoReady(viewer);
       assert.equal((await state(viewer)).controlMode, 'visual');
+      const localPanelClick = async selector => {
+        const [result] = await host.worker.evaluate(({ tabId, selector }) => chrome.scripting.executeScript({ target: { tabId }, world: 'ISOLATED', func: selector => { const b = __gpPanelRoot.querySelector(selector).getBoundingClientRect(); return { x: b.x + b.width / 2, y: b.y + b.height / 2 }; }, args: [selector] }), { tabId: panelTabId, selector });
+        await page.bringToFront(); await page.mouse.click(result.result.x, result.result.y);
+      };
+      await localPanelClick('summary');
+      for (const mode of ['live', 'visual']) {
+        await call(hostUi, 'ui.control.mode', { mode });
+        await localPanelClick('input');
+        const hidden = await waitState(hostUi, s => !s.visualPreferences.showInteractions, 'host panel hides interactions');
+        await localPanelClick('label:nth-child(2) input');
+        await waitState(hostUi, s => !s.visualPreferences.clickAnimations, 'host panel disables circles');
+        await call(hostUi, 'ui.visual.preferences', { preferences: { ...hidden.visualPreferences, showInteractions: true, clickAnimations: true } });
+        const [result] = await host.worker.evaluate(tabId => chrome.scripting.executeScript({ target: { tabId }, world: 'ISOLATED', func: () => ({ mode: __gpPanelRoot.querySelector('strong').textContent, checked: [...__gpPanelRoot.querySelectorAll('input')].every(e => e.checked) }) }), panelTabId);
+        assert.deepEqual(result.result, { mode: mode === 'visual' ? 'Visual only' : 'Live control', checked: true });
+      }
       for (const embedded of [false, true]) {
         await page.goto(`${base}/${embedded ? 'questionnaire-frame' : 'questionnaire'}`);
         await visualWorkflow(page, viewer, hostUi, call, () => videoReady(viewer, page.url()), { embedded, pair });

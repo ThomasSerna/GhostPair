@@ -47,6 +47,21 @@ describe('TabCapture authorization and scoped control', () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); vi.unstubAllGlobals(); });
 
+  it('accepts visibility changes only from the current authorized top document', async () => {
+    const h = harness(); await h.share();
+    const message = { ...h.target(), controlRevision: 0 };
+    const sender = { frameId: 0, documentId: message.documentId, tab: { id: message.tabId } } as chrome.runtime.MessageSender;
+    expect(() => h.capture.validateHostPage(message, sender)).not.toThrow();
+    for (const patch of [{ frameId: 1 }, { documentId: 'old' }, { tab: { id: 13 } }]) expect(() => h.capture.validateHostPage(message, { ...sender, ...patch } as chrome.runtime.MessageSender)).toThrow();
+    for (const patch of [{ generation: -1 }, { captureId: 'old' }, { controlRevision: 1 }]) expect(() => h.capture.validateHostPage({ ...message, ...patch }, sender)).toThrow();
+    await h.capture.setControl(false);
+    expect(() => h.capture.validateHostPage({ ...h.target(), controlRevision: 0 }, sender)).not.toThrow();
+    await h.capture.setPaused(true);
+    expect(() => h.capture.validateHostPage(message, sender)).toThrow();
+    await h.capture.stop();
+    expect(() => h.capture.validateHostPage(message, sender)).toThrow();
+  });
+
   it('releases current input without activation and ignores old release targets', async () => {
     const h = harness(); await h.share();
     const original = h.target();
@@ -154,7 +169,7 @@ describe('TabCapture authorization and scoped control', () => {
     const h = harness(); await h.share(); const presentation = h.current(), target = h.target();
     const waiting = Promise.withResolvers<any>(); h.browser.tabs.get.mockReturnValueOnce(waiting.promise);
     const pending = h.capture.execute({ type: 'text', controlRevision: 0, ...target, text: 'old preview' });
-    await h.capture.configure({ mode: 'live', revision: 1, preferences: { notices: false, clickAnimations: true, text: { duration: 'persistent', seconds: 10 }, other: { duration: 'persistent', seconds: 3 }, accentColor: '#7871e8' } });
+    await h.capture.configure({ mode: 'live', revision: 1, preferences: { notices: false, clickAnimations: true, showInteractions: true, text: { duration: 'persistent', seconds: 10 }, other: { duration: 'persistent', seconds: 3 }, accentColor: '#7871e8' } });
     waiting.resolve(h.tabs.get(12)); await expect(pending).rejects.toThrow('outside');
     expect(h.current()).toBe(presentation); expect(h.commands()).toHaveLength(0);
     await expect(h.capture.execute({ type: 'text', ...target, controlRevision: 0, text: 'late' })).rejects.toThrow('mode changed');

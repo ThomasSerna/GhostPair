@@ -20,7 +20,7 @@ export class TabCapture {
   private paused = false;
   private control = true;
   private configuring = false;
-  private configuration: ControlConfiguration = { mode: 'visual', revision: 0, preferences: { notices: false, clickAnimations: true, text: { duration: 'persistent', seconds: 10 }, other: { duration: 'persistent', seconds: 3 }, accentColor: '#7871e8' } };
+  private configuration: ControlConfiguration = { mode: 'visual', revision: 0, preferences: { notices: false, clickAnimations: true, showInteractions: true, text: { duration: 'persistent', seconds: 10 }, other: { duration: 'persistent', seconds: 3 }, accentColor: '#7871e8' } };
   private tabs: TabInfo[] = [];
   private sources = new Map<number, string>();
   private acquiring = new Map<number, { canceled: boolean }>();
@@ -129,6 +129,10 @@ export class TabCapture {
   }
   localVisual(message: Record<string, any>, sender: chrome.runtime.MessageSender) {
     return this.frameControl.localVisual(message, sender);
+  }
+  validateHostPage(message: Record<string, any>, sender: chrome.runtime.MessageSender) {
+    const p = this.presentation;
+    if (!p || this.paused || sender.frameId !== 0 || sender.tab?.id !== p.tabId || sender.documentId !== p.documentId || message.captureId !== p.captureId || message.generation !== p.generation || message.controlRevision !== this.configuration.revision) throw new Error('The shared page changed. Try again.');
   }
   refresh(): Promise<void> {
     const work = this.serial.then(() => this.refreshNow());

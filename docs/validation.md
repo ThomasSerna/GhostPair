@@ -1,5 +1,11 @@
 # GhostPair validation
 
+## On-page host controls: September 27, 2026
+
+All **140 unit tests in 15 files**, workspace TypeScript checks and production compilation passed. The added checks cover default visibility and migration, preference persistence in both modes, propagation across authorized frames, and rejection of changes from stale or unauthorized host documents.
+
+`npm run test:visual` passed in Chrome and Edge, including the collapsible panel, mode updates, trusted local toggles, retained simulated answers while hidden, suppressed circles, errors, narrow layout and cleanup. Remote pointer/keyboard input and untrusted events cannot change panel preferences. Desktop and narrow panel screenshots were visually inspected. The native **Chrome→Edge** session suite also passed, including real panel-to-background preference updates in both modes and synchronization with the extension menu, followed by root/embedded simulations, live questionnaires, navigation and session lifecycle checks. Evidence is in `tests/browser/.artifacts/host-panel-*.png`, `visual-results.json` and the smoke results. No production deployment was performed.
+
 ## Audit cleanup: September 22, 2026
 
 All **138 unit tests in 15 files**, workspace TypeScript checks and production builds passed after the audit cleanup. Seven deferred-promise helpers now use `Promise.withResolvers`; icon generation uses Node's `crc32` and produces byte-for-byte identical PNGs at all four sizes. The removed clipboard-schema test exercised an unused wire format; the active clipboard UTF-8 limit and incoming-data tests remain.

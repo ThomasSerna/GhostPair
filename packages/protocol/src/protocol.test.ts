@@ -4,12 +4,15 @@ describe('network boundaries', () => {
   it('migrates click animations on by default and preserves an explicit opt-out', () => {
     for (const saved of [{}, { notices: true, duration: 'temporary', seconds: 4 }, { text: { seconds: 10 }, other: { seconds: 3 } }]) {
       expect(VisualPreferencesSchema.parse(saved).clickAnimations).toBe(true);
+      expect(VisualPreferencesSchema.parse(saved).showInteractions).toBe(true);
+      expect(VisualPreferencesSchema.parse({ ...saved, showInteractions: false }).showInteractions).toBe(false);
       expect(VisualPreferencesSchema.parse({ ...saved, clickAnimations: false }).clickAnimations).toBe(false);
     }
     for (const clickAnimations of ['false', 0, null]) expect(VisualPreferencesSchema.safeParse({ clickAnimations }).success).toBe(false);
+    for (const showInteractions of ['false', 0, null]) expect(VisualPreferencesSchema.safeParse({ showInteractions }).success).toBe(false);
   });
   it('defaults to silent persistent previews and bounds their configurable lifetime', () => {
-    expect(VisualPreferencesSchema.parse({})).toEqual({ notices: false, clickAnimations: true, text: { duration: 'persistent', seconds: 10 }, other: { duration: 'persistent', seconds: 3 }, accentColor: '#7871e8' });
+    expect(VisualPreferencesSchema.parse({})).toEqual({ notices: false, clickAnimations: true, showInteractions: true, text: { duration: 'persistent', seconds: 10 }, other: { duration: 'persistent', seconds: 3 }, accentColor: '#7871e8' });
     for (let tenths = 1; tenths <= 300; tenths++) expect(VisualPreferencesSchema.safeParse({ text: { seconds: tenths / 10 }, other: { seconds: tenths / 10 } }).success).toBe(true);
     for (const seconds of [-1, 0, 0.01, 0.25, 30.1, 31, Infinity, NaN]) expect(VisualPreferencesSchema.safeParse({ text: { seconds } }).success).toBe(false);
     expect(ControlCommandSchema.safeParse({ type: 'tab.create', url: 'https://example.com' }).success).toBe(false);

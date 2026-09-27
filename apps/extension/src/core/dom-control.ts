@@ -1,7 +1,7 @@
 import type { ControlCommand, ControlConfiguration, VisualActivity, VisualCategory } from '@ghostpair/protocol';
 
 /** Self-contained: Chrome serializes this function into the page's ISOLATED world. */
-export function installDomControl(captureId: string, generation: number, root = true, configuration: ControlConfiguration = { mode: 'visual', revision: 0, preferences: { notices: false, clickAnimations: true, text: { duration: 'persistent', seconds: 10 }, other: { duration: 'persistent', seconds: 3 }, accentColor: '#7871e8' } }) {
+export function installDomControl(captureId: string, generation: number, root = true, configuration: ControlConfiguration = { mode: 'visual', revision: 0, preferences: { notices: false, clickAnimations: true, showInteractions: true, text: { duration: 'persistent', seconds: 10 }, other: { duration: 'persistent', seconds: 3 }, accentColor: '#7871e8' } }) {
   type Context = { captureId: string; generation: number; ready: boolean; geometry: string; dispose: () => void; release: () => void; configure: (value: ControlConfiguration) => void };
   const scope = globalThis as typeof globalThis & { __ghostpairControl?: Context };
   const geometry = () => ({ viewportWidth: innerWidth, viewportHeight: innerHeight, offsetLeft: visualViewport?.offsetLeft ?? 0, offsetTop: visualViewport?.offsetTop ?? 0, scale: visualViewport?.scale ?? 1 });
@@ -81,30 +81,77 @@ export function installDomControl(captureId: string, generation: number, root = 
   const halos: { node: HTMLDivElement; x: number; y: number; until: number }[] = [];
   const focusReplica: { replica?: Replica } = {};
   const styleCache = new Map<Document | ShadowRoot, { at: number; css: string; sheet: CSSStyleSheet; complete: boolean; version: number }>();
+  let panel: HTMLDivElement | undefined, panelMode: HTMLElement | undefined, panelHint: HTMLElement | undefined;
+  const visibilityInputs = new Map<'showInteractions' | 'clickAnimations', HTMLInputElement>();
+
+  function updatePanel() {
+    if (panelMode) panelMode.textContent = configuration.mode === 'visual' ? 'Visual only' : 'Live control';
+    if (panelHint) panelHint.textContent = configuration.mode === 'visual' ? 'Visibility applies to the shared view.' : 'Real page changes remain visible.';
+    for (const [preference, input] of visibilityInputs) input.checked = configuration.preferences[preference] !== false;
+  }
+  function installPanel() {
+    if (!root) return;
+    panel = document.createElement('div'); panel.dataset.ghostpairPanel = '';
+    panel.style.cssText = 'all:initial!important;position:fixed!important;right:12px!important;top:12px!important;z-index:2147483647!important;max-width:calc(100vw - 24px)!important;';
+    const panelRoot = panel.attachShadow({ mode: 'closed' });
+    const style = document.createElement('style');
+    style.textContent = ':host{color-scheme:dark}*{box-sizing:border-box}details{font:12px/1.5 system-ui,sans-serif;color:#eef4f0;background:#16251f;border:1px solid #527260;border-radius:10px;box-shadow:0 3px 12px #0003;overflow:hidden}summary{cursor:pointer;padding:8px 12px;white-space:nowrap}strong{color:#b5f0cd;font-weight:600;margin-left:6px}section{padding:0 12px 10px}label{display:flex;align-items:center;gap:8px;cursor:pointer;margin:5px 0}input{margin:0;accent-color:#b5f0cd}small{display:block;max-width:205px;color:#b7c6bd;font:11px/1.4 system-ui}p{margin:6px 0 0;color:#ffb4ab;max-width:205px}p:empty{display:none}:focus-visible{outline:2px solid #b5f0cd;outline-offset:2px}';
+    const details = document.createElement('details');
+    const summary = document.createElement('summary'); summary.append('GhostPair ·');
+    panelMode = document.createElement('strong'); panelMode.setAttribute('role', 'status'); summary.append(panelMode);
+    const section = document.createElement('section'); section.setAttribute('aria-label', 'Interaction visibility');
+    const error = document.createElement('p'); error.setAttribute('role', 'alert');
+    for (const [preference, label] of [['showInteractions', 'Show interactions'], ['clickAnimations', 'Click animations']] as const) {
+      const row = document.createElement('label'), input = document.createElement('input'); input.type = 'checkbox';
+      visibilityInputs.set(preference, input); row.append(input, label); section.append(row);
+      input.addEventListener('change', async event => {
+        if (!event.isTrusted) { updatePanel(); return; }
+        const enabled = input.checked;
+        for (const field of visibilityInputs.values()) field.disabled = true;
+        error.textContent = '';
+        try {
+          const reply = await chrome.runtime.sendMessage({ target: 'background', type: 'dom.preferences', captureId: context.captureId, generation: context.generation, controlRevision: configuration.revision, preference, enabled });
+          if (!reply?.ok) throw new Error(reply?.error ?? 'Could not update visibility. Try again.');
+        } catch (reason) { error.textContent = reason instanceof Error ? reason.message : 'Could not update visibility. Try again.'; }
+        finally { updatePanel(); for (const field of visibilityInputs.values()) field.disabled = false; }
+      });
+    }
+    panelHint = document.createElement('small'); section.append(panelHint, error);
+    details.append(summary, section); panelRoot.append(style, details);
+    // Local controls must never become targets of synthetic remote input.
+    for (const type of ['click', 'pointerdown', 'pointerup', 'keydown', 'keyup', 'input', 'change']) panelRoot.addEventListener(type, event => event.stopPropagation());
+    updatePanel(); document.documentElement.append(panel);
+  }
+  function updateVisibility() {
+    layer?.style.setProperty('display', configuration.preferences.showInteractions === false ? 'none' : 'block', 'important');
+  }
 
   function configure(value: ControlConfiguration) {
     if (value.revision < configuration.revision) throw new Error('The interaction mode changed.');
     if (value.revision !== configuration.revision || value.mode !== configuration.mode) { release(); clearVisual(); }
     configuration = value;
     updateAccent();
-    if (value.preferences.clickAnimations === false) { for (const halo of halos) halo.node.remove(); halos.length = 0; scheduleDraw(); }
-    if (!value.preferences.notices) { notice?.remove(); notice = undefined; noticeUntil = 0; }
+    if (value.preferences.showInteractions === false) release();
+    updateVisibility(); updatePanel();
+    if (value.preferences.clickAnimations === false || value.preferences.showInteractions === false) { for (const halo of halos) halo.node.remove(); halos.length = 0; scheduleDraw(); }
+    if (!value.preferences.notices || value.preferences.showInteractions === false) { notice?.remove(); notice = undefined; noticeUntil = 0; }
   }
   function updateAccent() {
     layer?.style.setProperty('--gp-accent', configuration.preferences.accentColor ?? '#7871e8');
   }
   function ensureLayer() {
-    if (layer) { if (!layer.isConnected) document.documentElement.append(layer); return; }
+    if (layer) { if (!layer.isConnected) document.documentElement.insertBefore(layer, panel?.isConnected ? panel : null); return; }
     layer = document.createElement('div');
     layer.dataset.ghostpairVisual = '';
     layer.setAttribute('aria-label', 'GhostPair simulated fields');
     layer.style.cssText = 'all:initial!important;position:fixed!important;inset:0!important;width:100vw!important;height:100vh!important;z-index:2147483647!important;pointer-events:none!important;overflow:hidden!important;contain:strict!important;';
     updateAccent();
+    updateVisibility();
     shadow = layer.attachShadow({ mode: 'closed' });
     const style = document.createElement('style');
     style.textContent = ':host{pointer-events:none!important}*{box-sizing:border-box;pointer-events:none!important;user-select:none}div{position:absolute;margin:0}input[data-gp-editor],textarea[data-gp-editor]{box-sizing:border-box;pointer-events:auto!important;user-select:text!important;position:absolute;margin:0;resize:none;outline:none}input[data-gp-editor]::selection,textarea[data-gp-editor]::selection{background:var(--gp-accent);color:white}';
     shadow.append(style);
-    document.documentElement.append(layer);
+    document.documentElement.insertBefore(layer, panel?.isConnected ? panel : null);
   }
   function node() { ensureLayer(); const result = document.createElement('div'); shadow!.append(result); return result; }
   function scheduleDraw() { if (drawing === undefined) drawing = requestAnimationFrame(draw); }
@@ -523,13 +570,13 @@ export function installDomControl(captureId: string, generation: number, root = 
   }
   function showNotice(kind: string) {
     const now = performance.now();
-    if (!root || !configuration.preferences.notices || now - lastNotice < 3000 || !['click', 'typing'].includes(kind)) return;
+    if (!root || !configuration.preferences.notices || configuration.preferences.showInteractions === false || now - lastNotice < 3000 || !['click', 'typing'].includes(kind)) return;
     notice ??= node(); notice.textContent = kind === 'typing' ? 'Simulated typing' : 'Simulated click';
     notice.style.cssText = 'position:fixed;right:12px;bottom:12px;max-width:220px;padding:5px 8px;border-radius:5px;background:rgba(30,30,38,.82);color:#fff;font:11px/14px system-ui;white-space:nowrap;';
     noticeUntil = now + 1500; lastNotice = now; scheduleDraw();
   }
   function halo(x: number, y: number) {
-    if (configuration.preferences.clickAnimations === false) return;
+    if (configuration.preferences.clickAnimations === false || configuration.preferences.showInteractions === false) return;
     const dot = node(); dot.style.cssText = `left:${x - 15}px;top:${y - 15}px;width:30px;height:30px;border:2px solid var(--gp-accent);border-radius:50%;background:color-mix(in srgb,var(--gp-accent) 12%,transparent);`;
     dot.dataset.gpClick = '';
     halos.push({ node: dot, x, y, until: performance.now() + 500 }); scheduleDraw();
@@ -818,6 +865,7 @@ export function installDomControl(captureId: string, generation: number, root = 
 
   function targetAt(x: number, y: number): Element | null {
     let element = document.elementFromPoint(x, y);
+    if (element === panel) return null;
     if (element === layer) { const inside = shadow?.elementFromPoint(x, y); return inside ? editors.get(inside) ?? null : null; }
     while (element?.shadowRoot) {
       const inner = element.shadowRoot.elementFromPoint(x, y);
@@ -829,6 +877,7 @@ export function installDomControl(captureId: string, generation: number, root = 
   function focused(): Element | null {
     if (configuration.mode === 'visual') return virtualFocus?.isConnected ? virtualFocus : null;
     let element = document.activeElement;
+    if (element === panel) return null;
     while (element?.shadowRoot?.activeElement) element = element.shadowRoot.activeElement;
     return element;
   }
@@ -960,6 +1009,7 @@ export function installDomControl(captureId: string, generation: number, root = 
   }
   function execute(command: ControlCommand) {
     if (command.controlRevision !== configuration.revision) throw new Error('The interaction mode changed.');
+    if ('x' in command && document.elementFromPoint(command.x, command.y) === panel) { release(); return; }
     if (configuration.mode === 'visual' && command.type !== 'wheel') {
       const kind = executeVisual(command) as VisualActivity['kind'] | undefined;
       return kind ? { category: categoryFor(virtualFocus), kind } satisfies VisualActivity : undefined;
@@ -981,6 +1031,7 @@ export function installDomControl(captureId: string, generation: number, root = 
         const clicked = downFields.button === fields.button ? commonAncestor(down, element) : null;
         down = null; suppressMouse = false;
         if (clicked && !disabled(clicked) && !disabled(element)) {
+          halo(command.x, command.y);
           if (command.button === 'left') {
             clicked.dispatchEvent(new MouseEvent('click', fields));
             if (command.clickCount === 2) clicked.dispatchEvent(new MouseEvent('dblclick', { ...fields, detail: 2 }));
@@ -1097,6 +1148,7 @@ export function installDomControl(captureId: string, generation: number, root = 
   }
   function dispose() {
     release(); clearVisual(); chrome.runtime.onMessage.removeListener(listener);
+    panel?.remove();
     window.removeEventListener('pointerup', endSelection, true); window.removeEventListener('pointercancel', endSelection, true);
     for (const type of ['dragenter', 'dragover', 'drop']) window.removeEventListener(type, dragTarget as EventListener, true);
     window.removeEventListener('resize', changed); visualViewport?.removeEventListener('resize', changed); visualViewport?.removeEventListener('scroll', changed);
@@ -1106,5 +1158,6 @@ export function installDomControl(captureId: string, generation: number, root = 
   window.addEventListener('pointerup', endSelection, true); window.addEventListener('pointercancel', endSelection, true);
   for (const type of ['dragenter', 'dragover', 'drop']) window.addEventListener(type, dragTarget as EventListener, true);
   window.addEventListener('resize', changed); visualViewport?.addEventListener('resize', changed); visualViewport?.addEventListener('scroll', changed);
+  installPanel();
   return geometry();
 }

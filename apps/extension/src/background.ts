@@ -106,6 +106,12 @@ async function stop(reason?: string): Promise<void> {
 async function permissions(host: boolean, clipboard: boolean) { return chrome.permissions.contains({ origins: host ? ['http://*/*', 'https://*/*'] : [`${new URL(state.settings.signalingUrl).origin}/*`], ...(clipboard ? { permissions: ['clipboardRead', 'clipboardWrite'] } : {}) }); }
 async function action(message: Record<string, any>, sender: chrome.runtime.MessageSender): Promise<AppState> {
   switch (message.type) {
+    case 'dom.preferences': {
+      if (state.role !== 'host') throw new Error('Only the host can change interaction visibility.');
+      capture.validateHostPage(message, sender);
+      if (!['showInteractions', 'clickAnimations'].includes(message.preference) || typeof message.enabled !== 'boolean') throw new Error('Invalid visibility preference.');
+      return action({ type: 'ui.visual.preferences', preferences: { ...visualPreferences, [message.preference]: message.enabled } }, sender);
+    }
     case 'ui.notification.dismiss': state = dismissNotification(state, String(message.id)); broadcast(); return state;
     case 'ui.viewer.open': await openViewer(); return state;
     case 'ui.settings.reset': case 'ui.settings.save': {
@@ -216,7 +222,7 @@ async function fromTransport(message: Record<string, any>) {
 chrome.runtime.onMessage.addListener((message, sender, respond) => {
   if (sender.id !== chrome.runtime.id || message?.target !== 'background') return;
   const fromOffscreen = pageUrl(sender.url) === chrome.runtime.getURL('offscreen.html'), fromViewer = isViewer(sender), fromPopup = pageUrl(sender.url) === chrome.runtime.getURL('popup.html');
-  if (!fromOffscreen && !fromViewer && !fromPopup && !['dom.geometry', 'dom.visual'].includes(message.type)) return;
+  if (!fromOffscreen && !fromViewer && !fromPopup && !['dom.geometry', 'dom.visual', 'dom.preferences'].includes(message.type)) return;
   void (async () => {
     await ready;
     if (message.type === 'dom.visual') {
@@ -231,7 +237,9 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
       if (!fromViewer || sender.tab?.id !== viewerTabId || state.role !== 'guest' || !state.clipboardEnabled || !state.remoteClipboardEnabled || state.paused || state.status !== 'connected') throw new Error('Clipboard sharing is disabled.');
       return await toOffscreen(message.type === 'ui.clipboard.read' ? 'clipboard.read' : 'clipboard.write', { text: message.text });
     }
-    const work = mutation.then(() => action(message, sender)); mutation = work.catch(() => undefined); return { ok: true, state: await work };
+    const work = mutation.then(() => action(message, sender)); mutation = work.catch(() => undefined);
+    const result = await work;
+    return message.type === 'dom.preferences' ? { ok: true } : { ok: true, state: result };
   })().then(respond).catch(error => respond({ ok: false, error: error instanceof Error ? error.message : 'Could not complete the operation.' }));
   return true;
 });
