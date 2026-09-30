@@ -1,5 +1,7 @@
 # GhostPair
 
+Visit the [GhostPair introduction](https://thomasserna.github.io/GhostPair/) for a quick preview, installation steps, and downloads.
+
 Authorized collaboration between two browsers: share tabs, control basic page interactions, manage tabs, and synchronize clipboard text. A Manifest V3 extension for Chrome and Edge on Windows.
 
 The host starts each session from the extension, chooses a password, and authorizes each shared tab locally. The guest enters the host's fixed address and password in the full-page connection screen. Video, control, and clipboard text travel directly over WebRTC. The server authenticates and coordinates the connection; STUN helps establish a direct route. There is no TURN relay or automatic reconnection after restarting the browser.

@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Browse together with GhostPair. Share authorized browser tabs, preview interactions, and collaborate directly between Chrome and Edge on Windows.">
+  <meta name="theme-color" content="#101918">
+  <title>GhostPair · Browse together.</title>
+  <link rel="icon" href="assets/icon.png" type="image/png">
+  <link rel="stylesheet" href="assets/site.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="site-header wrap">
+    <a class="brand" href="#main" aria-label="GhostPair home">
+      <svg viewBox="0 0 40 40" aria-hidden="true"><rect x="1" y="1" width="38" height="38" rx="12" fill="#123638"/><path d="M16 12h-2a7 7 0 0 0 0 14h7a7 7 0 0 0 0-14h-2M24 28h2a7 7 0 0 0 0-14h-7a7 7 0 0 0 0 14h2" fill="none" stroke="#9be7bf" stroke-width="2.4" stroke-linecap="round"/></svg>
+      <span>GhostPair<small>CONNECTED, TOGETHER</small></span>
+    </a>
+    <nav aria-label="Main navigation">
+      <a href="#preview">Preview</a>
+      <a href="#install">Install</a>
+      <a href="#how-it-works">How it works</a>
+      <a href="#releases">Releases <span aria-hidden="true">↗</span></a>
+    </nav>
+  </header>
+
+  <main id="main" class="wrap" tabindex="-1">
+    <section class="hero" aria-labelledby="intro-title">
+      <div class="hero-copy">
+        <p class="eyebrow">TWO DEVICES. ONE SHARED SPACE.</p>
+        <h1 id="intro-title">Browse<br>together.</h1>
+        <p class="intro">Share a tab. Work through something together.</p>
+        <p class="muted">GhostPair connects two browsers so you can see the same page, preview clicks and typing, or use live control. Built for Chrome and Edge on Windows.</p>
+        <div class="actions">
+          <a class="button primary" href="https://github.com/ThomasSerna/GhostPair/releases/latest">Download <span aria-hidden="true">↗</span></a>
+          <a class="text-link" href="#preview">Take a look <span aria-hidden="true">↓</span></a>
+        </div>
+        <p class="availability"><span class="connection-dot" aria-hidden="true"></span>Chrome &amp; Edge · Windows</p>
+        <div class="host-note">
+          <h2>Your tab. Your permission.</h2>
+          <p class="muted">You approve each shared tab and stay in control of the session.</p>
+        </div>
+      </div>
+      <figure class="screenshot-card popup-preview">
+        <a href="assets/share-tab.png" target="_blank" rel="noopener" aria-label="Open the sharing screenshot at full size">
+          <img src="assets/share-tab.png" width="398" height="694" alt="GhostPair popup with a session password, sharing consent, and the Share current tab button" fetchpriority="high">
+        </a>
+        <figcaption><span class="eyebrow">01 · SHARE A TAB</span><span>Start from your browser toolbar.</span></figcaption>
+      </figure>
+    </section>
+
+    <section id="preview" class="section" aria-labelledby="preview-title">
+      <div class="section-heading">
+        <p class="eyebrow">A LOOK INSIDE</p>
+        <h2 id="preview-title">Your shared space.</h2>
+        <p class="muted">The extension interface, shown with example data. Select a screenshot to view it full size.</p>
+      </div>
+      <div class="preview-grid">
+        <figure class="screenshot-card connection-preview">
+          <a href="assets/connect-host.png" target="_blank" rel="noopener" aria-label="Open the connection screenshot at full size">
+            <img src="assets/connect-host.png" width="512" height="660" alt="Guest connection screen with the host address, session password, and Connect button" loading="lazy">
+          </a>
+          <figcaption><span class="eyebrow">02 · CONNECT WITH YOUR HOST</span><span>One address and a session password.</span></figcaption>
+        </figure>
+        <figure class="screenshot-card viewer-preview">
+          <a href="assets/remote-viewer.png" target="_blank" rel="noopener" aria-label="Open the remote viewer screenshot at full size">
+            <img src="assets/remote-viewer.png" width="1365" height="900" alt="Connected GhostPair remote viewer showing an example shared page, tab selector, and navigation controls" loading="lazy">
+          </a>
+          <figcaption><span class="eyebrow">03 · BROWSE TOGETHER</span><span>View the approved tab and interact in one place.</span></figcaption>
+        </figure>
+      </div>
+    </section>
+
+    <section id="install" class="section guide" aria-labelledby="install-title">
+      <div class="section-heading">
+        <p class="eyebrow">GET STARTED</p>
+        <h2 id="install-title">Download &amp; install.</h2>
+        <p class="muted">Install GhostPair in both browsers.</p>
+        <a class="text-link" href="https://github.com/ThomasSerna/GhostPair/releases/latest">Get the latest release <span aria-hidden="true">↗</span></a>
+      </div>
+      <ol class="steps">
+        <li><h3>Choose your browser</h3><p>Download the Chrome or Edge ZIP from the release's <strong>Assets</strong>. Choose the extension package, rather than the source code archive.</p></li>
+        <li><h3>Extract the ZIP</h3><p>Keep the extracted folder in a permanent location on your computer.</p></li>
+        <li><h3>Load the extension</h3><p>Open <code>chrome://extensions</code> or <code>edge://extensions</code>. Turn on <strong>Developer mode</strong>, select <strong>Load unpacked</strong>, and choose the folder containing <code>manifest.json</code>.</p></li>
+      </ol>
+    </section>
+
+    <section id="how-it-works" class="section" aria-labelledby="how-title">
+      <div class="section-heading">
+        <p class="eyebrow">FROM YOUR TAB TO THEIRS</p>
+        <h2 id="how-title">How it works.</h2>
+      </div>
+      <div class="how-grid">
+        <article class="info-card"><span class="step-number" aria-hidden="true">01</span><h3>Host a session</h3><p>Open GhostPair on a web page, choose a password, approve sharing, and select <strong>Share current tab</strong>. Share your GhostPair address and password with your guest.</p></article>
+        <article class="info-card"><span class="step-number" aria-hidden="true">02</span><h3>Join and collaborate</h3><p>The guest selects <strong>Connect to a host</strong> and enters those details. Sessions start in <strong>Visual only</strong>: clicks and typing are previews. The host can switch to <strong>Live control</strong> for real page interactions.</p></article>
+        <article class="info-card"><span class="step-number" aria-hidden="true">03</span><h3>Keep control</h3><p>Approve additional tabs individually. Pause sharing, withdraw control, or end the session whenever you need. Scrolling, navigation, and tab management remain live in both modes.</p></article>
+      </div>
+      <p class="session-note"><span class="connection-dot" aria-hidden="true"></span>Video and interactions travel directly over WebRTC. Clipboard text sync is optional and requires both participants. Browser tabs only; no audio or desktop sharing. Some networks cannot establish a direct connection.</p>
+    </section>
+
+    <section id="releases" class="release-panel" aria-labelledby="releases-title">
+      <div><p class="eyebrow">KEEP GHOSTPAIR CLOSE</p><h2 id="releases-title">The latest, together.</h2><p class="muted">Find browser packages and release notes on GitHub. Update both participants together.</p></div>
+      <a class="button secondary" href="https://github.com/ThomasSerna/GhostPair/releases">View releases <span aria-hidden="true">↗</span></a>
+    </section>
+  </main>
+
+  <footer class="site-footer wrap"><span>GhostPair · Connected, together.</span><a href="https://github.com/ThomasSerna/GhostPair">GitHub <span aria-hidden="true">↗</span></a></footer>
+</body>
+</html>
