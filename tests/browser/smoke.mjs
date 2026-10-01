@@ -102,15 +102,37 @@ try {
       };
       await localPanelClick('summary');
       for (const mode of ['live', 'visual']) {
-        await call(hostUi, 'ui.control.mode', { mode });
-        await localPanelClick('input');
+        const previous = await state(hostUi);
+        await localPanelClick('select');
+        await page.keyboard.press(mode === 'live' ? 'End' : 'Home'); await page.keyboard.press('Enter');
+        const changed = await waitState(hostUi, s => s.controlMode === mode && s.controlRevision > previous.controlRevision, 'host panel changes interaction mode');
+        await waitState(viewer, s => s.controlMode === mode && s.controlRevision === changed.controlRevision, 'panel mode reaches guest');
+        await poll(async () => await hostUi.getByLabel('Interaction mode').inputValue() === mode, 'panel mode reaches host menu');
+        await localPanelClick('input[name="showInteractions"]');
         const hidden = await waitState(hostUi, s => !s.visualPreferences.showInteractions, 'host panel hides interactions');
-        await localPanelClick('label:nth-child(2) input');
+        await localPanelClick('input[name="clickAnimations"]');
         await waitState(hostUi, s => !s.visualPreferences.clickAnimations, 'host panel disables circles');
         await call(hostUi, 'ui.visual.preferences', { preferences: { ...hidden.visualPreferences, showInteractions: true, clickAnimations: true } });
         const [result] = await host.worker.evaluate(tabId => chrome.scripting.executeScript({ target: { tabId }, world: 'ISOLATED', func: () => ({ mode: __gpPanelRoot.querySelector('strong').textContent, checked: [...__gpPanelRoot.querySelectorAll('input')].every(e => e.checked) }) }), panelTabId);
         assert.deepEqual(result.result, { mode: mode === 'visual' ? 'Visual only' : 'Live control', checked: true });
       }
+      await click(page, viewer, '#text'); await viewer.keyboard.insertText('Panel-independent preview');
+      await page.locator('[data-ghostpair-visual]').waitFor({ state: 'visible' });
+      const beforeHide = await state(hostUi);
+      await localPanelClick('button');
+      const panelHidden = await waitState(hostUi, s => !s.visualPreferences.showHostPanel, 'host panel hides itself');
+      await page.locator('[data-ghostpair-panel]').waitFor({ state: 'hidden' });
+      assert.deepEqual(panelHidden.visualPreferences, { ...beforeHide.visualPreferences, showHostPanel: false });
+      assert.equal(panelHidden.controlMode, beforeHide.controlMode); assert.equal(panelHidden.controlRevision, beforeHide.controlRevision);
+      assert.equal(panelHidden.controlEnabled, beforeHide.controlEnabled);
+      assert.equal(await page.locator('[data-ghostpair-visual]').isVisible(), true, 'hiding only the panel preserves visible interactions');
+      assert.equal(await page.locator('#text').inputValue(), '', 'hiding the panel does not apply simulated text');
+      assert.equal(await host.worker.evaluate(async () => (await chrome.storage.local.get('visualPreferences')).visualPreferences.showHostPanel), false);
+      await hostUi.getByLabel('Show host panel').click();
+      await waitState(hostUi, s => s.visualPreferences.showHostPanel, 'host menu restores panel');
+      await poll(() => hostUi.getByLabel('Show host panel').isChecked(), 'host menu shows saved panel preference');
+      await page.bringToFront(); await videoReady(viewer, page.url());
+      await page.locator('[data-ghostpair-panel]').waitFor({ state: 'visible' });
       for (const embedded of [false, true]) {
         await page.goto(`${base}/${embedded ? 'questionnaire-frame' : 'questionnaire'}`);
         await visualWorkflow(page, viewer, hostUi, call, () => videoReady(viewer, page.url()), { embedded, pair });
@@ -123,7 +145,12 @@ try {
       }
       const appearance = await host.worker.evaluate(async () => ({ badge: await chrome.action.getBadgeText({}), title: await chrome.action.getTitle({}) }));
       assert.deepEqual(appearance, { badge: '', title: 'GhostPair' });
+      await hostUi.getByLabel('Show host panel').click();
+      await waitState(hostUi, s => !s.visualPreferences.showHostPanel, 'host menu saves hidden panel');
+      await poll(async () => !await hostUi.getByLabel('Show host panel').isChecked(), 'host menu shows saved hidden preference');
+      await page.bringToFront();
       await page.goto(`${base}/one`); await videoReady(viewer, page.url());
+      assert.equal(await page.locator('[data-ghostpair-panel]').isVisible(), false, 'panel stays hidden after navigation');
       await click(page, viewer, '#target'); await poll(() => page.evaluate(() => window.clicks === 1), 'remote click');
       await click(page, viewer, '#text'); await viewer.keyboard.insertText('GhostPair á漢🙂'); await viewer.keyboard.press('Backspace');
       await poll(() => page.locator('#text').inputValue().then(v => v === 'GhostPair á漢'), 'Unicode text and codepoint deletion');
@@ -155,6 +182,7 @@ try {
       assert.equal(pending.presentation, undefined);
       const second = await poll(() => host.context.pages().find(p => p.url() === `${base}/two`), 'new host page');
       await authorize(host, second); await call(hostUi, 'ui.host.authorize'); await videoReady(viewer, second.url());
+      assert.equal(await second.locator('[data-ghostpair-panel]').isVisible(), false, 'panel stays hidden in another authorized tab');
       await click(second, viewer, '#target'); await poll(() => second.evaluate(() => window.clicks === 1), 'second authorized tab');
       await call(viewer, 'ui.command', { command: { controlRevision: (await state(viewer)).controlRevision, type: 'tab.activate', tabId: original.tabId } }); await videoReady(viewer, page.url());
       await click(page, viewer, '#target'); await poll(() => page.evaluate(() => window.clicks === 3), 'return to first authorized tab');
@@ -174,10 +202,12 @@ try {
         await call(hostUi, 'ui.host.start', { password: 'Eight-42', clipboard: false });
         const next = await waitState(hostUi, s => s.status === 'waiting', 'host restarted');
         assert.equal(next.deviceId, waiting.deviceId, 'host identity survives new sessions');
+        assert.equal(next.visualPreferences.showHostPanel, false, 'panel visibility survives new sessions');
         assert.equal(await viewer.getByLabel('Host address', { exact: true }).inputValue(), waiting.deviceId);
         await join(viewer, next.deviceId, 'Eight-42');
         await waitState(viewer, s => s.status === 'connected', 'guest reconnected');
         await videoReady(viewer, second.url());
+        assert.equal(await second.locator('[data-ghostpair-panel]').isVisible(), false, 'new session keeps the panel hidden');
         await call(hostUi, 'ui.control.mode', { mode: 'live' });
         await waitState(viewer, s => s.controlMode === 'live', 'live mode restored');
       };

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { createServer } from 'vite';
 import { chromium } from 'playwright';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 // Visual QA only: Chrome APIs are mocked. Browser integration tests use real extensions.
@@ -13,22 +13,26 @@ try {
   await server.listen();
   browser = await chromium.launch({ executablePath: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe', headless: true });
   const context = await browser.newContext({ viewport: { width: 398, height: 790 } });
-  await context.addInitScript(() => {
-    const state = { role: null, status: 'idle', paused: false, controlEnabled: true, controlMode: 'visual', controlRevision: 0, visualPreferences: { notices: false, clickAnimations: true, text: { duration: 'persistent', seconds: 10 }, other: { duration: 'persistent', seconds: 3 }, accentColor: '#7871e8' }, clipboardEnabled: false, remoteClipboardEnabled: false, tabs: [], generation: 0, settings: { signalingUrl: 'http://127.0.0.1:8787', stunUrls: ['stun:stun.example.com:3478'] } };
+  await context.addInitScript(manifest => {
+    const state = { role: null, status: 'idle', paused: false, controlEnabled: true, controlMode: 'visual', controlRevision: 0, visualPreferences: { notices: false, clickAnimations: true, showInteractions: true, showHostPanel: true, text: { duration: 'persistent', seconds: 10 }, other: { duration: 'persistent', seconds: 3 }, accentColor: '#7871e8' }, clipboardEnabled: false, remoteClipboardEnabled: false, tabs: [], generation: 0, settings: { signalingUrl: 'http://127.0.0.1:8787', stunUrls: ['stun:stun.example.com:3478'] } };
     if (location.search === '?host') { state.role = 'host'; state.status = 'connected'; }
     globalThis.uiState = state;
     const noEvent = { addListener() {}, removeListener() {} };
     globalThis.chrome = {
-      runtime: { id: 'a'.repeat(32), onMessage: noEvent, sendMessage: async message => { if (message.type === 'ui.control.mode') state.controlMode = message.mode; if (message.type === 'ui.visual.preferences') state.visualPreferences = message.preferences; return { ok: true, state: structuredClone(state) }; }, getURL: p => `http://127.0.0.1:5193/${p}`, connect: () => ({ onMessage: noEvent, onDisconnect: noEvent, postMessage() {}, disconnect() {} }) },
+      runtime: { id: 'a'.repeat(32), getManifest: () => manifest, onMessage: noEvent, sendMessage: async message => { if (message.type === 'ui.control.mode') state.controlMode = message.mode; if (message.type === 'ui.visual.preferences') state.visualPreferences = message.preferences; return { ok: true, state: structuredClone(state) }; }, getURL: p => `http://127.0.0.1:5193/${p}`, connect: () => ({ onMessage: noEvent, onDisconnect: noEvent, postMessage() {}, disconnect() {} }) },
       permissions: { request: async () => true }, tabs: { create: async () => ({}) },
     };
-  });
+  }, JSON.parse(readFileSync('apps/extension/public/manifest.json', 'utf8')));
   const page = await context.newPage();
   const errors = []; page.on('pageerror', e => errors.push(e.message));
   await page.goto('http://127.0.0.1:5193/popup.html');
   await page.getByRole('button', { name: 'Share current tab →' }).waitFor();
   await page.screenshot({ path: resolve(output, 'popup.png'), fullPage: true });
   await page.getByRole('button', { name: 'Open settings' }).click();
+  assert.equal(await page.getByLabel('Show host panel').isChecked(), true);
+  await page.getByLabel('Show host panel').uncheck();
+  assert.equal(await page.evaluate(() => uiState.visualPreferences.showHostPanel), false);
+  await page.getByLabel('Show host panel').check();
   assert.equal(await page.getByLabel('Click animations').isChecked(), true);
   await page.getByLabel('Click animations').uncheck();
   assert.equal(await page.evaluate(() => uiState.visualPreferences.clickAnimations), false);
@@ -41,6 +45,10 @@ try {
   await page.goto('http://127.0.0.1:5193/popup.html?host');
   await page.getByLabel('Interaction mode').waitFor();
   assert.equal(await page.getByLabel('Interaction mode').inputValue(), 'visual');
+  await page.getByLabel('Show host panel').uncheck();
+  assert.equal(await page.evaluate(() => uiState.visualPreferences.showHostPanel), false);
+  assert.equal(await page.getByLabel('Show interactions').isChecked(), true);
+  await page.getByLabel('Show host panel').check();
   assert.equal(await page.getByLabel('Simulation notices').isChecked(), false);
   assert.equal(await page.getByLabel('Click animations').isChecked(), true);
   await page.getByLabel('Click animations').uncheck();
@@ -55,7 +63,7 @@ try {
   await textPreferences.getByLabel('Seconds without interaction').blur();
   await page.getByLabel('Simulation notices').check();
   await page.screenshot({ path: resolve(output, 'simulation-temporary.png'), fullPage: true });
-  assert.deepEqual(await page.evaluate(() => uiState.visualPreferences), { notices: true, clickAnimations: true, text: { duration: 'temporary', seconds: 0.5 }, other: { duration: 'temporary', seconds: 3 }, accentColor: '#7871e8' });
+  assert.deepEqual(await page.evaluate(() => uiState.visualPreferences), { notices: true, clickAnimations: true, showInteractions: true, showHostPanel: true, text: { duration: 'temporary', seconds: 0.5 }, other: { duration: 'temporary', seconds: 3 }, accentColor: '#7871e8' });
   for (const invalid of ['0', '0.25', '31', '']) {
     await textPreferences.getByLabel('Seconds without interaction').fill(invalid);
     await textPreferences.getByLabel('Seconds without interaction').blur();

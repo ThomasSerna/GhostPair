@@ -11,6 +11,7 @@ export function SimulationPreferences({ preferences, busy, onChange }: {
   onChange: (preferences: VisualPreferences) => void;
 }) {
   return <>
+    <label className="check"><input type="checkbox" checked={preferences.showHostPanel} disabled={busy} onChange={e => onChange({ ...preferences, showHostPanel: e.target.checked })}/><span>Show host panel<small>Show the controls in the top right of the shared page. Restore a hidden panel from this menu.</small></span></label>
     <label className="check"><input type="checkbox" checked={preferences.showInteractions} disabled={busy} onChange={e => onChange({ ...preferences, showInteractions: e.target.checked })}/><span>Show interactions<small>Show GhostPair previews and animations on the shared page. Real page changes in Live control remain visible.</small></span></label>
     {(['text', 'other'] as const).map(category => <fieldset className="simulation-lifetime" key={category} disabled={busy}>
     <legend>{category === 'text' ? 'Simulated text' : 'Other simulations'}</legend>

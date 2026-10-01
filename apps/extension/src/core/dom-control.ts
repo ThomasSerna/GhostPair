@@ -1,7 +1,7 @@
 import type { ControlCommand, ControlConfiguration, VisualActivity, VisualCategory } from '@ghostpair/protocol';
 
 /** Self-contained: Chrome serializes this function into the page's ISOLATED world. */
-export function installDomControl(captureId: string, generation: number, root = true, configuration: ControlConfiguration = { mode: 'visual', revision: 0, preferences: { notices: false, clickAnimations: true, showInteractions: true, text: { duration: 'persistent', seconds: 10 }, other: { duration: 'persistent', seconds: 3 }, accentColor: '#7871e8' } }) {
+export function installDomControl(captureId: string, generation: number, root = true, configuration: ControlConfiguration = { mode: 'visual', revision: 0, preferences: { notices: false, clickAnimations: true, showInteractions: true, showHostPanel: true, text: { duration: 'persistent', seconds: 10 }, other: { duration: 'persistent', seconds: 3 }, accentColor: '#7871e8' } }) {
   type Context = { captureId: string; generation: number; ready: boolean; geometry: string; dispose: () => void; release: () => void; configure: (value: ControlConfiguration) => void };
   const scope = globalThis as typeof globalThis & { __ghostpairControl?: Context };
   const geometry = () => ({ viewportWidth: innerWidth, viewportHeight: innerHeight, offsetLeft: visualViewport?.offsetLeft ?? 0, offsetTop: visualViewport?.offsetTop ?? 0, scale: visualViewport?.scale ?? 1 });
@@ -82,10 +82,13 @@ export function installDomControl(captureId: string, generation: number, root = 
   const focusReplica: { replica?: Replica } = {};
   const styleCache = new Map<Document | ShadowRoot, { at: number; css: string; sheet: CSSStyleSheet; complete: boolean; version: number }>();
   let panel: HTMLDivElement | undefined, panelMode: HTMLElement | undefined, panelHint: HTMLElement | undefined;
+  let panelSelect: HTMLSelectElement | undefined;
   const visibilityInputs = new Map<'showInteractions' | 'clickAnimations', HTMLInputElement>();
 
   function updatePanel() {
+    panel?.style.setProperty('display', configuration.preferences.showHostPanel === false ? 'none' : 'block', 'important');
     if (panelMode) panelMode.textContent = configuration.mode === 'visual' ? 'Visual only' : 'Live control';
+    if (panelSelect) panelSelect.value = configuration.mode;
     if (panelHint) panelHint.textContent = configuration.mode === 'visual' ? 'Visibility applies to the shared view.' : 'Real page changes remain visible.';
     for (const [preference, input] of visibilityInputs) input.checked = configuration.preferences[preference] !== false;
   }
@@ -95,28 +98,41 @@ export function installDomControl(captureId: string, generation: number, root = 
     panel.style.cssText = 'all:initial!important;position:fixed!important;right:12px!important;top:12px!important;z-index:2147483647!important;max-width:calc(100vw - 24px)!important;';
     const panelRoot = panel.attachShadow({ mode: 'closed' });
     const style = document.createElement('style');
-    style.textContent = ':host{color-scheme:dark}*{box-sizing:border-box}details{font:12px/1.5 system-ui,sans-serif;color:#eef4f0;background:#16251f;border:1px solid #527260;border-radius:10px;box-shadow:0 3px 12px #0003;overflow:hidden}summary{cursor:pointer;padding:8px 12px;white-space:nowrap}strong{color:#b5f0cd;font-weight:600;margin-left:6px}section{padding:0 12px 10px}label{display:flex;align-items:center;gap:8px;cursor:pointer;margin:5px 0}input{margin:0;accent-color:#b5f0cd}small{display:block;max-width:205px;color:#b7c6bd;font:11px/1.4 system-ui}p{margin:6px 0 0;color:#ffb4ab;max-width:205px}p:empty{display:none}:focus-visible{outline:2px solid #b5f0cd;outline-offset:2px}';
+    style.textContent = ':host{color-scheme:dark}*{box-sizing:border-box}details{font:12px/1.5 system-ui,sans-serif;color:#eef4f0;background:#16251f;border:1px solid #527260;border-radius:10px;box-shadow:0 3px 12px #0003;overflow:hidden}summary{cursor:pointer;padding:8px 12px;white-space:nowrap}strong{color:#b5f0cd;font-weight:600;margin-left:6px}section{padding:0 12px 10px}label{display:flex;align-items:center;gap:8px;cursor:pointer;margin:5px 0}label.mode{display:block}input{margin:0;accent-color:#b5f0cd}select,button{font:inherit;color:inherit;background:#21382d;border:1px solid #527260;border-radius:5px;padding:5px 8px;width:100%}select{display:block;margin-top:4px}button{cursor:pointer;margin:8px 0 4px}:disabled{opacity:.6;cursor:wait}small{display:block;max-width:205px;color:#b7c6bd;font:11px/1.4 system-ui}p{margin:6px 0 0;color:#ffb4ab;max-width:205px}p:empty{display:none}:focus-visible{outline:2px solid #b5f0cd;outline-offset:2px}';
     const details = document.createElement('details');
     const summary = document.createElement('summary'); summary.append('GhostPair ·');
     panelMode = document.createElement('strong'); panelMode.setAttribute('role', 'status'); summary.append(panelMode);
-    const section = document.createElement('section'); section.setAttribute('aria-label', 'Interaction visibility');
+    const section = document.createElement('section'); section.setAttribute('aria-label', 'Host controls');
     const error = document.createElement('p'); error.setAttribute('role', 'alert');
+    const controls: (HTMLInputElement | HTMLSelectElement | HTMLButtonElement)[] = [];
+    async function changePanel(event: Event, message: object) {
+      if (!event.isTrusted) { updatePanel(); return; }
+      for (const field of controls) field.disabled = true;
+      error.textContent = '';
+      try {
+        const reply = await chrome.runtime.sendMessage({ target: 'background', captureId: context.captureId, generation: context.generation, controlRevision: configuration.revision, ...message });
+        if (!reply?.ok) throw new Error(reply?.error ?? 'Could not update host controls. Try again.');
+      } catch (reason) { error.textContent = reason instanceof Error ? reason.message : 'Could not update host controls. Try again.'; }
+      finally { updatePanel(); for (const field of controls) field.disabled = false; }
+    }
+    const modeLabel = document.createElement('label'); modeLabel.className = 'mode'; modeLabel.append('Interaction mode');
+    panelSelect = document.createElement('select');
+    for (const [value, label] of [['visual', 'Visual only'], ['live', 'Live control']] as const) {
+      const option = document.createElement('option'); option.value = value; option.textContent = label; panelSelect.append(option);
+    }
+    panelSelect.addEventListener('change', event => void changePanel(event, { type: 'dom.control.mode', mode: panelSelect!.value }));
+    controls.push(panelSelect); modeLabel.append(panelSelect); section.append(modeLabel);
     for (const [preference, label] of [['showInteractions', 'Show interactions'], ['clickAnimations', 'Click animations']] as const) {
       const row = document.createElement('label'), input = document.createElement('input'); input.type = 'checkbox';
+      input.name = preference;
       visibilityInputs.set(preference, input); row.append(input, label); section.append(row);
-      input.addEventListener('change', async event => {
-        if (!event.isTrusted) { updatePanel(); return; }
-        const enabled = input.checked;
-        for (const field of visibilityInputs.values()) field.disabled = true;
-        error.textContent = '';
-        try {
-          const reply = await chrome.runtime.sendMessage({ target: 'background', type: 'dom.preferences', captureId: context.captureId, generation: context.generation, controlRevision: configuration.revision, preference, enabled });
-          if (!reply?.ok) throw new Error(reply?.error ?? 'Could not update visibility. Try again.');
-        } catch (reason) { error.textContent = reason instanceof Error ? reason.message : 'Could not update visibility. Try again.'; }
-        finally { updatePanel(); for (const field of visibilityInputs.values()) field.disabled = false; }
-      });
+      controls.push(input);
+      input.addEventListener('change', event => void changePanel(event, { type: 'dom.preferences', preference, enabled: input.checked }));
     }
-    panelHint = document.createElement('small'); section.append(panelHint, error);
+    const hide = document.createElement('button'); hide.type = 'button'; hide.textContent = 'Hide panel'; controls.push(hide);
+    hide.addEventListener('click', event => void changePanel(event, { type: 'dom.preferences', preference: 'showHostPanel', enabled: false }));
+    const restoreHint = document.createElement('small'); restoreHint.textContent = 'Show it again from the GhostPair extension menu.';
+    panelHint = document.createElement('small'); section.append(panelHint, hide, restoreHint, error);
     details.append(summary, section); panelRoot.append(style, details);
     // Local controls must never become targets of synthetic remote input.
     for (const type of ['click', 'pointerdown', 'pointerup', 'keydown', 'keyup', 'input', 'change']) panelRoot.addEventListener(type, event => event.stopPropagation());

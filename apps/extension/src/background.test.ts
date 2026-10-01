@@ -41,6 +41,7 @@ async function harness(stored: Record<string, unknown> = {}) {
   const send = (type: string, fields: object = {}, source: 'popup' | 'offscreen' | 'viewer' = 'popup', tabId = 9) => new Promise<any>(resolve => {
     runtime.onMessage.emit({ target: 'background', type, ...fields }, { id: runtime.id, url: runtime.getURL(`${source}.html`), ...(source !== 'offscreen' ? { tab: { id: tabId, windowId: 7 } } : {}) }, resolve);
   });
+  const sendPage = (type: string, fields: object = {}) => new Promise<any>(resolve => runtime.onMessage.emit({ target: 'background', type, ...fields }, { id: runtime.id, url: 'https://example.com', frameId: 0, documentId: 'document', tab: { id: 12 } }, resolve));
   const connectViewer = (id = 9) => {
     const port = {
       name: 'viewer', sender: { id: runtime.id, url: runtime.getURL('viewer.html'), tab: { id, windowId: 7 } }, onMessage: event(), onDisconnect: event(),
@@ -52,24 +53,26 @@ async function harness(stored: Record<string, unknown> = {}) {
   };
   await send('ui.status');
   const hasOffscreenMessage = (type: string) => runtime.sendMessage.mock.calls.some(([message]) => message.type === type);
-  return { stored, browser, runtime, send, connectViewer, registered, hasOffscreenMessage };
+  return { stored, browser, runtime, send, sendPage, connectViewer, registered, hasOffscreenMessage };
 }
 afterEach(() => vi.unstubAllGlobals());
 
 describe('background connection ownership and settings', () => {
   it('saves only allowed visibility preferences from the authorized host panel in either mode', async () => {
     const h = await harness();
-    const send = (fields: object) => new Promise<any>(resolve => h.runtime.onMessage.emit({ target: 'background', type: 'dom.preferences', ...fields }, { id: h.runtime.id, url: 'https://example.com', frameId: 0, documentId: 'document', tab: { id: 12 } }, resolve));
+    const send = (fields: object) => h.sendPage('dom.preferences', fields);
     expect((await send({ preference: 'showInteractions', enabled: false })).ok).toBe(false);
     await h.send('ui.host.start', { password: 'Eight-42' });
     for (const mode of ['visual', 'live']) {
       await h.send('ui.control.mode', { mode });
       expect(await send({ preference: 'showInteractions', enabled: false })).toEqual({ ok: true });
       expect(await send({ preference: 'clickAnimations', enabled: false })).toEqual({ ok: true });
-      expect((await h.send('ui.status')).state.visualPreferences).toMatchObject({ showInteractions: false, clickAnimations: false });
-      expect(capture.configure).toHaveBeenLastCalledWith(expect.objectContaining({ mode, preferences: expect.objectContaining({ showInteractions: false, clickAnimations: false }) }));
+      expect(await send({ preference: 'showHostPanel', enabled: false })).toEqual({ ok: true });
+      expect((await h.send('ui.status')).state.visualPreferences).toMatchObject({ showInteractions: false, clickAnimations: false, showHostPanel: false });
+      expect(capture.configure).toHaveBeenLastCalledWith(expect.objectContaining({ mode, preferences: expect.objectContaining({ showInteractions: false, clickAnimations: false, showHostPanel: false }) }));
       expect((await send({ preference: 'notices', enabled: true })).ok).toBe(false);
       expect((await send({ preference: 'showInteractions', enabled: 'false' })).ok).toBe(false);
+      expect((await send({ preference: 'showHostPanel', enabled: 'false' })).ok).toBe(false);
       expect(await send({ preference: 'showInteractions', enabled: true })).toEqual({ ok: true });
     }
     capture.validateHostPage.mockImplementationOnce(() => { throw new Error('The shared page changed.'); });
@@ -77,13 +80,47 @@ describe('background connection ownership and settings', () => {
     expect(capture.validateHostPage).toHaveBeenCalled();
     await h.send('ui.stop');
     const restarted = await harness(h.stored);
-    expect((await restarted.send('ui.status')).state.visualPreferences).toMatchObject({ showInteractions: true, clickAnimations: false });
+    expect((await restarted.send('ui.status')).state.visualPreferences).toMatchObject({ showInteractions: true, clickAnimations: false, showHostPanel: false });
+    const preferences = (await restarted.send('ui.status')).state.visualPreferences;
+    const restored = await restarted.send('ui.visual.preferences', { preferences: { ...preferences, showHostPanel: true } });
+    expect(restored.state.visualPreferences).toEqual({ ...preferences, showHostPanel: true });
+    expect(restarted.stored.visualPreferences).toEqual(restored.state.visualPreferences);
+  });
+  it('changes modes only from the authorized host panel and publishes the effective revision to the guest', async () => {
+    const h = await harness();
+    const target = { captureId: 'capture', generation: 3, controlRevision: 0 };
+    expect((await h.sendPage('dom.control.mode', { ...target, mode: 'live' })).ok).toBe(false);
+    expect(capture.validateHostPage).not.toHaveBeenCalled();
+    await h.send('ui.host.start', { password: 'Eight-42' });
+    await h.send('transport.connected', { sessionId: 'session' }, 'offscreen');
+    for (const [index, mode] of ['live', 'visual'].entries()) {
+      const message = { ...target, controlRevision: index, mode };
+      expect(await h.sendPage('dom.control.mode', message)).toEqual({ ok: true });
+      expect(capture.validateHostPage).toHaveBeenLastCalledWith(expect.objectContaining(message), expect.objectContaining({ frameId: 0, documentId: 'document', tab: { id: 12 } }));
+      expect(capture.configure).toHaveBeenLastCalledWith({ mode, revision: index + 1, preferences: (await h.send('ui.status')).state.visualPreferences });
+      expect((await h.send('ui.status')).state).toMatchObject({ controlMode: mode, controlRevision: index + 1 });
+      expect(h.runtime.sendMessage).toHaveBeenCalledWith(expect.objectContaining({ type: 'session.state', snapshot: expect.objectContaining({ controlMode: mode, controlRevision: index + 1 }) }));
+    }
+    const configurations = capture.configure.mock.calls.length;
+    expect((await h.sendPage('dom.control.mode', { ...target, mode: 'invalid' })).ok).toBe(false);
+    capture.validateHostPage.mockImplementationOnce(() => { throw new Error('The shared page changed. Try again.'); });
+    expect(await h.sendPage('dom.control.mode', { ...target, mode: 'live' })).toEqual({ ok: false, error: 'The shared page changed. Try again.' });
+    expect(capture.configure).toHaveBeenCalledTimes(configurations);
+    const respond = vi.fn();
+    h.runtime.onMessage.emit({ target: 'background', type: 'ui.control.mode', mode: 'live' }, { id: h.runtime.id, url: 'https://example.com', frameId: 0, documentId: 'document', tab: { id: 12 } }, respond);
+    await settled(); expect(respond).not.toHaveBeenCalled();
+    expect(capture.configure).toHaveBeenCalledTimes(configurations);
+    await h.send('ui.stop'); h.connectViewer();
+    await h.send('ui.guest.start', { deviceId: 'a'.repeat(32), password: 'Eight-42' }, 'viewer');
+    expect((await h.sendPage('dom.control.mode', { ...target, mode: 'live' })).ok).toBe(false);
+    expect(capture.configure).toHaveBeenCalledTimes(configurations);
+    await h.send('ui.stop');
   });
   it('persists preview preferences independently and starts each new session in visual mode', async () => {
     const h = await harness();
-    expect((await h.send('ui.status')).state).toMatchObject({ controlMode: 'visual', visualPreferences: { notices: false, clickAnimations: true, showInteractions: true, text: { duration: 'persistent', seconds: 10 }, other: { duration: 'persistent', seconds: 3 } } });
+    expect((await h.send('ui.status')).state).toMatchObject({ controlMode: 'visual', visualPreferences: { notices: false, clickAnimations: true, showInteractions: true, showHostPanel: true, text: { duration: 'persistent', seconds: 10 }, other: { duration: 'persistent', seconds: 3 } } });
     await h.send('ui.host.start', { password: 'Eight-42' });
-    const preferences = { notices: true, clickAnimations: false, showInteractions: true, text: { duration: 'temporary', seconds: 0.5 }, other: { duration: 'temporary', seconds: 0.5 }, accentColor: '#12abcd' };
+    const preferences = { notices: true, clickAnimations: false, showInteractions: true, showHostPanel: true, text: { duration: 'temporary', seconds: 0.5 }, other: { duration: 'temporary', seconds: 0.5 }, accentColor: '#12abcd' };
     const saved = await h.send('ui.visual.preferences', { preferences });
     expect(saved.state.status).toBe('starting');
     expect(saved.state.visualPreferences).toEqual(preferences);
@@ -100,7 +137,7 @@ describe('background connection ownership and settings', () => {
   });
   it('upgrades legacy visual preferences and saves colors before hosting', async () => {
     const legacy = { notices: true, duration: 'temporary', seconds: 12 };
-    const migrated = { notices: true, clickAnimations: true, showInteractions: true, text: { duration: 'temporary', seconds: 12 }, other: { duration: 'temporary', seconds: 12 } };
+    const migrated = { notices: true, clickAnimations: true, showInteractions: true, showHostPanel: true, text: { duration: 'temporary', seconds: 12 }, other: { duration: 'temporary', seconds: 12 } };
     const h = await harness({ visualPreferences: legacy });
     expect((await h.send('ui.status')).state.visualPreferences).toEqual({ ...migrated, accentColor: '#7871e8' });
     const preferences = { ...migrated, text: { duration: 'temporary', seconds: 0.5 }, accentColor: '#abcdef' };

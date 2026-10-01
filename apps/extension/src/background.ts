@@ -109,8 +109,13 @@ async function action(message: Record<string, any>, sender: chrome.runtime.Messa
     case 'dom.preferences': {
       if (state.role !== 'host') throw new Error('Only the host can change interaction visibility.');
       capture.validateHostPage(message, sender);
-      if (!['showInteractions', 'clickAnimations'].includes(message.preference) || typeof message.enabled !== 'boolean') throw new Error('Invalid visibility preference.');
+      if (!['showInteractions', 'clickAnimations', 'showHostPanel'].includes(message.preference) || typeof message.enabled !== 'boolean') throw new Error('Invalid visibility preference.');
       return action({ type: 'ui.visual.preferences', preferences: { ...visualPreferences, [message.preference]: message.enabled } }, sender);
+    }
+    case 'dom.control.mode': {
+      if (state.role !== 'host') throw new Error('Only the host can change the interaction mode.');
+      capture.validateHostPage(message, sender);
+      return action({ type: 'ui.control.mode', mode: message.mode }, sender);
     }
     case 'ui.notification.dismiss': state = dismissNotification(state, String(message.id)); broadcast(); return state;
     case 'ui.viewer.open': await openViewer(); return state;
@@ -222,7 +227,7 @@ async function fromTransport(message: Record<string, any>) {
 chrome.runtime.onMessage.addListener((message, sender, respond) => {
   if (sender.id !== chrome.runtime.id || message?.target !== 'background') return;
   const fromOffscreen = pageUrl(sender.url) === chrome.runtime.getURL('offscreen.html'), fromViewer = isViewer(sender), fromPopup = pageUrl(sender.url) === chrome.runtime.getURL('popup.html');
-  if (!fromOffscreen && !fromViewer && !fromPopup && !['dom.geometry', 'dom.visual', 'dom.preferences'].includes(message.type)) return;
+  if (!fromOffscreen && !fromViewer && !fromPopup && !['dom.geometry', 'dom.visual', 'dom.preferences', 'dom.control.mode'].includes(message.type)) return;
   void (async () => {
     await ready;
     if (message.type === 'dom.visual') {
@@ -239,7 +244,7 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
     }
     const work = mutation.then(() => action(message, sender)); mutation = work.catch(() => undefined);
     const result = await work;
-    return message.type === 'dom.preferences' ? { ok: true } : { ok: true, state: result };
+    return ['dom.preferences', 'dom.control.mode'].includes(message.type) ? { ok: true } : { ok: true, state: result };
   })().then(respond).catch(error => respond({ ok: false, error: error instanceof Error ? error.message : 'Could not complete the operation.' }));
   return true;
 });
