@@ -62,13 +62,14 @@ test('release publication is versioned, bound to its commit and safe to retry', 
   }
   const publish = github => publishRelease({ github, repo, version, sha, directory });
 
-  await t.test('first release, next commit unchanged, then new version', async () => {
+  await t.test('first release without notes, next commit unchanged, then new version with notes', async () => {
     const github = fake();
     await publish(github);
     assert.deepEqual(github.calls.map(call => call[0]), ['create', 'upload', 'upload', 'publish']);
     assert.equal(github.releases[0].target_commitish, sha);
     assert.equal(github.releases[0].tag_name, 'v0.5.0');
     assert.equal(github.releases[0].generate_release_notes, true);
+    assert.match(github.releases[0].body, /^## Install\n\n/);
     assert.match(github.releases[0].body, /Load unpacked/);
     const before = JSON.stringify(github.releases);
     await publishRelease({ github, repo, version, sha: 'b'.repeat(40), directory });
@@ -79,6 +80,11 @@ test('release publication is versioned, bound to its commit and safe to retry', 
     await publishRelease({ github: next, repo, version: '0.5.1', sha, directory });
     assert.equal(next.releases[0].tag_name, 'v0.5.1');
     assert.equal(next.releases[1].tag_name, 'v0.5.0');
+    const notes = (await readFile(new URL('../docs/releases/0.5.1.md', import.meta.url), 'utf8')).trim();
+    assert.equal(next.releases[0].body, `${notes}\n\n${github.releases[0].body}`);
+    assert.match(next.releases[0].body, /Show host panel/);
+    assert.match(next.releases[0].body, /Live control/);
+    assert.equal(next.releases[0].generate_release_notes, true);
   });
   await t.test('interrupted draft resumes without uploading the completed asset again', async () => {
     const github = fake({ failEdge: true });
