@@ -8,6 +8,7 @@
   <title>GhostPair · Browse together.</title>
   <link rel="icon" href="assets/icon.png" type="image/png">
   <link rel="stylesheet" href="assets/site.css">
+  <script src="assets/previews.js" defer></script>
 </head>
 <body>
   <a class="skip-link" href="#main">Skip to content</a>
@@ -41,9 +42,11 @@
           <p class="muted">You approve each shared tab and stay in control of the session.</p>
         </div>
       </div>
-      <figure class="screenshot-card popup-preview">
-        <a href="assets/share-tab.png" target="_blank" rel="noopener" aria-label="Open the sharing screenshot at full size">
-          <img src="assets/share-tab.png" width="398" height="694" alt="GhostPair popup with a session password, sharing consent, and the Share current tab button" fetchpriority="high">
+      <figure class="example-card popup-preview">
+        <a href="assets/previews/share-tab.html" target="_blank" rel="noopener" aria-label="Open the sharing example at full size">
+          <div class="preview-stage" style="aspect-ratio:398/694" aria-hidden="true">
+            <iframe src="assets/previews/share-tab.html" width="398" height="694" title="GhostPair sharing example" sandbox="allow-same-origin" tabindex="-1"></iframe>
+          </div>
         </a>
         <figcaption><span class="eyebrow">01 · SHARE A TAB</span><span>Start from your browser toolbar.</span></figcaption>
       </figure>
@@ -53,18 +56,22 @@
       <div class="section-heading">
         <p class="eyebrow">A LOOK INSIDE</p>
         <h2 id="preview-title">Your shared space.</h2>
-        <p class="muted">The extension interface, shown with example data. Select a screenshot to view it full size.</p>
+        <p class="muted">The extension interface, shown with example data. Select a preview to view it full size.</p>
       </div>
       <div class="preview-grid">
-        <figure class="screenshot-card connection-preview">
-          <a href="assets/connect-host.png" target="_blank" rel="noopener" aria-label="Open the connection screenshot at full size">
-            <img src="assets/connect-host.png" width="512" height="660" alt="Guest connection screen with the host address, session password, and Connect button" loading="lazy">
+        <figure class="example-card connection-preview">
+          <a href="assets/previews/connect-host.html" target="_blank" rel="noopener" aria-label="Open the connection example at full size">
+            <div class="preview-stage" style="aspect-ratio:512/660" aria-hidden="true">
+              <iframe src="assets/previews/connect-host.html" width="512" height="660" title="GhostPair host connection example" sandbox="allow-same-origin" tabindex="-1" loading="lazy"></iframe>
+            </div>
           </a>
           <figcaption><span class="eyebrow">02 · CONNECT WITH YOUR HOST</span><span>One address and a session password.</span></figcaption>
         </figure>
-        <figure class="screenshot-card viewer-preview">
-          <a href="assets/remote-viewer.png" target="_blank" rel="noopener" aria-label="Open the remote viewer screenshot at full size">
-            <img src="assets/remote-viewer.png" width="1365" height="900" alt="Connected GhostPair remote viewer showing an example shared page, tab selector, and navigation controls" loading="lazy">
+        <figure class="example-card viewer-preview">
+          <a href="assets/previews/remote-viewer.html" target="_blank" rel="noopener" aria-label="Open the remote viewer example at full size">
+            <div class="preview-stage" style="aspect-ratio:1365/900" aria-hidden="true">
+              <iframe src="assets/previews/remote-viewer.html" width="1365" height="900" title="GhostPair connected viewer example" sandbox="allow-same-origin" tabindex="-1" loading="lazy"></iframe>
+            </div>
           </a>
           <figcaption><span class="eyebrow">03 · BROWSE TOGETHER</span><span>View the approved tab and interact in one place.</span></figcaption>
         </figure>

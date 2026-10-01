@@ -39,6 +39,8 @@ npm.cmd run package
 
 Packages are written to `dist/packages/`. Production builds default to `https://ghostpair.onrender.com` through the public-only `.env.production`. Use `npm.cmd run package:store` to validate those endpoints and create store packages. Download ready-to-load Chrome and Edge ZIPs from [GitHub Releases](https://github.com/ThomasSerna/GhostPair/releases); unzip, enable Developer mode on the browser's extensions page, and choose **Load unpacked**. Follow [Publishing](docs/publishing.md) for version updates and store submission.
 
+After building, run `node scripts/export-previews.mjs` to refresh the GitHub Pages examples from the extension's actual interface. The exporter checks matching layout and styles, plus page scaling at 375, 768 and 1440 pixels.
+
 ### Continuous integration and releases
 
 Every branch push and pull request runs `npm ci`, workspace type checks, unit tests, a production build and package validation in GitHub Actions. **CI required** succeeds only when all verification completes successfully. Browser and PostgreSQL integration checks remain separate commands.
