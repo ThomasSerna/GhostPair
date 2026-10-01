@@ -1,5 +1,19 @@
 # GhostPair validation
 
+## Host panel options and 0.5.1 packages: October 1, 2026
+
+Workspace TypeScript checks, all **141 Vitest tests in 15 files**, and the **8 Node test results** for CI/release behavior passed. Checks cover default-on and migrated panel visibility, persistence and restoration, host-only mode changes, current-document authorization, minimal page replies and inclusion of versioned release notes.
+
+`npm run test:visual` and `npm run test:frames` passed in Chrome **154.0.8037.59** and Edge **154.0.4258.48**. The panel tests exercise trusted local mode selection, remote pointer/keyboard exclusion, untrusted-event rejection, errors, pending controls, independent hiding with preserved previews, hidden initialization, narrow layout and cleanup. Desktop and narrow panel screenshots were visually inspected.
+
+The complete native **Chrome→Edge** session suite passed on the final 0.5.1 build, including panel mode synchronization with the host menu and guest, Hide panel, restoration through the menu, persistence across navigation, approved tabs and restarted sessions, root/embedded simulations, live questionnaires and session lifecycle checks. Initial runs exposed overly strict label matching and an immediate checkbox-state assertion in the test driver; the driver now waits for saved and rendered state after a real click. No product workaround was needed.
+
+`node scripts/inspect-ui.mjs` passed seven UI scenarios with no page errors, including Show host panel in Settings and the active host menu. Those preference layouts were visually inspected. `node scripts/export-previews.mjs` refreshed the native HTML examples and verified exact geometry/styles, inert controls and scaling at 375, 768 and 1440 pixels. Evidence is under the ignored `tests/browser/.artifacts` directory.
+
+`npm run package:store` passed. Both **0.5.1** ZIPs contain 18 files, Manifest V3, the existing permissions, `https://ghostpair.onrender.com` and external STUN, with no environment files, tests or source maps. Root and all workspace versions match the manifest. Peer protocol 4 is retained.
+
+Before publication, Render Settings showed branch `main`, **Auto-Deploy: After CI Checks Pass** and health-check path `/ready`. Environment contained `DATABASE_URL` and `DATABASE_SSL_MODE`; secret values were not exposed. Both public `/health` and `/ready` returned 200. The existing configuration was preserved.
+
 ## CI and version releases: September 27, 2026
 
 `npm ci`, workspace type checks, all **140 Vitest unit tests**, the **8 Node test results** for CI/release behavior, production compilation with `GHOSTPAIR_STORE_BUILD=1`, and `node scripts/package.mjs --store` passed. Actionlint **1.7.12** validated the workflow. Both ZIPs were inspected: each contains 18 files, Manifest V3 version 0.5.0, the public Render endpoint, and the required extension entrypoints/icons, with no environment files, source maps or tests.

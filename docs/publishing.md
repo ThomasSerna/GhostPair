@@ -2,7 +2,7 @@
 
 ## Delivery status
 
-Release 0.5.0 retains peer protocol 4 and the existing permission set. Both Chrome and Edge are targeted.
+Release 0.5.1 retains peer protocol 4 and the existing permission set. Both Chrome and Edge are targeted.
 
 The repository generates separate Chrome Web Store and Edge Add-ons packages. GitHub Releases distributes downloadable ZIPs automatically; store submission and approval remain separate. Complete the real-browser checks in [Validation](validation.md) and publisher information before submitting to stores.
 
@@ -21,6 +21,8 @@ node --input-type=module -e "import fs from 'node:fs'; const path = 'apps/extens
 
 Commit the updated package files, `package-lock.json` and manifest together on `main`, then push. CI creates the tag and release after verification; no manual tag, personal access token, or version bump on ordinary commits is needed. This does not change branch protection or require a pull request for direct work on `main`.
 
+Write the version's changes in `docs/releases/<version>.md`. The publisher includes those notes before the installation instructions and GitHub's automatic notes. Versions without a notes file retain the installation instructions and automatic notes. [0.5.1 notes](releases/0.5.1.md) cover persistent panel visibility and the on-page interaction mode selector.
+
 Publication is serialized by version. It creates a draft, uploads both verified ZIPs with checksum checks, then publishes. To recover from an interrupted upload, rerun the original **Publish extension release** job while its Actions artifact remains available; matching completed assets are retained. A draft or existing tag from a different commit fails instead of moving the tag or overwriting assets. Fix that original run or publish a new version. Published releases are never modified by reruns. If artifacts have expired, use a new version and a fresh CI run.
 
 ### Install a downloaded ZIP
@@ -37,7 +39,7 @@ Publication is serialized by version. It creates a draft, uploads both verified 
 3. Complete publisher fields in `docs/privacy.html`. Node (and the optional Caddy proxy) serves that page at `https://DOMAIN/privacy`.
 4. Run `npm ci`, `npm run typecheck`, `npm test`, browser checks, PostgreSQL/container checks, and `npm run package:store`. The store command validates the effective Vite production configuration, builds fresh assets, checks the recorded build defaults and produces both ZIPs. It rejects loopback/private-address literals, reserved/placeholder domains, credentialed URLs and non-HTTPS signaling. It checks configuration shape, not whether a domain actually hosts a working service; the public service must be verified separately. `npm run package` remains available for development endpoints.
 5. Register store listings and test both packages before final submission. Every valid Chrome/Edge extension ID is accepted by the server; no server ID configuration is required.
-6. Upload `dist/packages/ghostpair-chrome-0.5.0.zip` and `ghostpair-edge-0.5.0.zip` to the appropriate accounts. Include real screenshots, privacy policy, and contact details. Peer protocol 4 is unchanged; saved addresses and settings survive the update.
+6. Upload `dist/packages/ghostpair-chrome-0.5.1.zip` and `ghostpair-edge-0.5.1.zip` to the appropriate accounts. Include real screenshots, privacy policy, and contact details. Peer protocol 4 is unchanged; saved addresses and settings survive the update.
 7. Give reviewers instructions for connecting two installations. Do not provide a permanent password or an unattended production session.
 
 ## Proposed listing
