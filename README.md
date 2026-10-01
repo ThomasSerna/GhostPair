@@ -114,3 +114,7 @@ Revoking required permissions, canceling native capture, or ending a session sto
 Without TURN, some networks cannot connect. A missing direct route produces an error after 30 seconds. Participants trust signaling to authenticate pairing; this design does not authenticate a participant independently of a compromised signaling server. Both peers must run the same supported protocol version after migration; existing installation identities remain valid.
 
 See [Validation](docs/validation.md) for executed evidence and pending checks, [Architecture](docs/architecture.md) for implementation details, and [Publishing](docs/publishing.md) for store preparation.
+
+## License
+
+GhostPair is licensed under the [MIT License](LICENSE).

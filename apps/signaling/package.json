@@ -1,6 +1,7 @@
 {
   "name": "@ghostpair/signaling",
   "version": "0.5.1",
+  "license": "MIT",
   "private": true,
   "type": "module",
   "engines": {
