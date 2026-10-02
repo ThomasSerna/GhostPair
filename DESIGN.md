@@ -107,7 +107,7 @@ The website has no box shadows. Flat panel color, thin borders, and space separa
 
 Controls have restrained rounded corners. Action links use the control radius; the native selector has a larger outer radius and smaller selected-label corners. Preview links and setup panels use the preview and panel radii. Mode tags are compact rounded rectangles.
 
-Website icons are inline stroke SVGs (20px by default, 16px beside captions and footer links). The existing linked-loop mark retains its established silhouette.
+Website icons are inline stroke SVGs (20px by default, 16px beside captions). Navigation icons use 18px on desktop and 16px on mobile. Repository buttons use the filled GitHub mark at 20px in the header and 16px in the footer. The existing linked-loop mark retains its established silhouette.
 
 ## Components
 
@@ -115,13 +115,15 @@ Website icons are inline stroke SVGs (20px by default, 16px beside captions and 
 
 Primary download links use mint with deep ink text. The installation action reverses those colors. Both share the action typography and spacing in frontmatter; mobile padding is 15px 18px with 13px text. Text links remain mint and gain an underline on hover.
 
+Header and footer repository links share a bordered `.github-button` with the GitHub mark, a 44px minimum height, and the control radius. Hover adds the panel background and mint border.
+
 Keyboard focus is a 2px outline with a 5px offset, changing to deep ink inside the installation field. Preview links use a 6px offset.
 
 ### Native preview selector
 
-A labeled fieldset contains three native radios and their visible labels. The checked radio fills its label with mint. CSS `:has()` displays the corresponding website panel, with the shared view selected initially. Keyboard focus outlines the active radio's visible label with a 3px offset.
+A labeled fieldset contains three native radios and their visible labels in equal grid columns. A mint `::before` indicator slides beneath the checked label with a 300ms `cubic-bezier(.16, 1, .3, 1)` transform transition. CSS `:has()` positions the indicator and displays the corresponding website panel, with the shared view selected initially. Keyboard focus outlines the active radio's visible label with a 3px offset.
 
-Panel revelation uses a 320ms `cubic-bezier(.16, 1, .3, 1)` mask and brightness animation. Reduced motion disables it and switches smooth scrolling to automatic scrolling.
+Panel revelation uses a 320ms `cubic-bezier(.16, 1, .3, 1)` mask and brightness animation. Reduced motion disables the reveal and indicator transition and switches smooth scrolling to automatic scrolling.
 
 ### Preview containers
 
@@ -133,7 +135,7 @@ Compact mint-on-forest labels explain the default mode. The optional label uses 
 
 ### Navigation and disclosure
 
-Header navigation uses small muted links with mint hover and visible keyboard focus. A native `details` disclosure presents connection facts; its SVG chevron rotates when open. The skip link becomes visible on keyboard focus.
+Header navigation groups icon-and-text links inside a bordered panel rail with rounded controls and 44px minimum targets. Mint icons lead each label; Install uses the tag surface and mint text for emphasis. Hover adds the selector-hover surface, and keyboard focus remains visible. The rail fills the second header row on mobile. A native `details` disclosure presents connection facts; its SVG chevron rotates when open. The skip link becomes visible on keyboard focus.
 
 ## Do's and Don'ts
 
