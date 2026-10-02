@@ -1,0 +1,300 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-01T23:58:44.974Z",
+  "title": "Design System: GhostPair Public Website",
+  "extensions": {
+    "colorMeta": {
+      "mint": {
+        "role": "primary",
+        "displayName": "Mint",
+        "tonalRamp": [
+          "oklch(15% 0.0767 158.4)",
+          "oklch(26% 0.0767 158.4)",
+          "oklch(38% 0.0767 158.4)",
+          "oklch(49% 0.0767 158.4)",
+          "oklch(61% 0.0767 158.4)",
+          "oklch(72% 0.0767 158.4)",
+          "oklch(84% 0.0767 158.4)",
+          "oklch(95% 0.0767 158.4)"
+        ]
+      },
+      "mint-hover": {
+        "role": "primary",
+        "displayName": "Mint hover",
+        "tonalRamp": [
+          "oklch(15% 0.0532 159.5)",
+          "oklch(26% 0.0532 159.5)",
+          "oklch(38% 0.0532 159.5)",
+          "oklch(49% 0.0532 159.5)",
+          "oklch(61% 0.0532 159.5)",
+          "oklch(72% 0.0532 159.5)",
+          "oklch(84% 0.0532 159.5)",
+          "oklch(95% 0.0532 159.5)"
+        ]
+      },
+      "canvas": {
+        "role": "neutral",
+        "displayName": "Forest canvas",
+        "tonalRamp": [
+          "oklch(15% 0.0134 187.7)",
+          "oklch(26% 0.0134 187.7)",
+          "oklch(38% 0.0134 187.7)",
+          "oklch(49% 0.0134 187.7)",
+          "oklch(61% 0.0134 187.7)",
+          "oklch(72% 0.0134 187.7)",
+          "oklch(84% 0.0134 187.7)",
+          "oklch(95% 0.0134 187.7)"
+        ]
+      },
+      "panel": {
+        "role": "neutral",
+        "displayName": "Forest panel",
+        "tonalRamp": [
+          "oklch(15% 0.0160 182.6)",
+          "oklch(26% 0.0160 182.6)",
+          "oklch(38% 0.0160 182.6)",
+          "oklch(49% 0.0160 182.6)",
+          "oklch(61% 0.0160 182.6)",
+          "oklch(72% 0.0160 182.6)",
+          "oklch(84% 0.0160 182.6)",
+          "oklch(95% 0.0160 182.6)"
+        ]
+      },
+      "line": {
+        "role": "neutral",
+        "displayName": "Thin forest line",
+        "tonalRamp": [
+          "oklch(15% 0.0198 175.7)",
+          "oklch(26% 0.0198 175.7)",
+          "oklch(38% 0.0198 175.7)",
+          "oklch(49% 0.0198 175.7)",
+          "oklch(61% 0.0198 175.7)",
+          "oklch(72% 0.0198 175.7)",
+          "oklch(84% 0.0198 175.7)",
+          "oklch(95% 0.0198 175.7)"
+        ]
+      },
+      "text": {
+        "role": "neutral",
+        "displayName": "Light text",
+        "tonalRamp": [
+          "oklch(15% 0.0059 170.4)",
+          "oklch(26% 0.0059 170.4)",
+          "oklch(38% 0.0059 170.4)",
+          "oklch(49% 0.0059 170.4)",
+          "oklch(61% 0.0059 170.4)",
+          "oklch(72% 0.0059 170.4)",
+          "oklch(84% 0.0059 170.4)",
+          "oklch(95% 0.0059 170.4)"
+        ]
+      },
+      "muted": {
+        "role": "neutral",
+        "displayName": "Muted text",
+        "tonalRamp": [
+          "oklch(15% 0.0204 167.7)",
+          "oklch(26% 0.0204 167.7)",
+          "oklch(38% 0.0204 167.7)",
+          "oklch(49% 0.0204 167.7)",
+          "oklch(61% 0.0204 167.7)",
+          "oklch(72% 0.0204 167.7)",
+          "oklch(84% 0.0204 167.7)",
+          "oklch(95% 0.0204 167.7)"
+        ]
+      },
+      "ink": {
+        "role": "neutral",
+        "displayName": "Deep ink",
+        "tonalRamp": [
+          "oklch(15% 0.0346 159.6)",
+          "oklch(26% 0.0346 159.6)",
+          "oklch(38% 0.0346 159.6)",
+          "oklch(49% 0.0346 159.6)",
+          "oklch(61% 0.0346 159.6)",
+          "oklch(72% 0.0346 159.6)",
+          "oklch(84% 0.0346 159.6)",
+          "oklch(95% 0.0346 159.6)"
+        ]
+      },
+      "ink-hover": {
+        "role": "neutral",
+        "displayName": "Ink hover",
+        "tonalRamp": [
+          "oklch(15% 0.0468 160.2)",
+          "oklch(26% 0.0468 160.2)",
+          "oklch(38% 0.0468 160.2)",
+          "oklch(49% 0.0468 160.2)",
+          "oklch(61% 0.0468 160.2)",
+          "oklch(72% 0.0468 160.2)",
+          "oklch(84% 0.0468 160.2)",
+          "oklch(95% 0.0468 160.2)"
+        ]
+      },
+      "install-muted": {
+        "role": "neutral",
+        "displayName": "Installation muted",
+        "tonalRamp": [
+          "oklch(15% 0.0496 159.3)",
+          "oklch(26% 0.0496 159.3)",
+          "oklch(38% 0.0496 159.3)",
+          "oklch(49% 0.0496 159.3)",
+          "oklch(61% 0.0496 159.3)",
+          "oklch(72% 0.0496 159.3)",
+          "oklch(84% 0.0496 159.3)",
+          "oklch(95% 0.0496 159.3)"
+        ]
+      },
+      "selector-hover": {
+        "role": "neutral",
+        "displayName": "Selector hover",
+        "tonalRamp": [
+          "oklch(15% 0.0295 163.7)",
+          "oklch(26% 0.0295 163.7)",
+          "oklch(38% 0.0295 163.7)",
+          "oklch(49% 0.0295 163.7)",
+          "oklch(61% 0.0295 163.7)",
+          "oklch(72% 0.0295 163.7)",
+          "oklch(84% 0.0295 163.7)",
+          "oklch(95% 0.0295 163.7)"
+        ]
+      },
+      "tag-surface": {
+        "role": "neutral",
+        "displayName": "Tag surface",
+        "tonalRamp": [
+          "oklch(15% 0.0408 159.5)",
+          "oklch(26% 0.0408 159.5)",
+          "oklch(38% 0.0408 159.5)",
+          "oklch(49% 0.0408 159.5)",
+          "oklch(61% 0.0408 159.5)",
+          "oklch(72% 0.0408 159.5)",
+          "oklch(84% 0.0408 159.5)",
+          "oklch(95% 0.0408 159.5)"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "display": {
+        "displayName": "Display",
+        "purpose": "Main website headline; mobile uses clamp(58px, 16vw, 80px)."
+      },
+      "headline": {
+        "displayName": "Headline",
+        "purpose": "Section headings; mobile uses 38px, with an installation-specific 48px heading."
+      },
+      "title": {
+        "displayName": "Title",
+        "purpose": "Steps and mode names."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Supporting descriptions; 15px on mobile."
+      },
+      "label": {
+        "displayName": "Action label",
+        "purpose": "Download links; 13px on mobile."
+      }
+    },
+    "shadows": [],
+    "motion": [
+      {
+        "name": "preview-reveal",
+        "value": "320ms cubic-bezier(.16, 1, .3, 1)",
+        "purpose": "Newly selected panel reveals from clip-path inset(0 0 5%) and brightness(.9) to inset(0) and brightness(1). Disabled with prefers-reduced-motion."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "tablet",
+        "value": "1050px"
+      },
+      {
+        "name": "mobile",
+        "value": "700px"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Download action",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Primary link to the real GitHub release.",
+      "html": "<a class=\"ds-primary\" href=\"https://github.com/ThomasSerna/GhostPair/releases/latest\">Download GhostPair <svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"M12 4v12m-5-5 5 5 5-5M5 19h14\"/></svg></a>",
+      "css": ".ds-primary{display:inline-flex;align-items:center;justify-content:center;gap:20px;padding:16px 22px;border-radius:9px;font-size:14px;line-height:1.4;font-weight:600;text-decoration:none;font-family:Inter,'Segoe UI',sans-serif;background:var(--mint,#b5f0cd);color:var(--ink,#11261b)}.ds-primary:hover{background:#cef7df;color:var(--ink,#11261b)}.ds-primary:focus-visible{outline:2px solid var(--mint,#b5f0cd);outline-offset:5px;}.ds-primary svg,.ds-install svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}@media(max-width:700px){.ds-primary{padding:15px 18px;font-size:13px;gap:16px}}"
+    },
+    {
+      "name": "Installation action",
+      "kind": "button",
+      "refersTo": "button-install",
+      "description": "Inverse action used on the mint installation field.",
+      "html": "<a class=\"ds-install\" href=\"https://github.com/ThomasSerna/GhostPair/releases/latest\">Get the latest release <svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"M12 4v12m-5-5 5 5 5-5M5 19h14\"/></svg></a>",
+      "css": ".ds-install{display:inline-flex;align-items:center;justify-content:center;gap:20px;padding:16px 22px;border-radius:9px;font-size:14px;line-height:1.4;font-weight:600;text-decoration:none;font-family:Inter,'Segoe UI',sans-serif;background:var(--ink,#11261b);color:var(--mint,#b5f0cd)}.ds-install:hover{background:#244333;color:#eef3f1}.ds-install:focus-visible{outline:2px solid var(--ink,#11261b);outline-offset:5px}.ds-primary svg,.ds-install svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}@media(max-width:700px){.ds-install{padding:15px 18px;font-size:13px;gap:16px}}"
+    },
+    {
+      "name": "Preview selector",
+      "kind": "input",
+      "refersTo": "preview-selector",
+      "description": "A native fieldset and radios; the website uses CSS :has() to show each corresponding panel.",
+      "html": "<fieldset class=\"ds-selector\"><legend class=\"ds-hidden\">Choose an interface example</legend><input class=\"ds-hidden\" type=\"radio\" name=\"ds-preview\" id=\"ds-shared\" checked><label for=\"ds-shared\">Shared view</label><input class=\"ds-hidden\" type=\"radio\" name=\"ds-preview\" id=\"ds-host\"><label for=\"ds-host\">Host a session</label><input class=\"ds-hidden\" type=\"radio\" name=\"ds-preview\" id=\"ds-guest\"><label for=\"ds-guest\">Join a session</label></fieldset>",
+      "css": ".ds-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap;border:0}.ds-selector{font-family:Inter,'Segoe UI',sans-serif;display:flex;gap:4px;position:relative;margin:0;padding:5px;border:1px solid var(--line,#2b3935);border-radius:12px;background:var(--panel,#182321)}.ds-selector label{display:flex;align-items:center;justify-content:center;padding:10px 18px;border-radius:8px;font-size:13px;color:var(--muted,#a3b3ac);cursor:pointer;min-height:42px}.ds-selector label:hover{color:var(--mint,#b5f0cd);background:#24372e}.ds-selector input:checked+label{color:var(--ink,#11261b);background:var(--mint,#b5f0cd);font-weight:600}.ds-selector input:focus-visible+label{outline:2px solid var(--mint,#b5f0cd);outline-offset:3px}@media(max-width:700px){.ds-selector{gap:2px}.ds-selector label{padding-inline:8px;flex:1;font-size:12px;white-space:nowrap}}"
+    },
+    {
+      "name": "Main navigation",
+      "kind": "nav",
+      "description": "Small muted header links with visible keyboard focus.",
+      "html": "<nav class=\"ds-nav\" aria-label=\"Main navigation\"><a href=\"#preview\">Preview</a><a href=\"#how-it-works\">How it works</a><a href=\"#install\">Install</a></nav>",
+      "css": ".ds-nav{font-family:Inter,'Segoe UI',sans-serif;display:flex;align-items:center;gap:34px;font-size:14px;color:var(--muted,#a3b3ac)}.ds-nav a{color:inherit;text-decoration:none;padding-block:14px}.ds-nav a:hover{color:var(--mint,#b5f0cd)}.ds-nav a:focus-visible{outline:2px solid var(--mint,#b5f0cd);outline-offset:5px;border-radius:4px}@media(max-width:700px){.ds-nav{justify-content:space-between;gap:20px;font-size:13px}.ds-nav a{padding-block:6px}}"
+    },
+    {
+      "name": "Mode tags",
+      "kind": "chip",
+      "refersTo": "mode-tag",
+      "description": "Noninteractive labels for the default mode and host choice.",
+      "html": "<span class=\"ds-tag\">Starts here</span> <span class=\"ds-tag ds-optional\">Host's choice</span>",
+      "css": ".ds-tag{font-family:Inter,'Segoe UI',sans-serif;display:inline-block;color:var(--mint,#b5f0cd);background:#223c2e;border-radius:5px;font-size:11px;padding:5px 9px}.ds-optional{color:var(--muted,#a3b3ac);background:var(--panel,#182321)}"
+    },
+    {
+      "name": "Setup preview panel",
+      "kind": "card",
+      "refersTo": "preview-panel",
+      "description": "Flat website container around an authentic setup example; the export itself remains unchanged.",
+      "html": "<section class=\"ds-panel\"><div><h2>Start from<br>your browser.</h2><p>Open GhostPair on a web page, choose a session password, and authorize sharing.</p></div></section>",
+      "css": ".ds-panel{font-family:Inter,'Segoe UI',sans-serif;display:grid;grid-template-columns:1fr 1fr;align-items:center;column-gap:72px;padding:40px 64px 24px;background:var(--panel,#182321);color:#eef3f1;border-radius:16px}.ds-panel h2{margin:0 0 24px;font-size:48px;font-weight:600;line-height:1.12;letter-spacing:-.035em}.ds-panel p{margin:0;max-width:375px;color:var(--muted,#a3b3ac);font-size:16px;line-height:1.7}@media(max-width:1050px){.ds-panel{column-gap:40px;padding-inline:40px}.ds-panel h2{font-size:38px}}@media(max-width:700px){.ds-panel{grid-template-columns:1fr;gap:28px;padding:28px 20px 20px}.ds-panel h2{font-size:34px;margin-bottom:16px}.ds-panel h2 br{display:none}.ds-panel p{font-size:15px}}"
+    }
+  ],
+  "narrative": {
+    "northStar": "A shared browser",
+    "overview": "This system applies to the public GitHub Pages website in docs/index.html and docs/assets/site.css. A forest canvas, mint actions, linked-loop identity, and the extension's existing system font stack keep the website recognizable. Larger type and open spacing suit a public introduction.\n\nThe website uses flat surfaces and thin rules to organize content. Authentic extension exports remain independent examples, with visible example-data labeling and links to their full-size pages. Their internal interface is preserved rather than promoted into new website rules.",
+    "keyCharacteristics": [
+      "Forest canvas with mint actions and a mint installation field.",
+      "Extension font continuity with a larger website hierarchy.",
+      "Thin boundaries, restrained rounded controls, and open section spacing.",
+      "Native controls, visible keyboard focus, and reduced-motion support."
+    ],
+    "rules": [
+      {
+        "name": "The Extension Continuity Rule",
+        "body": "Keep the website's forest and mint palette, existing family stack, and linked-loop identity visibly related to the extension.",
+        "section": "colors"
+      },
+      {
+        "name": "The Flat Surface Rule",
+        "body": "Website depth comes from panel color, borders, and spacing; the embedded extension exports retain their own rendering.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "Do preserve the extension family stack and the linked-loop identity.",
+      "Do use native radio grouping for preview selection and native details for disclosure.",
+      "Do keep example-data labels and full-size links beside authentic previews.",
+      "Do preserve visible focus, a skip link, semantic headings, and reduced-motion behavior.",
+      "Do keep website asset and preview paths relative for GitHub Pages."
+    ],
+    "donts": [
+      "Don't restyle the extension or its exported previews as part of website work.",
+      "Don't turn example interfaces into screenshots with invented product states.",
+      "Don't introduce a second display family while extension continuity remains the approved direction."
+    ]
+  }
+}
