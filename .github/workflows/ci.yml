@@ -33,6 +33,10 @@ jobs:
         run: npm run build
         env:
           GHOSTPAIR_STORE_BUILD: '1'
+      - name: Install landing test browser
+        run: npx playwright install --with-deps chromium
+      - name: Check production landing
+        run: npm run test:landing -- --check-only
       - name: Package verified build
         run: node scripts/package.mjs --store
       - name: Read extension version

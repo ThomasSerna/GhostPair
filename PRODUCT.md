@@ -8,7 +8,7 @@ web
 
 ## Scope
 
-- The user confirmed that design work is limited to the public website deployed on GitHub Pages: `docs/index.html` and its website assets, primarily `docs/assets/site.css` and `docs/assets/previews.js`.
+- The user confirmed that design work is limited to the public website deployed on GitHub Pages. Its React/Vite source lives in `apps/landing/` and builds to `docs/index.html` and `docs/assets/landing/`.
 - The browser extension must remain exactly as it is. Website redesign does not authorize changes to `apps/extension/`, shared protocol, signaling, or extension behavior.
 - The extension examples in `docs/assets/previews/` represent the actual product. Preserve their interface and content; website layout around them can change.
 - This record scopes website work. Durable visual decisions live in `DESIGN.md`; route strategy lives in the website surface brief.
@@ -29,11 +29,13 @@ The implementation combines host-approved tab sharing, a default Visual only mod
 
 ## Operating Context
 
-- The existing website is static HTML, CSS, and a small JavaScript helper for resizing embedded examples. It lives under `docs/` and uses relative asset links suitable for the GitHub Pages project path.
+- The website uses React, Vite, and GSAP. Source in `apps/landing/` builds to `docs/`, with a relative Vite base and asset links suitable for the existing GitHub Pages project path. Edit the source and commit the generated website with it.
 - Public website: https://thomasserna.github.io/GhostPair/.
 - Download and release links point to https://github.com/ThomasSerna/GhostPair/releases. The installation instructions describe extracting the Chrome or Edge ZIP and loading it as an unpacked extension through Developer mode.
 - Current website copy and installation instructions are in English. A language change has not been requested.
 - The visitor can inspect three static examples: sharing a tab, connecting to a host, and the connected guest viewer. These are demonstrations with example data.
+- The page explains the connection, local host approval, product examples, interaction modes, and installation in that order. A separate, labeled interaction-mode illustration lets visitors compare preview edits with live edits using example data; it does not start a session.
+- GSAP sequences page transitions and the connection diagram. The lazy-loaded hero has a canvas renderer behind a `SignalRenderer` interface for resizing, progress, pointer input, rendering, and disposal. This leaves a defined seam for a future Three.js or React Three Fiber implementation.
 
 ## Capabilities and Constraints
 
@@ -50,11 +52,12 @@ Product facts are grounded in `README.md`, `docs/architecture.md`, and the exten
 
 ## Brand Commitments
 
-GhostPair is the established product name. The website uses a linked-loop logo and plain collaboration language, including “Browse together” and “Connected, together.” The user granted creative freedom for the website redesign while requiring a visual identity similar to the extension. Preserve that recognizable relationship in future website work.
+GhostPair is the established product name. The website uses a linked-loop logo and plain collaboration language, including “Browse together” and “Connected, together.” The user granted creative freedom for the website redesign while requiring a visual identity similar to the extension. Preserve the linked-loop identity and forest/mint relationship. The approved website uses self-hosted Manrope Variable; the extension and its exported interfaces keep their existing typography.
 
 ## Evidence on Hand
 
-- `docs/index.html`: existing public copy, installation instructions, release links, and product examples.
+- `apps/landing/src/App.tsx` and `apps/landing/src/styles.css`: public copy, installation instructions, release links, and the built website's visual rules. `apps/landing/src/components/` contains the authentic preview wrappers, mode illustration, and hero renderer.
+- `apps/landing/vite.config.ts` and `apps/landing/README.md`: relative-base build, preserved product assets, renderer seam, and development workflow. The generated public entry is `docs/index.html`, with generated assets and the Manrope license under `docs/assets/landing/`.
 - `docs/assets/icon.png`: website icon; the page also contains an inline logo.
 - `docs/assets/previews/`: static examples exported from the extension. `scripts/export-previews.mjs` produces them and verifies matching geometry and styles; preserve their fidelity to the unchanged extension.
 - `README.md`, `docs/architecture.md`, and `docs/validation.md`: behavior, limitations, and validation evidence. Check executed versus pending validation before making claims. `docs/privacy.html` is a publisher draft with unresolved details; do not treat placeholders as established facts.

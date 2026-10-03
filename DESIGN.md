@@ -1,154 +1,164 @@
 ---
 name: GhostPair Public Website
-description: Forest and mint browser collaboration identity for the GitHub Pages website.
+description: Forest and mint collaboration identity with linked signal geometry.
 colors:
   mint: "#b5f0cd"
   mint-hover: "#cef7df"
   canvas: "#101918"
+  forest: "#0c1714"
   panel: "#182321"
-  line: "#2b3935"
+  panel-light: "#20302a"
   text: "#eef3f1"
   muted: "#a3b3ac"
+  line: "#2b3935"
   ink: "#11261b"
+  ink-muted: "#30513f"
   ink-hover: "#244333"
-  install-muted: "#30513f"
-  selector-hover: "#24372e"
   tag-surface: "#223c2e"
+  diagram-stroke: "#71937f"
 typography:
-  display: { fontFamily: "Inter, 'Segoe UI', sans-serif", fontSize: "clamp(64px, 7.4vw, 96px)", fontWeight: 600, lineHeight: 1.04, letterSpacing: "-.04em" }
-  headline: { fontFamily: "Inter, 'Segoe UI', sans-serif", fontSize: "clamp(36px, 4.2vw, 54px)", fontWeight: 600, lineHeight: 1.12, letterSpacing: "-.035em" }
-  title: { fontFamily: "Inter, 'Segoe UI', sans-serif", fontSize: "20px", fontWeight: 600, lineHeight: 1.3, letterSpacing: "-.015em" }
-  body: { fontFamily: "Inter, 'Segoe UI', sans-serif", fontSize: "16px", fontWeight: 400, lineHeight: 1.7 }
-  label: { fontFamily: "Inter, 'Segoe UI', sans-serif", fontSize: "14px", fontWeight: 600, lineHeight: 1.4 }
-rounded: { focus: "4px", tag: "5px", selector-label: "8px", control: "9px", preview: "12px", panel: "16px" }
-spacing: { compact: "8px", small: "12px", medium: "16px", control: "20px", content: "24px", group: "32px", section-mobile: "44px", grid-tablet: "48px", grid: "72px", section: "80px" }
+  display: { fontFamily: "\"Manrope Variable\", \"Segoe UI\", sans-serif", fontSize: "clamp(72px, 7.8vw, 96px)", fontWeight: 500, lineHeight: 1.05, letterSpacing: "-0.04em" }
+  headline: { fontFamily: "\"Manrope Variable\", \"Segoe UI\", sans-serif", fontSize: "clamp(38px, 4.4vw, 64px)", fontWeight: 500, lineHeight: 1.13, letterSpacing: "-0.035em" }
+  title: { fontFamily: "\"Manrope Variable\", \"Segoe UI\", sans-serif", fontSize: "21px", fontWeight: 500, lineHeight: 1.4, letterSpacing: "-0.02em" }
+  body: { fontFamily: "\"Manrope Variable\", \"Segoe UI\", sans-serif", fontSize: "15px", fontWeight: 400, lineHeight: 1.8 }
+  hero-body: { fontFamily: "\"Manrope Variable\", \"Segoe UI\", sans-serif", fontSize: "19px", fontWeight: 400, lineHeight: 1.6, letterSpacing: "-0.015em" }
+  label: { fontFamily: "\"Manrope Variable\", \"Segoe UI\", sans-serif", fontSize: "13px", fontWeight: 650 }
+  detail: { fontFamily: "\"Manrope Variable\", \"Segoe UI\", sans-serif", fontSize: "11px", fontWeight: 400 }
+rounded: { tag: "4px", field: "6px", control: "8px", selector: "9px", preview: "12px", panel: "16px", circle: "50%" }
+spacing: { compact: "8px", small: "12px", medium: "16px", control: "20px", content: "24px", group: "28px", stage: "40px", heading: "48px", grid: "64px", section-mobile: "74px", section-tablet: "90px", section: "118px" }
 components:
-  button-primary: { backgroundColor: "{colors.mint}", textColor: "{colors.ink}", typography: "{typography.label}", rounded: "{rounded.control}", padding: "16px 22px" }
-  button-primary-hover: { backgroundColor: "{colors.mint-hover}", textColor: "{colors.ink}" }
-  button-install: { backgroundColor: "{colors.ink}", textColor: "{colors.mint}", typography: "{typography.label}", rounded: "{rounded.control}", padding: "16px 22px" }
-  button-install-hover: { backgroundColor: "{colors.ink-hover}", textColor: "{colors.text}" }
-  preview-selector: { backgroundColor: "{colors.panel}", textColor: "{colors.muted}", rounded: "{rounded.preview}", padding: "5px" }
-  preview-selector-selected: { backgroundColor: "{colors.mint}", textColor: "{colors.ink}", rounded: "{rounded.selector-label}", padding: "10px 18px" }
-  mode-tag: { backgroundColor: "{colors.tag-surface}", textColor: "{colors.mint}", rounded: "{rounded.tag}", padding: "5px 9px" }
-  preview-panel: { backgroundColor: "{colors.panel}", rounded: "{rounded.panel}", padding: "40px 64px 24px" }
+  button-primary: { backgroundColor: "{colors.mint}", textColor: "{colors.ink}", typography: "{typography.label}", rounded: "{rounded.control}", padding: "17px 22px", height: "54px" }
+  button-primary-hover: { backgroundColor: "{colors.mint-hover}" }
+  button-install: { backgroundColor: "{colors.ink}", textColor: "{colors.mint}", typography: "{typography.label}", rounded: "{rounded.control}", padding: "17px 22px", height: "54px" }
+  button-install-hover: { backgroundColor: "{colors.ink-hover}" }
+  button-header: { textColor: "{colors.text}", rounded: "{rounded.control}", padding: "10px 16px", height: "43px" }
+  preview-selector: { backgroundColor: "{colors.panel}", textColor: "{colors.muted}", rounded: "{rounded.selector}", padding: "4px" }
+  preview-selector-selected: { backgroundColor: "{colors.mint}", textColor: "{colors.ink}", rounded: "{rounded.field}", padding: "12px 22px", height: "44px" }
+  gallery-panel: { backgroundColor: "{colors.panel}", textColor: "{colors.text}", rounded: "{rounded.panel}", padding: "38px" }
+  demo-field: { backgroundColor: "{colors.canvas}", textColor: "{colors.text}", rounded: "{rounded.field}", padding: "13px 15px", height: "48px" }
+  mode-status: { backgroundColor: "{colors.tag-surface}", textColor: "{colors.mint}", rounded: "{rounded.tag}", padding: "4px 8px" }
 ---
 
 # Design System: GhostPair Public Website
 
 ## Overview
 
-**Creative North Star: "A shared browser"**
+**Creative North Star: "A shared space"**
 
-This system applies to the public GitHub Pages website in docs/index.html and docs/assets/site.css. A forest canvas, mint actions, linked-loop identity, and the extension's existing system font stack keep the website recognizable. Larger type and open spacing suit a public introduction.
+A shared space connects two points of view. The website keeps GhostPair's forest/mint palette and linked-loop mark, then expresses that identity through broad Manrope lettering, open spacing, fine diagram lines, and two interlinked filament loops.
 
-The website uses flat surfaces and thin rules to organize content. Authentic extension exports remain independent examples, with visible example-data labeling and links to their full-size pages. Their internal interface is preserved rather than promoted into new website rules.
+This system is built in apps/landing/src/ and compiled to docs/index.html and docs/assets/landing/ for GitHub Pages. Interface surfaces stay flat and readable while the hero carries sculptural depth. Authentic extension exports retain their own interface and typography; the website frames them with clear example labels.
 
 **Key Characteristics:**
 
-- Forest canvas with mint actions and a mint installation field.
-- Extension font continuity with a larger website hierarchy.
-- Thin boundaries, restrained rounded controls, and open section spacing.
-- Native controls, visible keyboard focus, and reduced-motion support.
-
-The existing local favicon, `docs/assets/icon.png`, matches `apps/extension/public/icons/128.png` and originates from repository tooling in `scripts/icons.mjs`. The linked-loop header mark is inline SVG. No new raster assets were added.
+- Forest canvas, pale mint actions, and an inverse mint installation field.
+- Self-hosted Manrope Variable with a large, compact heading hierarchy.
+- Flat interface fields, thin rules, and restrained control corners.
+- Interlinked procedural geometry with scroll and pointer response.
+- Native controls, visible focus, motion pause, and reduced-motion support.
 
 ## Colors
 
-The palette uses a dark forest base, a single mint accent, and green-tinted neutrals. Frontmatter values are normative.
+The palette uses one pale mint accent with deep forest grounds and green-tinted neutrals. Frontmatter values are normative.
 
 ### Primary
 
-- **Mint:** primary actions, selected preview labels, selected headline words, and the installation background.
-- **Mint hover:** the primary download action's hover state.
+- **Mint / mint hover:** download actions, selected controls, diagram signals, focus outlines, and the installation field.
+- **Deep ink / ink hover:** text on mint and the inverse installation action.
 
 ### Neutral
 
-- **Forest canvas / panel:** page background and contained interface examples.
-- **Thin forest line:** section rules and control boundaries.
-- **Light text / muted text:** headings and body text versus supporting descriptions and metadata.
-- **Deep ink / ink hover:** text on mint and the inverse installation action.
-- **Installation muted:** supporting text on the mint field.
-- **Selector hover / tag surface:** subtle interaction and mode-label backgrounds.
+- **Canvas / forest:** the page ground and the deeper product-example section.
+- **Panel / panel light:** contained examples, the mode illustration, and control hover surfaces.
+- **Light text / muted text:** headings and body content versus supporting descriptions and metadata.
+- **Line / diagram stroke:** fine dividers and muted browser/control outlines.
+- **Ink muted:** supporting text on the mint installation field.
+- **Tag surface:** compact mint status labels.
 
-**The Extension Continuity Rule.** Keep the website's forest and mint palette, existing family stack, and linked-loop identity visibly related to the extension.
+**The Identity Continuity Rule.** Preserve the forest/mint relationship and linked-loop silhouette across website changes.
 
 ## Typography
 
-**Display and Body Font:** `Inter, 'Segoe UI', sans-serif`, matching the extension. No font is downloaded; local availability determines the rendered family.
-**Code Font:** `'Cascadia Code', Consolas, monospace` for browser URLs and filenames.
+**Display and Body Font:** self-hosted Manrope Variable, with Segoe UI and sans-serif fallbacks. The Latin variable WOFF2 covers weights 200–800, uses font-display swap, and ships with its OFL license. The extension and exported examples retain their existing font stack.
+**Code Font:** Cascadia Code, Consolas, monospace for installation paths.
 
-The existing family stack is an explicit continuity constraint. Website hierarchy comes from scale, weight, spacing, and line length.
+The website uses a single family with moderate weights and close heading spacing. Broad two-line headings carry the hierarchy; supporting copy remains compact.
 
 ### Hierarchy
 
-- **Display:** the main headline; at widths up to 700px, its size becomes `clamp(58px, 16vw, 80px)`.
-- **Headline:** section headings; on mobile the shared heading size is 38px. The installation heading uses `clamp(42px, 5vw, 64px)` on desktop and 48px on mobile.
-- **Title:** steps and interaction-mode headings.
-- **Body:** supporting paragraphs; mobile uses 15px for the main muted descriptions.
-- **Label:** action links; selector labels use 13px on desktop and 12px on mobile. Small metadata uses 11–13px.
-
-Use the frontmatter for the core ramp. Introductory text is larger (25px, line height 1.45) and narrows to 22px at the tablet breakpoint.
+- **Display:** the hero headline. Mobile uses clamp(58px, 16.5vw, 86px) and a 1.07 line height; the installation display has its own clamp(58px, 6.4vw, 92px).
+- **Headline:** section titles. Mobile uses clamp(35px, 9.8vw, 50px) and a 1.16 line height.
+- **Title:** steps and supporting headings. Gallery titles use a larger 30px treatment with a 1.23 line height.
+- **Body:** section introductions; their observed text widths are 350px, or 430px for the permission introduction. Step and gallery descriptions use 12–13px.
+- **Hero body:** the short opening description, reducing to 16px on tablet/mobile and 15px at the narrowest breakpoint.
+- **Label:** principal actions. Selector labels use 12px and weight 550; navigation uses 13px and weight 500.
+- **Detail:** captions, route labels, and technical metadata. These range from 9–12px by component and viewport.
 
 ## Layout
 
-The main container is capped at 1200px with 48px desktop side gutters. Gutters become 32px at 1050px and 20px at 700px. Desktop sections use two columns with substantial gaps; at 700px the hero, explanatory sections, installation instructions, and setup examples become one column.
+The content container is capped at 1280px with 56px desktop gutters. Gutters reduce to 32px at 1100px, 24px at 800px, 20px at 580px, and 16px at 360px. Standard section padding is 118px, then 90px on tablet and 74px on mobile.
 
-Main section spacing is 80px on desktop and 44px on mobile. Navigation moves to a second header row on mobile, while the preview selector spans the available width. Body descriptions use observed limits of 375–480px instead of filling wide columns.
+Desktop pairs a 58% hero text region with an overlapping sculpture region. At 580px the text and action precede a full-width, 290px-high scene; the narrowest layout uses 260px. The connection diagram retains its three points while the explanatory steps stack on mobile. Gallery description and preview become a vertical composition at 800px; the two mode panels stack at 580px. Installation steps likewise move from three columns to a vertical list.
 
-Preview wrappers keep their exported aspect ratios. The existing ResizeObserver helper scales iframe contents from their declared widths; it does not change the exports.
+The preview wrappers preserve each export's authored aspect ratio. ResizeObserver scales iframe contents from their declared width. Hidden examples load on first selection and remain available for later visits.
 
 ## Elevation & Depth
 
-The website has no box shadows. Flat panel color, thin borders, and space separate its regions. The mint installation field changes tonal emphasis; embedded previews retain their own internal depth.
+The website has no box shadows. Canvas, forest, and panel color separate sections and contained examples; one-pixel rules organize connections and lists. The hero creates depth through projected geometry, occlusion, directional shading, and longitudinal filaments. Exported product interfaces retain their original rendering.
 
-**The Flat Surface Rule.** Website depth comes from panel color, borders, and spacing; the embedded extension exports retain their own rendering.
+**The Flat Interface Rule.** Use surface color, thin borders, and spacing for interface depth; reserve modeled shading for the hero sculpture.
 
 ## Shapes
 
-Controls have restrained rounded corners. Action links use the control radius; the native selector has a larger outer radius and smaller selected-label corners. Preview links and setup panels use the preview and panel radii. Mode tags are compact rounded rectangles.
+Controls use gently rounded corners; contained examples use larger preview and panel radii. Circular dots identify participants and states, and the motion control uses the circle radius. The established linked-loop mark appears in the header, connection center, installation field, and footer.
 
-Website icons are inline stroke SVGs (20px by default, 16px beside captions). Navigation icons use 18px on desktop and 16px on mobile. Repository buttons use the filled GitHub mark at 20px in the header and 16px in the footer. The existing linked-loop mark retains its established silhouette.
+The hero consists of two orthogonal interlocked loops, each with a shaded tube surface and continuous longitudinal fibers. Bright traveling filaments reinforce connection. The geometry uses 64 segments and 32 strands per loop, reduced to 56 and 24 at the renderer's 700px threshold. It is procedural canvas artwork; the interface remains in the DOM.
 
 ## Components
 
-### Actions
+### Actions and navigation
 
-Primary download links use mint with deep ink text. The installation action reverses those colors. Both share the action typography and spacing in frontmatter; mobile padding is 15px 18px with 13px text. Text links remain mint and gain an underline on hover.
+Primary and inverse actions share the frontmatter geometry. Hover lifts them 2px with the common cubic-bezier(0.16, 1, 0.3, 1) easing. Header download and explore links use thin bordered controls; repository and navigation links turn mint on hover. Mobile actions use 50px minimum height and 15px 18px padding.
 
-Header and footer repository links share a bordered `.github-button` with the GitHub mark, a 44px minimum height, and the control radius. Hover adds the panel background and mint border.
+At 800px navigation becomes a button-controlled vertical menu. The menu exposes its expanded state, closes when a destination is chosen, and returns focus to its button on Escape. Focus uses a 2px mint outline with a 5px offset; the mint installation field uses ink. The skip link appears on focus.
 
-Keyboard focus is a 2px outline with a 5px offset, changing to deep ink inside the installation field. Preview links use a 6px offset.
+### Product preview
 
-### Native preview selector
+A labeled native radio group selects Shared view, Host a session, or Join a session. Selected labels use mint/ink; hover uses the lighter panel. Keyboard focus outlines the associated label. The selected gallery uses a 0.55s GSAP reveal with a small upward movement and shallow clip; pause and reduced motion disable it.
 
-A labeled fieldset contains three native radios and their visible labels in equal grid columns. A mint `::before` indicator slides beneath the checked label with a 300ms `cubic-bezier(.16, 1, .3, 1)` transform transition. CSS `:has()` positions the indicator and displays the corresponding website panel, with the shared view selected initially. Keyboard focus outlines the active radio's visible label with a 3px offset.
+Each noninteractive iframe sits inside a full-size example link. Captions identify its product context; the toolbar states “The real interface. Example data.” The gallery's rounded panel frames the unchanged export.
 
-Panel revelation uses a 320ms `cubic-bezier(.16, 1, .3, 1)` mask and brightness animation. Reduced motion disables the reveal and indicator transition and switches smooth scrolling to automatic scrolling.
+### Interaction-mode illustration
 
-### Preview containers
+A labeled native radio group starts in Visual only. The guest note and checkbox change locally while the host output stays at its prior values; in Live control, subsequent edits update both. Reset restores Visual only and the initial example values. Status tags label Preview, Live, and Original.
 
-Authentic local HTML exports appear in noninteractive scaled iframes inside links to their full-size versions. Captions distinguish example data from a live session. Setup panels have a flat forest background and become vertically stacked on mobile.
+Inputs use a canvas background, thin line border, field radius, and mint focus border. The two panel headers and read-only host output share the same proportions. The visible “Interactive illustration · Example data” caption establishes the example's status.
 
-### Mode tags
+### Disclosure
 
-Compact mint-on-forest labels explain the default mode. The optional label uses muted text on the panel background. They describe state and are not controls.
+A native details element contains connection facts between thin rules. Its plus mark becomes a horizontal line when open. The three text columns become one on mobile; summary focus follows the common outline.
 
-### Navigation and disclosure
+### Hero and motion
 
-Header navigation groups icon-and-text links inside a bordered panel rail with rounded controls and 44px minimum targets. Mint icons lead each label; Install uses the tag surface and mint text for emphasis. Hover adds the selector-hover surface, and keyboard focus remains visible. The rail fills the second header row on mobile. A native `details` disclosure presents connection facts; its SVG chevron rotates when open. The skip link becomes visible on keyboard focus.
+HeroScene is lazy-loaded. It owns visibility, resize, pointer input, pause, and reduced-motion handling. The SignalRenderer interface exposes resize, setProgress, setPointer, render, and dispose so a later Three.js renderer can use the same boundary. A React Three Fiber implementation can replace the scene component while keeping its progress and pause props.
+
+The current canvas renderer has a continuous 42s idle cycle with small pointer and scroll rotations. It caps pixel ratio at 1.75, or 1.5 for coarse pointers, targets 30 frames per second, and reduces to 20 when average drawing exceeds 12ms. It stops continuous drawing offscreen, in a hidden document, when paused, or with reduced motion. A static SVG linked-loop fallback appears if a 2D context is unavailable.
+
+GSAP introduces the hero with expo.out easing, traces Host → GhostPair → Guest as the visitor scrolls, and reveals sections once. Desktop hero parallax starts at 900px. The pause control uses aria-pressed; reduced motion also turns smooth scrolling off. Native page scrolling remains available throughout.
 
 ## Do's and Don'ts
 
 ### Do:
 
-- Do preserve the extension family stack and the linked-loop identity.
-- Do use native radio grouping for preview selection and native details for disclosure.
-- Do keep example-data labels and full-size links beside authentic previews.
-- Do preserve visible focus, a skip link, semantic headings, and reduced-motion behavior.
-- Do keep website asset and preview paths relative for GitHub Pages.
+- Do keep the forest/mint palette and linked-loop identity recognizable.
+- Do use the website's self-hosted Manrope while preserving the extension exports' existing typography.
+- Do keep native radio groups, labeled fields, visible focus, and the skip link.
+- Do preserve pause, reduced motion, native scrolling, and readable settled content.
+- Do keep authentic examples labeled and linked to their full-size exports.
+- Do edit the React/Vite source and build relative assets for the GitHub Pages project path.
 
 ### Don't:
 
-- Don't restyle the extension or its exported previews as part of website work.
-- Don't turn example interfaces into screenshots with invented product states.
-- Don't introduce a second display family while extension continuity remains the approved direction.
+- Don't restyle the extension or its exported product interfaces as part of website work.
+- Don't present the mode illustration or example data as an actual connected session.
+- Don't make product content or controls depend on the decorative canvas.

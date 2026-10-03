@@ -10,6 +10,8 @@ The host starts each session from the extension, chooses a password, and authori
 
 Requirements: Node.js 24.13 or later and npm. In PowerShell, use `npm.cmd` if execution policy blocks `npm.ps1`.
 
+The public landing is a React + Vite workspace in `apps/landing/`. Run `npm.cmd run dev:landing` to work on it, `npm.cmd run build:landing` to update the GitHub Pages files in `docs/`, and `npm.cmd run test:landing` to check the built site. Commit the source and generated website together. See [the landing guide](apps/landing/README.md) for the hero renderer, product examples, and publishing details.
+
 ```powershell
 npm.cmd ci
 Copy-Item .env.example .env
