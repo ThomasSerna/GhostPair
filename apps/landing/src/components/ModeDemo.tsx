@@ -216,7 +216,7 @@ export default function ModeDemo() {
               onChange={() => changeMode("visual")}
               aria-describedby="mode-explanation"
             />
-            <label htmlFor="mode-visual">Visual only</label>
+            <label htmlFor="mode-visual">Preview changes</label>
           </div>
           <div className="mode-switch-option">
             <input
@@ -228,7 +228,7 @@ export default function ModeDemo() {
               onChange={() => changeMode("live")}
               aria-describedby="mode-explanation"
             />
-            <label htmlFor="mode-live">Live control</label>
+            <label htmlFor="mode-live">Full control</label>
           </div>
         </div>
       </fieldset>

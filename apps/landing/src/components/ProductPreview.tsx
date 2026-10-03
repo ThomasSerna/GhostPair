@@ -10,19 +10,19 @@ const previews = {
     height: 900,
     title: "One page. Two perspectives.",
     description:
-      "The approved tab appears in your guest’s browser. See the same page, then work through the details together.",
-    note: "The connected guest viewer",
+      "The approved tab appears in the other person’s browser. See the same page, then work through the details together.",
+    note: "The shared viewer",
     frameTitle: "GhostPair connected viewer example",
   },
   host: {
-    label: "Host a session",
+    label: "Share a tab",
     file: "share-tab.html",
     width: 398,
-    height: 694,
+    height: 600,
     title: "Start from your browser.",
     description:
-      "Choose a session password and authorize sharing. Share your GhostPair address and password with your guest.",
-    note: "The host’s browser toolbar popup",
+      "Choose Share my tab, set a session password and approve sharing. Send your connection code and password to the person joining.",
+    note: "The browser toolbar popup",
     frameTitle: "GhostPair sharing example",
   },
   guest: {
@@ -32,9 +32,9 @@ const previews = {
     height: 660,
     title: "A space for two.",
     description:
-      "Select Connect to a host in your extension. Enter the address and session password your host shared with you.",
+      "Choose Join a session in your extension. Enter the connection code and password from the person sharing.",
     note: "The full-page connection screen",
-    frameTitle: "GhostPair host connection example",
+    frameTitle: "GhostPair connection example",
   },
 } as const;
 type PreviewName = keyof typeof previews;
@@ -144,8 +144,8 @@ export default function ProductPreview() {
             {selected === "host"
               ? "You approve every shared tab locally."
               : selected === "guest"
-                ? "One host. One guest."
-                : "Sessions start in Visual only."}
+                ? "One session. Two people."
+                : "Sessions start in Preview changes."}
           </span>
           <a
             className="text-link"

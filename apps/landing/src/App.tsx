@@ -186,24 +186,24 @@ export default function App() {
               <span className="step-number">01</span>
               <h3>Share a tab.</h3>
               <p>
-                Choose a session password, authorize sharing, and select{" "}
-                <strong>Share current tab</strong>. Send your address and
-                password to your guest.
+                Choose <strong>Share my tab</strong>, set a password, approve
+                sharing, and select <strong>Share this tab</strong>. Send your
+                connection code and password to the person joining.
               </p>
             </li>
             <li data-reveal>
               <span className="step-number">02</span>
               <h3>Make the connection.</h3>
               <p>
-                Your guest selects <strong>Connect to a host</strong> and enters
-                those details. The approved tab appears in their browser.
+                The other person selects <strong>Join a session</strong> and
+                enters those details. The approved tab appears in their browser.
               </p>
             </li>
             <li data-reveal>
               <span className="step-number">03</span>
               <h3>Find your flow.</h3>
               <p>
-                Preview interactions or choose live control. Approve additional
+                Preview interactions or choose Full control. Approve additional
                 tabs individually, and end the session whenever you need.
               </p>
             </li>
@@ -295,7 +295,7 @@ export default function App() {
               <p>
                 Chrome and Edge on Windows are the documented environment.
                 Browser tabs only: no audio, desktop sharing, browser chrome, or
-                native dialogs. Live control uses synthetic events and may not
+                native dialogs. Full control uses synthetic events and may not
                 work with every site.
               </p>
             </div>

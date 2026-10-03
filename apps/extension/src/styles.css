@@ -1,6 +1,7 @@
 :root{font-family:Inter,'Segoe UI',sans-serif;color:#eef3f1;background:#101918;font-synthesis:none;font-size:14px;color-scheme:dark;--bg:#101918;--panel:#182321;--line:#2b3935;--text:#eef3f1;--muted:#a3b3ac;--mint:#b5f0cd;--darkmint:#203f32;--red:#ffc3ba}
 *{box-sizing:border-box}
 body{margin:0}
+.popup-document{width:398px;min-width:398px}
 button,input,textarea,select{font:inherit}
 button{cursor:pointer;border:0;border-radius:9px;color:inherit;background:transparent;transition:background .16s,opacity .16s}
 button:disabled{cursor:not-allowed;opacity:.42}
@@ -15,7 +16,7 @@ label>input:not([type=checkbox]),label>textarea{margin-top:7px}
 h1{font-size:28px;font-weight:570;letter-spacing:-.03em;margin:13px 0 10px;line-height:1.18}
 .muted{color:var(--muted);font-size:13px;line-height:1.6;margin:0}
 .eyebrow{color:#a7c5b6;letter-spacing:1.5px;font-size:9px;font-weight:650;margin:0}
-.popup{width:398px;max-width:100vw;padding:20px 22px 0;min-height:420px;max-height:600px;overflow-y:auto}
+.popup{width:398px;padding:20px 22px 0;min-height:420px;max-height:600px;overflow-y:auto}
 .popup-header{display:flex;align-items:center;justify-content:space-between;padding-bottom:16px;border-bottom:1px solid var(--line)}
 .brand{display:grid;grid-template-columns:38px 1fr;column-gap:10px;align-items:center}
 .brand svg{width:38px;height:38px;grid-row:1/3}

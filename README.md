@@ -33,6 +33,7 @@ npm.cmd run dev:extension  # Rebuild on edits; reload the extension in the brows
 npm.cmd run typecheck
 npm.cmd test
 npm.cmd run test:browser
+npm.cmd run test:popup
 npm.cmd run test:frames
 npm.cmd run test:questionnaires
 npm.cmd run test:visual
@@ -41,7 +42,7 @@ npm.cmd run package
 
 Packages are written to `dist/packages/`. Production builds default to `https://ghostpair.onrender.com` through the public-only `.env.production`. Use `npm.cmd run package:store` to validate those endpoints and create store packages. Download ready-to-load Chrome and Edge ZIPs from [GitHub Releases](https://github.com/ThomasSerna/GhostPair/releases); unzip, enable Developer mode on the browser's extensions page, and choose **Load unpacked**. Follow [Publishing](docs/publishing.md) for version updates and store submission.
 
-After building, run `node scripts/export-previews.mjs` to refresh the GitHub Pages examples from the extension's actual interface. The exporter checks matching layout and styles, plus page scaling at 375, 768 and 1440 pixels.
+After building, run `node scripts/export-previews.mjs` to refresh the GitHub Pages examples from the extension's actual interface. The exporter checks matching layout and styles, plus page scaling at 375, 768 and 1440 pixels. `npm.cmd run test:popup` opens fresh visible Chrome and Edge profiles to measure the actual toolbar popup without forcing its viewport size.
 
 ### Continuous integration and releases
 
@@ -59,7 +60,7 @@ The signaling server loads the root `.env`; Vite also reads its environment file
 
 ## Using a session
 
-Version 0.6.0 simplifies sharing, joining and connection settings while retaining peer protocol 4. Update both participants together; saved connection codes, identities and settings are preserved.
+Version 0.6.1 fixes native toolbar popup sizing and updates the GitHub Pages previews to the redesigned interface while retaining peer protocol 4. Update both participants together; saved connection codes, identities and settings are preserved.
 
 - **Authorization:** a session is limited to one host window. Capture and control require local authorization for each tab by invoking the extension on that tab. Up to five authorized tabs can be retained; release a tab before adding another at the limit. Only the active authorized tab is transmitted. The address bar, other windows, and desktop are not captured.
 - **New tabs:** guests can manage tabs in the authorized window. A remotely opened tab is marked **Waiting for permission** until the host invokes the extension on it and authorizes sharing. The integrated **Open tab** dialog accepts a URL or domain name; domains default to HTTPS.
@@ -107,7 +108,7 @@ Capture uses `chrome.tabCapture` and WebRTC video. The package contains no exten
 
 Full control uses synthetic DOM events, which pages can distinguish from trusted browser input. Basic forms and text work are the intended scope. Embedded frame routing supports nesting, borders, scrolling and positive axis-aligned scaling. Frame rotation, skew, perspective, restricted or opaque surfaces, trusted-input requirements, native pointer capture and cross-frame native drag-and-drop are unsupported. Complex editors and IME composition can still have limitations. A frame that Chrome denies access to remains unavailable without disabling the rest of the page. Audio, DRM playback, desktop control, browser chrome, internal pages, extension stores, local files, incognito, native menus, and file pickers are unsupported. The clipboard adapter uses deprecated `execCommand` for compatibility.
 
-Version 0.6.0 adds no permissions. Reload both unpacked extensions after rebuilding for the redesigned interface; peer protocol 4 is unchanged. Existing installation identities remain valid. The extension does not use `chrome.debugger`; eliminating its own activity indicators does not hide native browser capture indicators. In Full control, pages that reject synthetic events through `Event.isTrusted` remain unsupported. Preview changes can preview interactions on accessible protected pages without executing their actions or bypassing that requirement. The improvements above do not bypass that restriction or establish compatibility with an unspecified real site.
+Version 0.6.1 adds no permissions. Reload both unpacked extensions after rebuilding for the popup sizing fix; peer protocol 4 is unchanged. Existing installation identities remain valid. The extension does not use `chrome.debugger`; eliminating its own activity indicators does not hide native browser capture indicators. In Full control, pages that reject synthetic events through `Event.isTrusted` remain unsupported. Preview changes can preview interactions on accessible protected pages without executing their actions or bypassing that requirement. The improvements above do not bypass that restriction or establish compatibility with an unspecified real site.
 
 Visual previews support native fields, basic contenteditable, buttons and choices; complex editors, arbitrary application state and inaccessible frames are not simulated. Unknown targets receive a click halo when click animations are enabled. Overlay nodes are visible presentation additions to the shared document; they do not rewrite original controls.
 

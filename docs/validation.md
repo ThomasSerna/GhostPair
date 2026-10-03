@@ -1,5 +1,15 @@
 # GhostPair validation
 
+## Native popup sizing and 0.6.1 previews: October 3, 2026
+
+A real browser-toolbar report exposed a sizing regression that the 0.6.0 UI checks, with a fixed viewport, did not exercise. The popup's `max-width:100vw` depended on the viewport Chromium was trying to calculate. The native action target reproduced at **74px** in Chrome and Edge. Version **0.6.1** gives the popup document an explicit 398px width and removes that circular constraint.
+
+`npm run test:popup` passed **seven native states in each browser** on Chrome **154.0.8037.93** and Edge **154.0.4258.53**. It opens the actual toolbar action in new visible profiles and attaches to its `other` target without resizing or emulating a viewport. Home, sharing, custom settings, visible Save, a waiting sharing session, expanded feedback and its lower controls all remain **398px** wide and **432–600px** tall, without horizontal or outer-document overflow. Session actions occupy a separate area; Save, Clear previews and End session remain visible and focusable. Before/after screenshots were inspected. Evidence is in `tests/browser/.artifacts/popup-native-*`.
+
+All three GitHub Pages examples were exported again from the current production extension. The exporter now visits the site's lazy-loaded preview choices and checks the current frame selectors. Original/exported element geometry and styles match; examples remain inert, exclude real session credentials, and preserve viewer scaling at 375, 768 and 1440px plus high-density rendering. The embedded examples and mode labels were inspected on desktop and mobile. Source and generated website files are committed together.
+
+Workspace type checks, **147 Vitest tests**, **8 Node release tests**, all production builds, **110 UI assertions**, and the production landing checks at **five widths** passed. Both store ZIPs contain 18 files, version **0.6.1**, the official server preset and the popup sizing fix. Production permissions, capture, control, transport and protocol 4 are unchanged. The native regression grants host access only in its disposable test copy; real permission prompts and the other publication checks below remain separate. Render configuration was not modified.
+
 ## Sharing interface and 0.6.0 packages: October 3, 2026
 
 Workspace TypeScript checks, all **147 Vitest tests in 16 files**, the **8 Node release tests**, and extension production compilation passed. New checks cover official/custom preset inference, existing connection validation, settings persistence and identity restoration per server, and rejection of connection-setting changes during a session. Peer protocol 4 is unchanged.

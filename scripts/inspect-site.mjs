@@ -13,7 +13,7 @@ const base = '/GhostPair/';
 const screenshots = !process.argv.includes('--check-only');
 const viewports = [[1440, 1000, 'desktop'], [768, 1024, 'tablet'], [390, 844, 'mobile'], [375, 812], [320, 812]];
 const choices = ['shared', 'host', 'guest'];
-const labels = ['Shared view', 'Host a session', 'Join a session'];
+const labels = ['Shared view', 'Share a tab', 'Join a session'];
 const exampleFiles = ['remote-viewer.html', 'share-tab.html', 'connect-host.html'];
 const errors = [];
 const requests = new Set();
@@ -274,8 +274,8 @@ async function inspectModeDemo(page, width) {
   const overlays = page.locator('.demo-text-preview, .demo-choice-preview, .demo-button-preview');
   const save = page.getByRole('button', { name: 'Save plans', exact: true });
   const reset = page.getByRole('button', { name: 'Reset demonstration', exact: true });
-  const visualMode = page.getByRole('radio', { name: 'Visual only', exact: true });
-  const liveMode = page.getByRole('radio', { name: 'Live control', exact: true });
+  const visualMode = page.getByRole('radio', { name: 'Preview changes', exact: true });
+  const liveMode = page.getByRole('radio', { name: 'Full control', exact: true });
   const savedStatuses = page.locator('.demo-save-status');
   const assertMappedHalo = async (target, message) => {
     const mapping = await target.evaluate(element => {
@@ -493,6 +493,11 @@ async function captureReview(page, width, name) {
     await page.locator('#preview-host').evaluate(element => element.click());
     await settleFrames(page);
     await page.locator('.preview-switch').screenshot({ path: resolve(output, `${name}-preview-switch.png`) });
+    for (const choice of choices) {
+      await page.locator(`#preview-${choice}`).evaluate(element => element.click());
+      await settleFrames(page);
+      await page.locator('.product-preview').screenshot({ path: resolve(output, `${name}-preview-${choice}.png`) });
+    }
     try {
       const note = page.getByRole('textbox', { name: 'Guest note', exact: true });
       const checkbox = page.locator('#guest-pack');

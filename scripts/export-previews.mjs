@@ -93,12 +93,12 @@ try {
   assert.notEqual(host.id, guest.id);
   for (const browser of [host, guest]) browser.context.on('page', page => page.on('pageerror', error => errors.push(error.message)));
   const popup = await host.context.newPage(); await popup.goto(`chrome-extension://${host.id}/popup.html`);
-  await popup.setViewportSize({ width: 398, height: 800 });
+  await popup.setViewportSize({ width: 398, height: 600 });
   await popup.getByRole('button', { name: 'Share my tab', exact: false }).click();
   await popup.getByRole('button', { name: 'Share this tab', exact: true }).waitFor();
   await popup.getByLabel('Password', { exact: true }).fill('Example-42');
   await popup.getByLabel('I allow the person', { exact: false }).check();
-  await exportPreview(popup, 'share-tab', 398, 694);
+  await exportPreview(popup, 'share-tab', 398, 600);
 
   const viewer = await guest.context.newPage(); await viewer.goto(`chrome-extension://${guest.id}/viewer.html`);
   await resizePage(guest, viewer, 512, 660);
@@ -183,8 +183,15 @@ try {
     assert.ok(fit.x >= fit.stageX && fit.y >= fit.stageY && fit.right <= fit.stageRight && fit.bottom <= fit.stageBottom, `${width}: standalone shared page fits without clipping`);
     assert.ok(Math.abs(fit.width / fit.height - 1200 / 760) < 0.001, `${width}: standalone shared page preserves its aspect ratio`);
     await page.setViewportSize({ width, height: 900 }); await page.goto(`http://127.0.0.1:${fixture.address().port}/`);
-    await page.waitForFunction(() => [...document.querySelectorAll('.preview-stage iframe')].length === 3 && [...document.querySelectorAll('.preview-stage iframe')].every(frame => getComputedStyle(frame).transform !== 'none'));
-    for (const frame of await page.locator('.preview-stage iframe').all()) {
+    for (const choice of ['shared', 'host', 'guest']) {
+      await page.locator(`label[for="preview-${choice}"]`).click();
+      await page.waitForFunction(choice => {
+        const frame = document.querySelector(`#${choice}-preview iframe`);
+        if (!frame) return false;
+        const box = frame.getBoundingClientRect(), stage = frame.parentElement.getBoundingClientRect();
+        return stage.width > 0 && Math.abs(box.width - stage.width) < 1 && Math.abs(box.height - stage.height) < 1;
+      }, choice);
+      const frame = page.locator(`#${choice}-preview iframe`);
       const boxes = await frame.evaluate(frame => { const box = frame.getBoundingClientRect(), stage = frame.parentElement.getBoundingClientRect(), scale = new DOMMatrixReadOnly(getComputedStyle(frame).transform); return { width: box.width, height: box.height, stageWidth: stage.width, stageHeight: stage.height, scale: scale.a, originalWidth: Number(frame.getAttribute('width')) }; });
       assert.ok(Math.abs(boxes.width - boxes.stageWidth) < 1 && Math.abs(boxes.height - boxes.stageHeight) < 1, `${width}: uniform preview scaling fills stage`);
       assert.ok(Math.abs(boxes.scale * boxes.originalWidth - boxes.stageWidth) < 1, `${width}: original preview width is scaled`);
@@ -194,7 +201,8 @@ try {
   const retina = await previewBrowser.newContext({ deviceScaleFactor: 2, viewport: { width: 375, height: 900 } });
   const retinaPage = await retina.newPage();
   await retinaPage.goto(`http://127.0.0.1:${fixture.address().port}/`);
-  const previewDpr = await retinaPage.frameLocator('.popup-preview iframe').locator('body').evaluate(() => devicePixelRatio);
+  await retinaPage.locator('label[for="preview-host"]').click();
+  const previewDpr = await retinaPage.frameLocator('#host-preview iframe').locator('body').evaluate(() => devicePixelRatio);
   assert.equal(previewDpr, 2, 'embedded examples retain high-density text and SVG rendering');
   await retina.close();
   assert.equal(await readFile(resolve(output, 'extension.css'), 'utf8'), await readFile('apps/extension/src/styles.css', 'utf8'));
