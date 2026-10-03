@@ -221,43 +221,10 @@ async function inspectHeroFallbacks(browser, url) {
 
 async function inspectPreviews(page, context, width, origin) {
   const shared = page.getByRole('radio', { name: labels[0], exact: true });
-  const indicator = page.locator('.preview-active-indicator');
-  const switcher = page.locator('.preview-switch');
-  const waitForIndicator = async () => {
-    await page.waitForFunction(() => {
-      const switcher = document.querySelector('.preview-switch');
-      const indicator = switcher.querySelector('.preview-active-indicator');
-      const label = switcher.querySelector('input:checked + label');
-      if (switcher.dataset.indicatorReady !== 'true' || !indicator || !label) return false;
-      const active = indicator.getBoundingClientRect();
-      const target = label.getBoundingClientRect();
-      return ['left', 'top', 'width', 'height'].every(dimension => Math.abs(active[dimension] - target[dimension]) < 0.75);
-    });
-  };
   assert.ok(await shared.isChecked(), 'Shared view is the initial preview');
-  await switcher.scrollIntoViewIfNeeded();
-  await waitForIndicator();
-  assert.equal(await indicator.count(), 1, 'The segmented control keeps a single sliding active indicator');
-  assert.equal(await indicator.getAttribute('aria-hidden'), 'true', 'The decorative indicator does not add a focus or announcement target');
-  assert.equal(await indicator.evaluate(element => getComputedStyle(element).pointerEvents), 'none', 'The sliding indicator leaves native controls clickable');
-  const sliding = await page.evaluate(async () => {
-    const indicator = document.querySelector('.preview-active-indicator');
-    const initial = indicator.getBoundingClientRect().left;
-    document.querySelector('#preview-host').click();
-    await new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done)));
-    return { initial, moving: indicator.getBoundingClientRect().left, target: document.querySelector('label[for="preview-host"]').getBoundingClientRect().left };
-  });
-  assert.ok(sliding.moving > sliding.initial + 0.1 && sliding.moving < sliding.target - 0.1, `${width}px: the active indicator slides through intermediate positions`);
-  // Retarget before the first tween finishes; the final selection must still own
-  // the one indicator rather than leaving stale highlights behind.
-  await page.locator('#preview-guest').evaluate(element => element.click());
-  await waitForIndicator();
-  await page.locator('label[for="preview-shared"]').click();
-  await waitForIndicator();
   await shared.focus();
   for (const [index, choice] of [...choices, 'shared'].entries()) {
     await page.waitForFunction(name => document.getElementById(`preview-${name}`).checked, choice);
-    await waitForIndicator();
     for (const panel of choices) assert.equal(await page.locator(`#${panel}-preview`).isVisible(), panel === choice, `${width}px: ${choice} selection, ${panel} panel visibility`);
     await page.locator(`#${choice}-preview`).scrollIntoViewIfNeeded();
     await page.waitForFunction(() => [...document.querySelectorAll('.preview-stage')].filter(stage => stage.getBoundingClientRect().width > 0).every(stage => {
@@ -288,20 +255,9 @@ async function inspectPreviews(page, context, width, origin) {
     for (const choice of ['host', 'guest', 'shared']) {
       await page.locator(`label[for="preview-${choice}"]`).click();
       assert.ok(await page.locator(`#preview-${choice}`).isChecked(), `${width}px: label selects ${choice}`);
-      await waitForIndicator();
       await noOverflow(page, `${width}px: ${choice} touch target`);
     }
   }
-  await page.emulateMedia({ reducedMotion: 'reduce' });
-  await page.locator('#preview-host').evaluate(element => element.click());
-  await settleFrames(page);
-  await waitForIndicator();
-  const reducedRect = await indicator.boundingBox();
-  await page.waitForTimeout(150);
-  assert.deepEqual(await indicator.boundingBox(), reducedRect, `${width}px: reduced motion keeps the selected indicator still`);
-  await page.locator('label[for="preview-shared"]').click();
-  await waitForIndicator();
-  await page.emulateMedia({ reducedMotion: 'no-preference' });
 }
 
 async function inspectModeDemo(page, width) {

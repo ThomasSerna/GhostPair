@@ -1,7 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import gsap from "gsap";
 import { Icon } from "./Icons";
-import "./product-preview.css";
 
 const previews = {
   shared: {
@@ -77,77 +76,9 @@ function PreviewFrame({ name }: { name: PreviewName }) {
 export default function ProductPreview() {
   const [selected, setSelected] = useState<PreviewName>("shared");
   const [visited, setVisited] = useState<PreviewName[]>(["shared"]);
-  const switchControl = useRef<HTMLFieldSetElement>(null);
-  const activeIndicator = useRef<HTMLSpanElement>(null);
-  const moveIndicator = useRef<((animate: boolean) => void) | null>(null);
   const panel = useRef<HTMLDivElement>(null);
   const initial = useRef(true);
   const preview = previews[selected];
-  useLayoutEffect(() => {
-    const control = switchControl.current;
-    const indicator = activeIndicator.current;
-    if (!control || !indicator) return;
-
-    const motionPreference = matchMedia("(prefers-reduced-motion: reduce)");
-    let positioned = false;
-    function positionIndicator(animate: boolean) {
-      const label = control!.querySelector<HTMLLabelElement>(
-        "input:checked + label",
-      );
-      if (!label) return;
-      const bounds = control!.getBoundingClientRect();
-      const target = label.getBoundingClientRect();
-      const current = indicator!.getBoundingClientRect();
-      const x = target.left - bounds.left;
-      const y = target.top - bounds.top;
-      gsap.killTweensOf(indicator);
-      gsap.set(indicator, { width: target.width, height: target.height });
-
-      if (positioned && animate && !motionPreference.matches) {
-        // FLIP keeps unequal segments and interrupted slides continuous without
-        // changing layout on every animation frame.
-        gsap.fromTo(
-          indicator,
-          {
-            x: current.left - bounds.left,
-            y: current.top - bounds.top,
-            scaleX: current.width / target.width,
-            scaleY: current.height / target.height,
-          },
-          {
-            x,
-            y,
-            scaleX: 1,
-            scaleY: 1,
-            duration: 0.42,
-            ease: "back.out(0.55)",
-            overwrite: true,
-          },
-        );
-      } else {
-        gsap.set(indicator, { x, y, scaleX: 1, scaleY: 1 });
-      }
-      positioned = true;
-      control!.dataset.indicatorReady = "true";
-    }
-
-    moveIndicator.current = positionIndicator;
-    positionIndicator(false);
-    const observer = new ResizeObserver(() => positionIndicator(false));
-    observer.observe(control);
-    control.querySelectorAll("label").forEach((label) => observer.observe(label));
-    const reduceMotion = () => positionIndicator(false);
-    motionPreference.addEventListener("change", reduceMotion);
-    return () => {
-      observer.disconnect();
-      motionPreference.removeEventListener("change", reduceMotion);
-      gsap.killTweensOf(indicator);
-      moveIndicator.current = null;
-    };
-  }, []);
-  useLayoutEffect(() => {
-    moveIndicator.current?.(true);
-  }, [selected]);
   useEffect(() => {
     if (initial.current) {
       initial.current = false;
@@ -183,13 +114,8 @@ export default function ProductPreview() {
   return (
     <div className="product-preview">
       <div className="preview-toolbar">
-        <fieldset className="preview-switch" ref={switchControl}>
+        <fieldset className="preview-switch">
           <legend className="sr-only">Choose an interface example</legend>
-          <span
-            className="preview-active-indicator"
-            ref={activeIndicator}
-            aria-hidden="true"
-          />
           {(Object.keys(previews) as PreviewName[]).map((name) => (
             <div className="preview-option" key={name}>
               <input

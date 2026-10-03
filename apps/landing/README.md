@@ -41,7 +41,7 @@ This requires FFmpeg on PATH (or `GHOSTPAIR_FFMPEG` pointing to its executable) 
 
 ## Interaction illustration and performance checks
 
-The product-example selector uses a single mint indicator that slides between native radio labels, follows their measured widths, and settles immediately with reduced motion.
+The product-example selector uses its original mint selected-label feedback with native radio controls. The gallery transition remains unchanged and respects reduced motion.
 
 The mode illustration separates guest input from the host’s shared page. Visual only shows passive text, checkbox and button overlays on the host without changing original values or saving. Each demo preview expires one second after its latest action; typing and choices have independent timers. The small duration note labels this as the demo timing: the extension supports configurable text/choice lifetimes, with persistent previews by default. Guest inputs return to the host’s original values when their previews expire.
 

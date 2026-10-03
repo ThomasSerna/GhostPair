@@ -125,7 +125,7 @@ At 800px navigation becomes a button-controlled vertical menu. The menu exposes 
 
 ### Product preview
 
-A labeled native radio group selects Shared view, Host a session, or Join a session. One mint indicator slides beneath the selected ink label in a 0.42s GSAP transition. Measured label geometry supports unequal widths and responsive resizing; interrupted transitions continue from the current position. Keyboard focus outlines the associated label. Reduced motion positions the indicator immediately. The selected gallery uses a 0.55s GSAP reveal with a small upward movement and shallow clip; reduced motion disables it.
+A labeled native radio group selects Shared view, Host a session, or Join a session. Selected labels use mint/ink; hover uses the lighter panel. Keyboard focus outlines the associated label. The selected gallery uses a 0.55s GSAP reveal with a small upward movement and shallow clip; reduced motion disables it.
 
 Each noninteractive iframe sits inside a full-size example link. Captions identify its product context; the toolbar states “The real interface. Example data.” The gallery's rounded panel frames the unchanged export.
 
