@@ -73,7 +73,7 @@ function PreviewFrame({ name }: { name: PreviewName }) {
   );
 }
 
-export default function ProductPreview({ motionPaused = false }: { motionPaused?: boolean }) {
+export default function ProductPreview() {
   const [selected, setSelected] = useState<PreviewName>("shared");
   const [visited, setVisited] = useState<PreviewName[]>(["shared"]);
   const panel = useRef<HTMLDivElement>(null);
@@ -85,7 +85,7 @@ export default function ProductPreview({ motionPaused = false }: { motionPaused?
       return;
     }
     if (
-      motionPaused || matchMedia("(prefers-reduced-motion: reduce)").matches ||
+      matchMedia("(prefers-reduced-motion: reduce)").matches ||
       !panel.current
     )
       return;
@@ -104,7 +104,7 @@ export default function ProductPreview({ motionPaused = false }: { motionPaused?
       );
     }, panel);
     return () => context.revert();
-  }, [selected, motionPaused]);
+  }, [selected]);
   function choose(name: PreviewName) {
     setSelected(name);
     setVisited((current) =>

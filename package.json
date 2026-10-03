@@ -19,6 +19,8 @@
     "dev:extension": "npm run dev -w @ghostpair/extension",
     "dev:landing": "npm run dev -w @ghostpair/landing",
     "build:landing": "npm run build -w @ghostpair/landing",
+    "render:landing-hero": "node scripts/render-landing-hero.mjs",
+    "benchmark:landing": "node scripts/benchmark-landing.mjs",
     "preview:landing": "npm run preview -w @ghostpair/landing",
     "test:landing": "node scripts/inspect-site.mjs",
     "package": "npm run build && node scripts/package.mjs",

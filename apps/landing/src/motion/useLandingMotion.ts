@@ -6,8 +6,6 @@ gsap.registerPlugin(ScrollTrigger);
 
 export function useLandingMotion(
   root: RefObject<HTMLElement | null>,
-  sceneProgress: RefObject<number>,
-  paused: boolean,
 ) {
   useLayoutEffect(() => {
     const element = root.current;
@@ -19,7 +17,7 @@ export function useLandingMotion(
         desktop: "(min-width: 900px)",
       },
       (context) => {
-        if (!context.conditions?.motion || paused) return;
+        if (!context.conditions?.motion) return;
         const select = gsap.utils.selector(element);
         gsap
           .timeline({ defaults: { ease: "expo.out", duration: 1.5 } })
@@ -55,14 +53,6 @@ export function useLandingMotion(
               scrub: 1,
             },
           });
-          ScrollTrigger.create({
-            trigger: select(".hero")[0],
-            start: "top top",
-            end: "bottom top",
-            onUpdate: (trigger) => {
-              sceneProgress.current = trigger.progress;
-            },
-          });
         }
         const path = element.querySelector<SVGPathElement>(".signal-path");
         if (path) {
@@ -73,14 +63,14 @@ export function useLandingMotion(
               scrollTrigger: {
                 trigger: select(".connection-stage")[0],
                 start: "top 80%",
-                end: "bottom 35%",
-                scrub: 0.7,
+                end: "bottom 50%",
+                scrub: 0.45,
               },
             })
             .to(path, { strokeDashoffset: 0, duration: 1.8, ease: "none" }, 0)
             .fromTo(
               select(".connection-node"),
-              { y: 18, opacity: 0.5 },
+              { y: 18, opacity: 0.65 },
               {
                 y: 0,
                 opacity: 1,
@@ -95,6 +85,24 @@ export function useLandingMotion(
               { rotate: -15, scale: 0.9 },
               { rotate: 0, scale: 1, duration: 1.3, ease: "power2.out" },
               0.3,
+            )
+            .fromTo(
+              select(".browser-symbol > .icon"),
+              { color: "#71937f" },
+              { color: "#b5f0cd", duration: 0.65, stagger: 1, ease: "power2.out" },
+              0,
+            )
+            .fromTo(
+              select(".core-symbol .brand-mark"),
+              { color: "#b5f0cd" },
+              { color: "#cef7df", duration: 0.65, ease: "power2.out" },
+              0.5,
+            )
+            .fromTo(
+              select(".guest-cursor"),
+              { backgroundColor: "#20302a", color: "#b5f0cd", borderColor: "#71937f" },
+              { backgroundColor: "#b5f0cd", color: "#11261b", borderColor: "#b5f0cd", duration: 0.65, ease: "power2.out" },
+              1,
             );
         }
         select("[data-reveal]").forEach((target: Element) => {
@@ -130,7 +138,6 @@ export function useLandingMotion(
     return () => {
       active = false;
       media.revert();
-      sceneProgress.current = 0;
     };
-  }, [root, sceneProgress, paused]);
+  }, [root]);
 }

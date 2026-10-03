@@ -62,6 +62,7 @@
     --panel-light: #20302a;
     --mint: #b5f0cd;
     --mint-hover: #cef7df;
+    --simulation-click: #7871e8;
     --text: #eef3f1;
     --muted: #a3b3ac;
     --line: #2b3935;
@@ -384,9 +385,33 @@
     width: 100%;
     height: 100%;
   }
-  .hero-scene canvas {
+  .hero-scene {
+    position: relative;
+    pointer-events: none;
+  }
+  .hero-scene-still,
+  .hero-scene video {
+    position: absolute;
+    inset: 0;
     width: 100%;
     height: 100%;
+  }
+  .hero-scene-poster,
+  .hero-scene video {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+  }
+  .hero-scene video {
+    opacity: 0;
+    /* Hide codec rounding at the empty edge of the forest-colored frame. */
+    mask-image: linear-gradient(to right, transparent, var(--text) 5%, var(--text) 95%, transparent);
+  }
+  .hero-scene[data-playing="true"] video {
+    opacity: 1;
+  }
+  .hero-scene[data-playing="true"] .hero-scene-poster {
+    opacity: 0;
   }
   .scene-fallback {
     display: grid;
@@ -406,94 +431,6 @@
     display: flex;
     align-items: center;
     gap: 8px;
-  }
-  .hero-bottom {
-    display: flex;
-    justify-content: space-between;
-    gap: 32px;
-    align-items: center;
-    padding-top: 25px;
-    border-top: 1px solid var(--line);
-  }
-  .hero-route {
-    display: flex;
-    align-items: center;
-    gap: 22px;
-    width: min(64%, 730px);
-    color: var(--muted);
-    font-size: 12px;
-  }
-  .hero-route > span {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    white-space: nowrap;
-  }
-  .hero-route i {
-    flex: 1;
-    min-width: 12px;
-    height: 1px;
-    background: var(--line);
-    position: relative;
-  }
-  .hero-route i::after {
-    content: "";
-    position: absolute;
-    width: 5px;
-    height: 5px;
-    right: 0;
-    top: -2px;
-    border-top: 1px solid var(--muted);
-    border-right: 1px solid var(--muted);
-    transform: rotate(45deg);
-  }
-  .hero-route .route-brand {
-    color: var(--mint);
-  }
-  .route-brand .brand-mark {
-    width: 27px;
-    height: 27px;
-  }
-  .route-dot {
-    width: 7px;
-    height: 7px;
-    border: 1px solid var(--mint);
-    border-radius: 50%;
-  }
-  .guest-dot {
-    background: var(--mint);
-  }
-  .hero-bottom-actions {
-    display: flex;
-    gap: 20px;
-    align-items: center;
-  }
-  .scroll-link {
-    display: flex;
-    gap: 14px;
-    align-items: center;
-    font-size: 11px;
-    color: var(--muted);
-  }
-  .scroll-link .icon {
-    width: 14px;
-    height: 14px;
-  }
-  .motion-toggle {
-    border: 1px solid var(--line);
-    background: transparent;
-    width: 44px;
-    height: 44px;
-    display: grid;
-    place-items: center;
-    border-radius: 50%;
-  }
-  .motion-toggle:hover {
-    background: var(--panel);
-  }
-  .motion-toggle .icon {
-    width: 15px;
-    height: 15px;
   }
 
   .section-heading {
@@ -552,7 +489,7 @@
     width: 130px;
     height: 110px;
     stroke-width: 0.55px;
-    color: #71937f;
+    color: var(--mint);
   }
   .symbol-cursor {
     position: absolute;
@@ -572,9 +509,9 @@
     transform: rotate(-45deg);
   }
   .guest-cursor {
-    background: var(--panel-light);
-    color: var(--mint);
-    border: 1px solid #71937f;
+    background: var(--mint);
+    color: var(--ink);
+    border: 1px solid var(--mint);
   }
   .core-symbol {
     display: grid;
@@ -586,6 +523,7 @@
   .core-symbol .brand-mark {
     width: 110px;
     height: 110px;
+    color: var(--mint-hover);
   }
   .node-role {
     margin-top: 18px;
@@ -1187,12 +1125,6 @@
     height: 14px;
     transform: rotate(-90deg);
   }
-  .motion-paused *,
-  .motion-paused *::before,
-  .motion-paused *::after {
-    transition-duration: 0s !important;
-    animation-play-state: paused !important;
-  }
 }
 
 @layer responsive {
@@ -1344,16 +1276,6 @@
     .art-caption {
       bottom: 17px;
       font-size: 10px;
-    }
-    .hero-route {
-      width: 100%;
-      gap: 15px;
-    }
-    .hero-bottom-actions .scroll-link {
-      display: none;
-    }
-    .hero-bottom {
-      gap: 24px;
     }
     .section-heading {
       gap: 32px;
@@ -1582,32 +1504,6 @@
       align-self: center;
       margin-bottom: 24px;
       font-size: 10px;
-    }
-    .hero-bottom {
-      padding-top: 18px;
-      gap: 12px;
-    }
-    .hero-route {
-      font-size: 10px;
-      gap: 10px;
-    }
-    .hero-route > span {
-      gap: 6px;
-    }
-    .hero-route .route-brand {
-      gap: 3px;
-    }
-    .route-brand .brand-mark {
-      width: 23px;
-      height: 23px;
-    }
-    .route-dot {
-      width: 5px;
-      height: 5px;
-    }
-    .motion-toggle {
-      width: 44px;
-      height: 44px;
     }
     .section {
       padding-block: 74px;

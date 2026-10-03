@@ -1,0 +1,88 @@
+@layer reset, base, components, responsive;
+
+@layer components {
+  .demo-guest {
+    position: relative;
+  }
+
+  .demo-click-halo {
+    position: absolute;
+    z-index: 2;
+    width: 30px;
+    height: 30px;
+    border: 2px solid var(--simulation-click);
+    border-radius: 50%;
+    background: color-mix(in srgb, var(--simulation-click) 12%, transparent);
+    pointer-events: none;
+    animation: demo-preview-click 500ms linear forwards;
+  }
+
+  .demo-save-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px 16px;
+    margin-top: 22px;
+    min-height: 44px;
+  }
+
+  .demo-save {
+    display: inline-flex;
+    justify-content: center;
+    align-items: center;
+    padding: 10px 17px;
+    min-height: 44px;
+    border: 0;
+    border-radius: 6px;
+    background: var(--mint);
+    color: var(--ink);
+    font-size: 12px;
+    line-height: 1.4;
+    font-weight: 600;
+  }
+
+  button.demo-save:hover {
+    background: var(--mint-hover);
+  }
+
+  button.demo-save:active {
+    background: var(--mint);
+  }
+
+  button.demo-save:focus-visible {
+    outline: 2px solid var(--mint);
+    outline-offset: 4px;
+  }
+
+  .demo-save-status {
+    color: var(--mint);
+    font-size: 11px;
+    line-height: 1.4;
+  }
+
+  @keyframes demo-preview-click {
+    from {
+      transform: scale(0.6);
+      opacity: 1;
+    }
+    to {
+      transform: scale(1.3);
+      opacity: 0;
+    }
+  }
+
+  @keyframes demo-preview-click-static {
+    0%, 99% { opacity: 1; }
+    100% { opacity: 0; }
+  }
+}
+
+@layer responsive {
+  @media (prefers-reduced-motion: reduce) {
+    .demo-click-halo {
+      animation-name: demo-preview-click-static;
+      animation-duration: 500ms !important;
+      transform: none;
+    }
+  }
+}

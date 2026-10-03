@@ -10,11 +10,9 @@ const releases = `${repository}/releases/latest`;
 
 export default function App() {
   const root = useRef<HTMLDivElement>(null);
-  const sceneProgress = useRef(0);
-  const [paused, setPaused] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const menuButton = useRef<HTMLButtonElement>(null);
-  useLandingMotion(root, sceneProgress, paused);
+  useLandingMotion(root);
   useEffect(() => {
     const close = (event: KeyboardEvent) => {
       if (event.key === "Escape" && menuOpen) {
@@ -27,7 +25,7 @@ export default function App() {
   }, [menuOpen]);
 
   return (
-    <div ref={root} className={`site${paused ? " motion-paused" : ""}`}>
+    <div ref={root} className="site">
       <a className="skip-link" href="#main">
         Skip to content
       </a>
@@ -114,44 +112,12 @@ export default function App() {
                   </div>
                 }
               >
-                <HeroScene progress={sceneProgress} paused={paused} />
+                <HeroScene />
               </Suspense>
             </div>
             <div className="art-caption">
               <span className="status-dot" />
               Two browsers. One shared space.
-            </div>
-          </div>
-          <div className="hero-bottom">
-            <div className="hero-route" aria-label="Host to GhostPair to Guest">
-              <span>
-                <span className="route-dot" />
-                Host
-              </span>
-              <i />
-              <span className="route-brand">
-                <BrandMark />
-                GhostPair
-              </span>
-              <i />
-              <span>
-                Guest
-                <span className="route-dot guest-dot" />
-              </span>
-            </div>
-            <div className="hero-bottom-actions">
-              <a href="#how-it-works" className="scroll-link">
-                Scroll to connect <Icon name="download" />
-              </a>
-              <button
-                type="button"
-                className="motion-toggle"
-                onClick={() => setPaused(!paused)}
-                aria-pressed={paused}
-                aria-label={paused ? "Resume animations" : "Pause animations"}
-              >
-                <Icon name={paused ? "play" : "pause"} />
-              </button>
             </div>
           </div>
         </section>
@@ -261,7 +227,7 @@ export default function App() {
                 browsing together looks like.
               </p>
             </div>
-            <ProductPreview motionPaused={paused} />
+            <ProductPreview />
           </div>
         </section>
 

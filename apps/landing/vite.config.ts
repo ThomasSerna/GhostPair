@@ -18,7 +18,7 @@ const preservedAssets = new Map([
 function websiteAssets(): Plugin {
   return {
     name: "ghostpair-website-assets",
-    async generateBundle() {
+    async generateBundle(_options, bundle) {
       const license = await readFile(
         new URL("./LICENSE", import.meta.resolve("@fontsource-variable/manrope")),
         "utf8",
@@ -28,6 +28,17 @@ function websiteAssets(): Plugin {
         fileName: "assets/landing/Manrope-OFL.txt",
         source: license,
       });
+      // Keep each generated poster's source record beside its hashed output.
+      for (const asset of Object.values(bundle)) {
+        if (asset.type !== "asset" || !asset.fileName.endsWith(".webp")) continue;
+        const originalName = asset.names.find((name) => /^signal-(desktop|mobile)\.webp$/.test(name));
+        if (!originalName) continue;
+        this.emitFile({
+          type: "asset",
+          fileName: `${asset.fileName}.json`,
+          source: await readFile(new URL(`./src/assets/hero/${originalName}.json`, import.meta.url)),
+        });
+      }
     },
     configureServer(server) {
       // Serve the unchanged exports directly from their authoritative docs location.

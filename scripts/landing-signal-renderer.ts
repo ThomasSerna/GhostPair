@@ -1,11 +1,6 @@
-/**
- * The hero's rendering boundary. A Three.js scene can replace this renderer
- * without changing the component or its scroll / pointer inputs.
- */
+/** Offline source artwork. Only the asset generator imports this renderer. */
 export interface SignalRenderer {
   resize(width: number, height: number, pixelRatio: number): void;
-  setProgress(progress: number): void;
-  setPointer(x: number, y: number): void;
   render(time: number): void;
   dispose(): void;
 }
@@ -117,11 +112,11 @@ function makeSurface(
 
 export function createSignalRenderer(
   canvas: HTMLCanvasElement,
+  compact = false,
 ): SignalRenderer | null {
   const context = canvas.getContext("2d", { alpha: true });
   if (!context) return null;
 
-  const compact = window.matchMedia("(max-width: 700px)").matches;
   const surfaces = [
     makeSurface(0, compact ? 56 : 64, compact ? 24 : 32),
     makeSurface(1, compact ? 56 : 64, compact ? 24 : 32),
@@ -130,11 +125,6 @@ export function createSignalRenderer(
   const visibleFaces: Face[] = [];
   let width = 1;
   let height = 1;
-  let progress = 0;
-  let pointerX = 0;
-  let pointerY = 0;
-  let smoothX = 0;
-  let smoothY = 0;
   let disposed = false;
 
   return {
@@ -147,26 +137,18 @@ export function createSignalRenderer(
       context.lineJoin = "round";
       context.lineCap = "round";
     },
-    setProgress(value) {
-      progress = Math.max(0, Math.min(1, value));
-    },
-    setPointer(x, y) {
-      pointerX = Math.max(-1, Math.min(1, x));
-      pointerY = Math.max(-1, Math.min(1, y));
-    },
     render(time) {
       if (disposed) return;
-      context.clearRect(0, 0, width, height);
-      smoothX += (pointerX - smoothX) * 0.055;
-      smoothY += (pointerY - smoothY) * 0.055;
-      const elapsed = time * 0.001;
+      context.fillStyle = "#101918";
+      context.fillRect(0, 0, width, height);
+      const elapsed = (time % 42000) * 0.001;
       // Oscillations share one period, so the idle sculpture has no reset.
       const cycle = (elapsed * TAU) / 42;
       const ax =
-        -0.56 + Math.sin(cycle) * 0.13 + smoothY * 0.07 + progress * 0.28;
+        -0.56 + Math.sin(cycle) * 0.13;
       const ay =
-        -0.48 + Math.cos(cycle) * 0.12 + smoothX * 0.1 + progress * 0.3;
-      const az = -0.36 + Math.sin(cycle) * 0.055 - progress * 0.11;
+        -0.48 + Math.cos(cycle) * 0.12;
+      const az = -0.36 + Math.sin(cycle) * 0.055;
       const cx = Math.cos(ax);
       const sx = Math.sin(ax);
       const cy = Math.cos(ay);
@@ -249,7 +231,8 @@ export function createSignalRenderer(
         // handful brighten as the signal travels around each connected loop.
         let traveling = false;
         if (face.thread % 7 < 2) {
-          const pulse = (elapsed * 0.46 + face.surface * 2.7 + face.thread * 0.025) % TAU;
+          // Three signal revolutions fit the same 42-second geometry period.
+          const pulse = (cycle * 3 + face.surface * 2.7 + face.thread * 0.025) % TAU;
           const distance = Math.abs(face.phase - pulse);
           traveling = Math.min(distance, TAU - distance) < 0.28;
         }
