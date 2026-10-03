@@ -161,6 +161,9 @@ input,textarea{caret-color:var(--mint)}
 .icon-button svg{width:20px;height:20px}
 .start-panel{padding-bottom:22px}
 .session-choices{display:grid;gap:12px}
+.share-choice .intent-action{width:100%}
+.connection-code{overflow-wrap:anywhere}
+.connection-code span{user-select:text}
 .popup .intent-action{margin:0;padding:18px;text-align:left}
 .intent-action>span{display:block;font-size:15px;font-weight:650}
 .intent-action>small{display:block;font-size:12px;font-weight:400;line-height:1.5;margin-top:6px}

@@ -1,5 +1,15 @@
 # GhostPair validation
 
+## Connection code and 0.6.2 preview durations: October 3, 2026
+
+Release metadata has matching version **0.6.2** in the root package, all four workspace packages, their lockfile records and the extension source manifest. The versioned release notes, current publishing package names and current behavior documentation cover the connection code beneath **Share my tab**, default 0.5-second temporary previews, the 0.1–10-second range and persistent button previews. Earlier validation records below describe their original releases.
+
+Workspace type checks, **149 Vitest tests in 16 files**, **8 Node release tests**, production builds and `npm run package:store` passed. Both ZIPs contain **18 files**, version **0.6.2**, the official signaling URL and the new connection-code text. Regression coverage includes saved-duration migration without losing persistent choices, rejecting new durations above 10 seconds, cancelling temporary expiry when switching to persistent, and restoring the configured 10-second expiry across authorized frames.
+
+`node scripts/inspect-ui.mjs` passed **125 assertions**, produced **21 screenshots** and reported no page errors. Actual toolbar popup checks passed **seven states in each browser** on Chrome **154.0.8037.93** and Edge **154.0.4258.53** at **398px** wide and **456–600px** tall. The real home screen explains code generation on first installation and displays the actual saved code after sharing ends and returning home. Screenshots confirmed the small code text fits beneath the sharing action. The visual probe passed in Chrome and Edge, including button previews remaining after 600ms under **Until cleared** and clearing only their category while preserving text. The exporter refreshed the native UI examples and checked matching geometry/styles, inert behavior and landing scaling. Render's current **After CI Checks Pass** setting on `main` was verified without modifying it.
+
+Production landing QA passed **five viewports**, including navigation/focus, embedded previews, interaction modes, video playback/fallbacks, reduced motion and local assets. Landing JavaScript remains **113.9 KiB gzip**.
+
 ## Native popup sizing and 0.6.1 previews: October 3, 2026
 
 A real browser-toolbar report exposed a sizing regression that the 0.6.0 UI checks, with a fixed viewport, did not exercise. The popup's `max-width:100vw` depended on the viewport Chromium was trying to calculate. The native action target reproduced at **74px** in Chrome and Edge. Version **0.6.1** gives the popup document an explicit 398px width and removes that circular constraint.
