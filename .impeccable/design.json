@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-10-03T01:25:33.293Z",
+  "generatedAt": "2026-10-03T02:10:19.206Z",
   "title": "Design System: GhostPair Public Website",
   "extensions": {
     "colorMeta": {
@@ -199,6 +199,11 @@
           "oklch(84% 0.0484 158.8)",
           "oklch(95% 0.0484 158.8)"
         ]
+      },
+      "simulation-click": {
+        "role": "accent",
+        "displayName": "Extension simulation click",
+        "purpose": "Original extension click feedback, confined to the guest illustration."
       }
     },
     "typographyMeta": {
@@ -236,7 +241,7 @@
       {
         "name": "ease-standard",
         "value": "cubic-bezier(0.16, 1, 0.3, 1)",
-        "purpose": "Action lift and brand/detail transitions; CSS transitions stop during pause or reduced motion."
+        "purpose": "Action lift and brand/detail transitions; CSS transitions stop with reduced motion."
       },
       {
         "name": "hero-arrival",
@@ -245,8 +250,8 @@
       },
       {
         "name": "connection-trace",
-        "value": "scrub 0.7; 1.8s timeline trace",
-        "purpose": "ScrollTrigger traces the Host → GhostPair → Guest line and sequences the three nodes."
+        "value": "top 80% to bottom 50%; scrub 0.45; 1.8s timeline trace",
+        "purpose": "ScrollTrigger traces the connection earlier and sequences brighter mint symbols."
       },
       {
         "name": "section-reveal",
@@ -256,17 +261,22 @@
       {
         "name": "preview-reveal",
         "value": "0.55s expo.out; y 12px; clip inset(0 0 3% 0)",
-        "purpose": "Selection reveals the gallery; disabled by pause and reduced motion."
+        "purpose": "Selection reveals the gallery; disabled by reduced motion."
       },
       {
         "name": "hero-idle",
-        "value": "42s continuous cycle; 30fps target, adaptive 20fps",
-        "purpose": "Small sculpture oscillation and moving filaments; continuous drawing stops offscreen, while hidden, during pause, or with reduced motion."
+        "value": "42s prerendered H.264 loop; 30fps",
+        "purpose": "Original sculpture oscillation and moving filaments; playback stops offscreen or hidden, with static posters for reduced motion and playback failure."
       },
       {
         "name": "hero-parallax",
         "value": "y -70px; scrub 1",
         "purpose": "Desktop-only hero movement from 900px, with normalized scroll progress passed to the renderer."
+      },
+      {
+        "name": "simulation-click",
+        "value": "500ms linear; scale 0.6 to 1.3; opacity 1 to 0",
+        "purpose": "Extension click halo in the guest illustration; reduced motion keeps a static ring for the same duration."
       }
     ],
     "breakpoints": [
@@ -367,9 +377,9 @@
     {
       "name": "Hero fallback",
       "kind": "custom",
-      "description": "Static linked-loop fallback from HeroScene; the shipping sculpture uses the procedural canvas renderer.",
-      "html": "<div class=\"ds-sculpture\"><svg viewBox=\"0 0 620 600\" aria-hidden=\"true\" focusable=\"false\"><g fill=\"none\" stroke-width=\"24\" stroke-linecap=\"round\"><ellipse cx=\"238\" cy=\"282\" rx=\"148\" ry=\"106\" transform=\"rotate(-28 238 282)\" stroke=\"#9ddaab\"/><ellipse cx=\"385\" cy=\"322\" rx=\"138\" ry=\"103\" transform=\"rotate(28 385 322)\" stroke=\"#568c67\"/><path d=\"M118 358 C167 404 266 385 333 321\" stroke=\"#0c1714\" stroke-width=\"34\"/><path d=\"M118 358 C167 404 266 385 333 321\" stroke=\"#9ddaab\"/></g></svg></div>",
-      "css": ".ds-sculpture{width:100%;max-width:620px;background:var(--canvas,#101918)}.ds-sculpture svg{display:block;width:100%;height:auto}"
+      "description": "Matching lossless poster of the original sculpture, used during loading, reduced motion and video playback failure.",
+      "html": "<picture class=\"ds-sculpture\"><source media=\"(max-width:700px)\" srcset=\"apps/landing/src/assets/hero/signal-mobile.webp\"><img src=\"apps/landing/src/assets/hero/signal-desktop.webp\" width=\"1280\" height=\"1080\" alt=\"\"></picture>",
+      "css": ".ds-sculpture{display:block;width:100%;max-width:620px;background:var(--canvas,#101918)}.ds-sculpture img{display:block;width:100%;height:auto;object-fit:contain}"
     }
   ],
   "narrative": {
@@ -379,8 +389,8 @@
       "Forest canvas, pale mint actions, and an inverse mint installation field.",
       "Self-hosted Manrope Variable with a large, compact heading hierarchy.",
       "Flat interface fields, thin rules, and restrained control corners.",
-      "Interlinked procedural geometry with scroll and pointer response.",
-      "Native controls, visible focus, motion pause, and reduced-motion support."
+      "Interlinked filament geometry preserved as a prerendered video loop.",
+      "Native controls, visible focus, automatic playback, and reduced-motion support."
     ],
     "rules": [
       {
@@ -398,14 +408,14 @@
       "Do keep the forest/mint palette and linked-loop identity recognizable.",
       "Do use the website's self-hosted Manrope while preserving the extension exports' existing typography.",
       "Do keep native radio groups, labeled fields, visible focus, and the skip link.",
-      "Do preserve pause, reduced motion, native scrolling, and readable settled content.",
+      "Do preserve reduced motion, automatic offscreen suspension, native scrolling, and readable settled content.",
       "Do keep authentic examples labeled and linked to their full-size exports.",
       "Do edit the React/Vite source and build relative assets for the GitHub Pages project path."
     ],
     "donts": [
       "Don't restyle the extension or its exported product interfaces as part of website work.",
       "Don't present the mode illustration or example data as an actual connected session.",
-      "Don't make product content or controls depend on the decorative canvas."
+      "Don't make product content or controls depend on the decorative video."
     ]
   }
 }

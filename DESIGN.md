@@ -16,6 +16,7 @@ colors:
   ink-hover: "#244333"
   tag-surface: "#223c2e"
   diagram-stroke: "#71937f"
+  simulation-click: "#7871e8"
 typography:
   display: { fontFamily: "\"Manrope Variable\", \"Segoe UI\", sans-serif", fontSize: "clamp(72px, 7.8vw, 96px)", fontWeight: 500, lineHeight: 1.05, letterSpacing: "-0.04em" }
   headline: { fontFamily: "\"Manrope Variable\", \"Segoe UI\", sans-serif", fontSize: "clamp(38px, 4.4vw, 64px)", fontWeight: 500, lineHeight: 1.13, letterSpacing: "-0.035em" }
@@ -54,8 +55,8 @@ This system is built in apps/landing/src/ and compiled to docs/index.html and do
 - Forest canvas, pale mint actions, and an inverse mint installation field.
 - Self-hosted Manrope Variable with a large, compact heading hierarchy.
 - Flat interface fields, thin rules, and restrained control corners.
-- Interlinked procedural geometry with scroll and pointer response.
-- Native controls, visible focus, motion pause, and reduced-motion support.
+- Interlinked filament geometry preserved as a prerendered video loop.
+- Native controls, visible focus, automatic playback, and reduced-motion support.
 
 ## Colors
 
@@ -110,9 +111,9 @@ The website has no box shadows. Canvas, forest, and panel color separate section
 
 ## Shapes
 
-Controls use gently rounded corners; contained examples use larger preview and panel radii. Circular dots identify participants and states, and the motion control uses the circle radius. The established linked-loop mark appears in the header, connection center, installation field, and footer.
+Controls use gently rounded corners; contained examples use larger preview and panel radii. Circular dots identify participants and states. The established linked-loop mark appears in the header, connection center, installation field, and footer.
 
-The hero consists of two orthogonal interlocked loops, each with a shaded tube surface and continuous longitudinal fibers. Bright traveling filaments reinforce connection. The geometry uses 64 segments and 32 strands per loop, reduced to 56 and 24 at the renderer's 700px threshold. It is procedural canvas artwork; the interface remains in the DOM.
+The hero consists of two orthogonal interlocked loops, each with a shaded tube surface and continuous longitudinal fibers. Bright traveling filaments reinforce connection. The offline source uses 64 segments and 32 strands per loop, reduced to 56 and 24 for the mobile asset. Videos and posters preserve this artwork while the interface remains in the DOM.
 
 ## Components
 
@@ -124,13 +125,15 @@ At 800px navigation becomes a button-controlled vertical menu. The menu exposes 
 
 ### Product preview
 
-A labeled native radio group selects Shared view, Host a session, or Join a session. Selected labels use mint/ink; hover uses the lighter panel. Keyboard focus outlines the associated label. The selected gallery uses a 0.55s GSAP reveal with a small upward movement and shallow clip; pause and reduced motion disable it.
+A labeled native radio group selects Shared view, Host a session, or Join a session. Selected labels use mint/ink; hover uses the lighter panel. Keyboard focus outlines the associated label. The selected gallery uses a 0.55s GSAP reveal with a small upward movement and shallow clip; reduced motion disables it.
 
 Each noninteractive iframe sits inside a full-size example link. Captions identify its product context; the toolbar states “The real interface. Example data.” The gallery's rounded panel frames the unchanged export.
 
 ### Interaction-mode illustration
 
-A labeled native radio group starts in Visual only. The guest note and checkbox change locally while the host output stays at its prior values; in Live control, subsequent edits update both. Reset restores Visual only and the initial example values. Status tags label Preview, Live, and Original.
+A labeled native radio group starts in Visual only. The guest note and checkbox change locally while the host output stays at its prior values; in Live control, subsequent edits update both. A Save plans button previews its click in Visual only and confirms Plans saved in both panels in Live control. Changing modes alone does not apply pending fields. Reset restores Visual only, initial values, and empty confirmations. Status tags label Preview, Live, and Original.
+
+Clicks and taps anywhere in the guest's simulated page show the extension's purple halo: 30px, a 2px #7871e8 border, 12% accent fill, and a linear 500ms scale from 0.6 to 1.3 while fading. Keyboard activation uses the control center. The effects use CSS and disappear after completion; reduced motion shows a static ring for the same duration. The product's interaction accent is retained only in this faithful feedback example.
 
 Inputs use a canvas background, thin line border, field radius, and mint focus border. The two panel headers and read-only host output share the same proportions. The visible “Interactive illustration · Example data” caption establishes the example's status.
 
@@ -140,11 +143,11 @@ A native details element contains connection facts between thin rules. Its plus 
 
 ### Hero and motion
 
-HeroScene is lazy-loaded. It owns visibility, resize, pointer input, pause, and reduced-motion handling. The SignalRenderer interface exposes resize, setProgress, setPointer, render, and dispose so a later Three.js renderer can use the same boundary. A React Three Fiber implementation can replace the scene component while keeping its progress and pause props.
+HeroScene is lazy-loaded and owns playback, visibility, responsive asset selection, and reduced-motion handling. Its two local MP4/H.264 assets have a 42s period at 30fps, without audio. Desktop is 1280×1080; mobile is 720×608 and selected at 700px. A matching lossless WebP poster appears immediately and remains visible if loading or playback fails. Initial reduced motion does not download a video. The procedural source lives only in the offline generator.
 
-The current canvas renderer has a continuous 42s idle cycle with small pointer and scroll rotations. It caps pixel ratio at 1.75, or 1.5 for coarse pointers, targets 30 frames per second, and reduces to 20 when average drawing exceeds 12ms. It stops continuous drawing offscreen, in a hidden document, when paused, or with reduced motion. A static SVG linked-loop fallback appears if a 2D context is unavailable.
+The sculpture's shape and traveling filaments share a continuous 42s period. Playback stops offscreen and in a hidden document, resuming when visible. Reduced motion uses the static poster. There is no geometry calculation, pointer response, or animation-frame rendering loop in the visitor's hero component.
 
-GSAP introduces the hero with expo.out easing, traces Host → GhostPair → Guest as the visitor scrolls, and reveals sections once. Desktop hero parallax starts at 900px. The pause control uses aria-pressed; reduced motion also turns smooth scrolling off. Native page scrolling remains available throughout.
+GSAP introduces the hero with expo.out easing, traces Host → GhostPair → Guest as the visitor scrolls, and reveals sections once. The connection runs from top 80% to bottom 50% with a 0.45s scrub; browser symbols and the guest cursor brighten to mint as it completes. Reduced motion presents the complete connection and turns smooth scrolling off. Desktop hero parallax starts at 900px. The introductory status strip and manual motion pause have been removed; native page scrolling remains available throughout.
 
 ## Do's and Don'ts
 
@@ -153,7 +156,7 @@ GSAP introduces the hero with expo.out easing, traces Host → GhostPair → Gue
 - Do keep the forest/mint palette and linked-loop identity recognizable.
 - Do use the website's self-hosted Manrope while preserving the extension exports' existing typography.
 - Do keep native radio groups, labeled fields, visible focus, and the skip link.
-- Do preserve pause, reduced motion, native scrolling, and readable settled content.
+- Do preserve reduced motion, automatic offscreen suspension, native scrolling, and readable settled content.
 - Do keep authentic examples labeled and linked to their full-size exports.
 - Do edit the React/Vite source and build relative assets for the GitHub Pages project path.
 
@@ -161,4 +164,4 @@ GSAP introduces the hero with expo.out easing, traces Host → GhostPair → Gue
 
 - Don't restyle the extension or its exported product interfaces as part of website work.
 - Don't present the mode illustration or example data as an actual connected session.
-- Don't make product content or controls depend on the decorative canvas.
+- Don't make product content or controls depend on the decorative video.

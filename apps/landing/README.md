@@ -27,10 +27,40 @@ The build only replaces `docs/index.html` and clears the generated `docs/assets/
 
 The exported interfaces in `docs/assets/previews/` are the source of truth for product demonstrations. Keep their contents unchanged during website design work. The Vite dev middleware serves a fixed allowlist from `docs/`; it does not duplicate these files into the app. `scripts/export-previews.mjs` remains the separate workflow for refreshing exports from the actual extension.
 
-## Hero renderer
+## Hero media
 
-`src/components/hero/HeroScene.tsx` owns the canvas lifecycle, visibility, pointer input and reduced-motion behavior. `src/components/hero/signal-renderer.ts` defines the `SignalRenderer` boundary: `resize`, `setProgress`, `setPointer`, `render` and `dispose`. The page passes normalized GSAP scroll progress through a React ref, so rendering does not cause a React update on each frame. GSAP owns page transitions and scroll sequencing.
+`src/components/hero/HeroScene.tsx` plays an inline, muted H.264 loop instead of calculating the sculpture on the visitor's main thread. It selects the mobile asset at 700px, pauses outside the viewport or in a hidden tab, and resumes when visible. Matching WebP artwork appears during loading, when playback fails or is blocked, and with reduced motion. Initial reduced motion downloads no video. The hero's DOM entrance and parallax remain in GSAP; pointer and scroll no longer rotate the geometry.
 
-This boundary allows a later Three.js implementation of the same renderer interface without rewriting page content or navigation. A React Three Fiber alternative can replace the scene component while retaining its progress and pause props. Add those dependencies only when a 3D scene is implemented; lazy-load the renderer, retain the lightweight visual fallback, respect reduced-motion preferences, and dispose renderer resources on unmount. Keep product UI and readable content in the DOM.
+The original geometry lives in `scripts/landing-signal-renderer.ts`, outside the visitor's import graph. Regenerate media from the repository root with:
+
+```sh
+npm run render:landing-hero
+```
+
+This requires FFmpeg on PATH (or `GHOSTPAIR_FFMPEG` pointing to its executable) and Playwright Chromium, Chrome or Edge. The generator produces desktop 1280×1080 and mobile 720×608 videos at 30 fps for exactly 42 seconds, without audio, plus lossless WebP posters. Geometry and three filament revolutions share the same period; the generator verifies the first frame against the loop boundary. Committed assets in `src/assets/hero/` are imported and emitted with relative hashed URLs by Vite. Normal builds and CI do not require FFmpeg or regenerate these media.
+
+## Interaction illustration and performance checks
+
+Visual only retains guest field previews without applying them to the host. A CSS halo matching the extension appears throughout the simulated guest page, including its Save plans button. Live control applies subsequent field edits and Save plans shows confirmation in both panels. Switching modes does not commit pending fields; reset clears fields, confirmations and click effects. Reduced motion retains static click feedback.
+
+`npm run test:landing` verifies five viewport widths, keyboard/touch interaction, video lifetime and poster fallbacks, earlier connection completion, authentic examples, and relative asset loading. It also saves stable desktop/mobile review captures using reduced motion.
+
+For a repeatable local before/after comparison, run `npm run benchmark:landing -- --label baseline` before rebuilding and `npm run benchmark:landing -- --label optimized --require-video` afterward, with other browser/encoding work stopped. Reports go to the ignored `.impeccable/review/` folder. Three eight-second samples per viewport measure scripting, main-thread work, frame intervals, transfer sizes and video playback. They measure headless Chromium's page main thread, not whole-PC CPU or GPU decoding.
+
+### Verified results, 2026-10-02
+
+The root typecheck/build passed, along with 141 unit tests and 8 release tests. On this Windows host, the existing forked Vitest runner hit an IPC channel error; the same 141 tests passed with `--pool=threads --maxWorkers=1 --minWorkers=1`. Landing browser QA passed at 320, 375, 390, 768 and 1440px, including native looping, offscreen/hidden-tab suspension, missing/blocked media fallbacks, reduced motion, keyboard/touch effects, saving and reset. An independent visual review found no material defects.
+
+Chrome 154, headless, DPR 1, three eight-second samples per viewport; medians:
+
+| Metric | Desktop before → after | Mobile before → after |
+| --- | --- | --- |
+| Scripting | 1353.4 → 51.1 ms (−96.2%) | 1303.8 → 53.2 ms (−95.9%) |
+| Main-thread work | 2179.5 → 1651.6 ms (−24.2%) | 2457.6 → 1439.1 ms (−41.4%) |
+| Page frame opportunities | 30.86 → 60.08 fps | 51.93 → 60.04 fps |
+| p95 frame interval | 50.2 → 17.4 ms | 33.3 → 17.5 ms |
+| Video download | 0 → 5.02 MiB | 0 → 2.11 MiB |
+
+Each video sample advanced about 8.04 seconds with 241 total frames. Desktop dropped no frames; mobile dropped 2, 0 and 0 across its three samples. Production JavaScript decreased from 117,568 to 116,246 gzip bytes, and the procedural renderer is absent from the visitor bundle. Videos increase the initial download: 5,260,766 bytes for desktop or 2,210,481 for mobile, plus the matching poster. Results do not establish whole-PC CPU, GPU, battery usage, or performance on physical mobile hardware.
 
 Fonts are self-hosted through `@fontsource-variable/manrope`; the browser does not need a third-party font request. The extension and its exported interface examples keep their existing typography.

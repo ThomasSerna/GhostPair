@@ -35,7 +35,7 @@ The implementation combines host-approved tab sharing, a default Visual only mod
 - Current website copy and installation instructions are in English. A language change has not been requested.
 - The visitor can inspect three static examples: sharing a tab, connecting to a host, and the connected guest viewer. These are demonstrations with example data.
 - The page explains the connection, local host approval, product examples, interaction modes, and installation in that order. A separate, labeled interaction-mode illustration lets visitors compare preview edits with live edits using example data; it does not start a session.
-- GSAP sequences page transitions and the connection diagram. The lazy-loaded hero has a canvas renderer behind a `SignalRenderer` interface for resizing, progress, pointer input, rendering, and disposal. This leaves a defined seam for a future Three.js or React Three Fiber implementation.
+- GSAP sequences page transitions and the connection diagram. The lazy-loaded hero plays a prerendered desktop/mobile video of the original sculpture, with matching static posters and visibility/reduced-motion handling. Its procedural renderer runs only in the offline asset generator.
 
 ## Capabilities and Constraints
 
@@ -57,7 +57,7 @@ GhostPair is the established product name. The website uses a linked-loop logo a
 ## Evidence on Hand
 
 - `apps/landing/src/App.tsx` and `apps/landing/src/styles.css`: public copy, installation instructions, release links, and the built website's visual rules. `apps/landing/src/components/` contains the authentic preview wrappers, mode illustration, and hero renderer.
-- `apps/landing/vite.config.ts` and `apps/landing/README.md`: relative-base build, preserved product assets, renderer seam, and development workflow. The generated public entry is `docs/index.html`, with generated assets and the Manrope license under `docs/assets/landing/`.
+- `apps/landing/vite.config.ts` and `apps/landing/README.md`: relative-base build, preserved product assets, offline hero generation, and development workflow. The generated public entry is `docs/index.html`, with generated assets and the Manrope license under `docs/assets/landing/`.
 - `docs/assets/icon.png`: website icon; the page also contains an inline logo.
 - `docs/assets/previews/`: static examples exported from the extension. `scripts/export-previews.mjs` produces them and verifies matching geometry and styles; preserve their fidelity to the unchanged extension.
 - `README.md`, `docs/architecture.md`, and `docs/validation.md`: behavior, limitations, and validation evidence. Check executed versus pending validation before making claims. `docs/privacy.html` is a publisher draft with unresolved details; do not treat placeholders as established facts.
