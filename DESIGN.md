@@ -125,15 +125,17 @@ At 800px navigation becomes a button-controlled vertical menu. The menu exposes 
 
 ### Product preview
 
-A labeled native radio group selects Shared view, Host a session, or Join a session. Selected labels use mint/ink; hover uses the lighter panel. Keyboard focus outlines the associated label. The selected gallery uses a 0.55s GSAP reveal with a small upward movement and shallow clip; reduced motion disables it.
+A labeled native radio group selects Shared view, Host a session, or Join a session. One mint indicator slides beneath the selected ink label in a 0.42s GSAP transition. Measured label geometry supports unequal widths and responsive resizing; interrupted transitions continue from the current position. Keyboard focus outlines the associated label. Reduced motion positions the indicator immediately. The selected gallery uses a 0.55s GSAP reveal with a small upward movement and shallow clip; reduced motion disables it.
 
 Each noninteractive iframe sits inside a full-size example link. Captions identify its product context; the toolbar states “The real interface. Example data.” The gallery's rounded panel frames the unchanged export.
 
 ### Interaction-mode illustration
 
-A labeled native radio group starts in Visual only. The guest note and checkbox change locally while the host output stays at its prior values; in Live control, subsequent edits update both. A Save plans button previews its click in Visual only and confirms Plans saved in both panels in Live control. Changing modes alone does not apply pending fields. Reset restores Visual only, initial values, and empty confirmations. Status tags label Preview, Live, and Original.
+A labeled native radio group starts in Visual only. The Guest input panel supplies gestures; the Host’s shared page shows their outcome. Visual text is a separate overlay covering the original field; choices use a passive checkbox marker and Save plans uses a passive button highlight. Original host values and save state stay unchanged. These demo overlays expire independently one second after their latest corresponding action, returning the guest inputs to the original values. A small note identifies the demo duration and configurable preview lifetime. The real extension defaults to persistent text/choice previews and captures its host overlays in the guest video.
 
-Clicks and taps anywhere in the guest's simulated page show the extension's purple halo: 30px, a 2px #7871e8 border, 12% accent fill, and a linear 500ms scale from 0.6 to 1.3 while fading. Keyboard activation uses the control center. The effects use CSS and disappear after completion; reduced motion shows a static ring for the same duration. The product's interaction accent is retained only in this faithful feedback example.
+In Live control, edits change both panels and Save plans confirms Plans saved in both. Switching modes discards pending previews without committing them. Reset restores Visual only, initial values, empty confirmations and no overlays.
+
+Guest clicks and taps map proportionally onto the host’s panel in both modes; Visual only checkbox choices use their marker without a halo. The purple halo retains the extension’s 30px diameter, 2px #7871e8 border, 12% accent fill, and linear scale from 0.6 to 1.3 while fading. Keyboard activation maps the control center. The demo extends transient button/click feedback to one second; this does not change extension timing. CSS carries the animation and bounded timers remove feedback; reduced motion shows a static ring for the same duration. The product's interaction accent is retained only in this feedback example.
 
 Inputs use a canvas background, thin line border, field radius, and mint focus border. The two panel headers and read-only host output share the same proportions. The visible “Interactive illustration · Example data” caption establishes the example's status.
 

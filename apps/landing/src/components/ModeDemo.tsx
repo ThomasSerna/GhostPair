@@ -9,8 +9,10 @@ import "./mode-demo.css";
 
 type InteractionMode = "visual" | "live";
 type ClickHalo = { id: number; x: number; y: number };
+type PreviewKind = "text" | "choice" | "button";
 
 const initialNote = "Bring a camera.";
+const previewDuration = 1000;
 
 export default function ModeDemo() {
   const [mode, setMode] = useState<InteractionMode>("visual");
@@ -18,18 +20,26 @@ export default function ModeDemo() {
   const [hostNote, setHostNote] = useState(initialNote);
   const [guestPacked, setGuestPacked] = useState(false);
   const [hostPacked, setHostPacked] = useState(false);
-  const [guestSaved, setGuestSaved] = useState(false);
   const [hostSaved, setHostSaved] = useState(false);
+  const [previewNote, setPreviewNote] = useState<string | null>(null);
+  const [previewPacked, setPreviewPacked] = useState<boolean | null>(null);
+  const [previewButton, setPreviewButton] = useState(false);
   const [clickHalos, setClickHalos] = useState<ClickHalo[]>([]);
   const nextHaloId = useRef(0);
   const haloTimers = useRef(new Map<number, ReturnType<typeof setTimeout>>());
+  const previewTimers = useRef(
+    new Map<PreviewKind, ReturnType<typeof setTimeout>>(),
+  );
   const pointerStart = useRef<{ id: number; x: number; y: number } | null>(null);
 
   useEffect(() => {
     const timers = haloTimers.current;
+    const previews = previewTimers.current;
     return () => {
       timers.forEach(clearTimeout);
       timers.clear();
+      previews.forEach(clearTimeout);
+      previews.clear();
     };
   }, []);
 
@@ -47,7 +57,6 @@ export default function ModeDemo() {
   }
 
   function showClickHalo(page: HTMLDivElement, clientX: number, clientY: number) {
-    if (mode !== "visual") return;
     const bounds = page.getBoundingClientRect();
     const id = nextHaloId.current++;
     const oldestId = haloTimers.current.keys().next().value;
@@ -57,14 +66,21 @@ export default function ModeDemo() {
     }
     setClickHalos((halos) => [
       ...halos.slice(-11),
-      { id, x: clientX - bounds.left, y: clientY - bounds.top },
+      {
+        id,
+        x: (clientX - bounds.left) / bounds.width,
+        y: (clientY - bounds.top) / bounds.height,
+      },
     ]);
     // Keep cleanup bounded even if a browser interrupts the CSS animation.
-    haloTimers.current.set(id, setTimeout(() => removeClickHalo(id), 750));
+    haloTimers.current.set(
+      id,
+      setTimeout(() => removeClickHalo(id), previewDuration),
+    );
   }
 
   function startPreviewClick(event: PointerEvent<HTMLDivElement>) {
-    if (mode !== "visual" || !event.isPrimary || event.button !== 0) return;
+    if (!event.isPrimary || event.button !== 0) return;
     pointerStart.current = {
       id: event.pointerId,
       x: event.clientX,
@@ -77,6 +93,11 @@ export default function ModeDemo() {
     if (!start || start.id !== event.pointerId || event.button !== 0) return;
     pointerStart.current = null;
     if (Math.hypot(event.clientX - start.x, event.clientY - start.y) > 8) return;
+    if (
+      mode === "visual" &&
+      event.target instanceof Element &&
+      event.target.closest(".demo-check")
+    ) return;
     // Pointer events fire once for label activation, before its forwarded input click.
     showClickHalo(event.currentTarget, event.clientX, event.clientY);
   }
@@ -91,6 +112,7 @@ export default function ModeDemo() {
       (button && (event.key === "Enter" || event.key === " ")) ||
       (checkbox && event.key === " ")
     ) {
+      if (mode === "visual" && checkbox) return;
       const bounds = target.getBoundingClientRect();
       showClickHalo(
         event.currentTarget,
@@ -101,42 +123,77 @@ export default function ModeDemo() {
   }
 
   function changeMode(nextMode: InteractionMode) {
+    clearPreviews();
     clearClickHalos();
+    setGuestNote(hostNote);
+    setGuestPacked(hostPacked);
     setMode(nextMode);
+  }
+
+  function clearPreviews() {
+    previewTimers.current.forEach(clearTimeout);
+    previewTimers.current.clear();
+    setPreviewNote(null);
+    setPreviewPacked(null);
+    setPreviewButton(false);
+  }
+
+  function expirePreview(kind: PreviewKind, clear: () => void) {
+    clearTimeout(previewTimers.current.get(kind));
+    previewTimers.current.set(
+      kind,
+      setTimeout(() => {
+        previewTimers.current.delete(kind);
+        clear();
+      }, previewDuration),
+    );
   }
 
   function updateNote(note: string) {
     setGuestNote(note);
-    setGuestSaved(false);
     if (mode === "live") {
       setHostNote(note);
       setHostSaved(false);
+    } else {
+      setPreviewNote(note);
+      expirePreview("text", () => {
+        setPreviewNote(null);
+        setGuestNote(hostNote);
+      });
     }
   }
 
   function updatePacked(packed: boolean) {
     setGuestPacked(packed);
-    setGuestSaved(false);
     if (mode === "live") {
       setHostPacked(packed);
       setHostSaved(false);
+    } else {
+      setPreviewPacked(packed);
+      expirePreview("choice", () => {
+        setPreviewPacked(null);
+        setGuestPacked(hostPacked);
+      });
     }
   }
 
   function savePlans() {
-    if (mode !== "live") return;
-    setGuestSaved(true);
+    if (mode !== "live") {
+      setPreviewButton(true);
+      expirePreview("button", () => setPreviewButton(false));
+      return;
+    }
     setHostSaved(true);
   }
 
   function resetDemo() {
+    clearPreviews();
     clearClickHalos();
     setMode("visual");
     setGuestNote(initialNote);
     setHostNote(initialNote);
     setGuestPacked(false);
     setHostPacked(false);
-    setGuestSaved(false);
     setHostSaved(false);
   }
 
@@ -178,17 +235,15 @@ export default function ModeDemo() {
 
       <p className="demo-mode-note" id="mode-explanation">
         {mode === "visual"
-          ? "Clicks and typing are previews."
-          : "Real page interactions, when the host allows them."}
+          ? "Guest gestures appear as previews on the host’s page. Original values stay unchanged."
+          : "Guest gestures change the host’s page, when the host allows control."}
       </p>
 
       <div className="mode-demo-panels">
         <section className="mode-panel" aria-labelledby="guest-preview-title">
           <div className="mode-panel-label">
-            <h3 id="guest-preview-title">Guest preview</h3>
-            <span className="mode-panel-status">
-              {mode === "visual" ? "Preview" : "Live"}
-            </span>
+            <h3 id="guest-preview-title">Guest input</h3>
+            <span className="mode-panel-status">Remote input</span>
           </div>
           <div
             className="demo-page demo-guest"
@@ -232,26 +287,19 @@ export default function ModeDemo() {
                   Save plans
                 </button>
                 <p className="demo-save-status" role="status">
-                  {guestSaved ? "Plans saved" : ""}
+                  {hostSaved ? "Plans saved" : ""}
                 </p>
               </div>
             </div>
-            {clickHalos.map((halo) => (
-              <span
-                key={halo.id}
-                className="demo-click-halo"
-                style={{ left: halo.x - 15, top: halo.y - 15 }}
-                onAnimationEnd={() => removeClickHalo(halo.id)}
-                aria-hidden="true"
-              />
-            ))}
           </div>
         </section>
 
         <section className="mode-panel" aria-labelledby="host-original-title">
           <div className="mode-panel-label">
-            <h3 id="host-original-title">Host’s original page</h3>
-            <span className="mode-panel-status">Original</span>
+            <h3 id="host-original-title">Host’s shared page</h3>
+            <span className="mode-panel-status">
+              {mode === "visual" ? "Preview overlay" : "Live"}
+            </span>
           </div>
           <div className="demo-page demo-host">
             <div className="demo-page-header">
@@ -262,43 +310,86 @@ export default function ModeDemo() {
               <span className="demo-note" id="host-note-label">
                 Host note
               </span>
-              <output
-                className="demo-host-value"
-                htmlFor="guest-note"
-                aria-labelledby="host-note-label"
-              >
-                {hostNote || "No note"}
-              </output>
-              <div className="demo-check demo-check-host">
-                <span
-                  className="demo-host-checkbox"
-                  role="img"
-                  aria-label={hostPacked ? "Checked" : "Unchecked"}
-                  data-checked={hostPacked}
+              <div className="demo-host-field">
+                <output
+                  className="demo-host-value"
+                  htmlFor="guest-note"
+                  aria-labelledby="host-note-label"
                 >
-                  {hostPacked && (
-                    <svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                      <path
-                        d="m3.5 8 3 3 6-6"
-                        stroke="currentColor"
-                        strokeWidth="1.6"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      />
-                    </svg>
+                  {hostNote}
+                </output>
+                {previewNote !== null && (
+                  <span className="demo-text-preview">{previewNote}</span>
+                )}
+              </div>
+              <div className="demo-check demo-check-host">
+                <span className="demo-choice-field">
+                  <span
+                    className="demo-host-checkbox"
+                    role="img"
+                    aria-label={hostPacked ? "Checked" : "Unchecked"}
+                    data-checked={hostPacked}
+                  >
+                    {hostPacked && (
+                      <svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                        <path
+                          d="m3.5 8 3 3 6-6"
+                          stroke="currentColor"
+                          strokeWidth="1.6"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                      </svg>
+                    )}
+                  </span>
+                  {previewPacked !== null && (
+                    <span
+                      className="demo-choice-preview"
+                      role="img"
+                      aria-label={previewPacked ? "Preview checked" : "Preview unchecked"}
+                      data-checked={previewPacked}
+                    >
+                      {previewPacked && (
+                        <svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                          <path
+                            d="m3.5 8 3 3 6-6"
+                            stroke="currentColor"
+                            strokeWidth="1.6"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          />
+                        </svg>
+                      )}
+                    </span>
                   )}
                 </span>
                 <span>Pack a camera</span>
               </div>
               <div className="demo-save-actions">
-                <span className="demo-save demo-save-preview" aria-hidden="true">
-                  Save plans
+                <span className="demo-button-field">
+                  <span className="demo-save demo-save-preview" aria-hidden="true">
+                    Save plans
+                  </span>
+                  {previewButton && (
+                    <span className="demo-button-preview" aria-hidden="true" />
+                  )}
                 </span>
                 <p className="demo-save-status" role="status">
                   {hostSaved ? "Plans saved" : ""}
                 </p>
               </div>
             </div>
+            {clickHalos.map((halo) => (
+              <span
+                key={halo.id}
+                className="demo-click-halo"
+                style={{
+                  left: `calc(${halo.x * 100}% - 15px)`,
+                  top: `calc(${halo.y * 100}% - 15px)`,
+                }}
+                aria-hidden="true"
+              />
+            ))}
           </div>
         </section>
       </div>
@@ -312,6 +403,9 @@ export default function ModeDemo() {
           Reset demonstration
         </button>
       </div>
+      <p className="demo-preview-timing">
+        Demo previews last 1 second. Preview duration is configurable.
+      </p>
     </div>
   );
 }

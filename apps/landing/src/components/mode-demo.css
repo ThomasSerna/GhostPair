@@ -1,8 +1,72 @@
 @layer reset, base, components, responsive;
 
 @layer components {
-  .demo-guest {
+  .demo-host {
     position: relative;
+  }
+
+  .demo-host-field,
+  .demo-choice-field,
+  .demo-button-field {
+    position: relative;
+  }
+
+  .demo-note-input,
+  .demo-host-value,
+  .demo-text-preview {
+    height: 48px;
+    white-space: pre;
+    overflow: hidden;
+  }
+
+  .demo-text-preview {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    background: var(--canvas);
+    color: var(--text);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 13px 15px;
+    font-size: 14px;
+    line-height: 1.4;
+    pointer-events: none;
+  }
+
+  .demo-choice-field {
+    display: inline-flex;
+    width: 17px;
+    height: 17px;
+    flex-shrink: 0;
+  }
+
+  .demo-choice-preview {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    border: 1px solid var(--mint);
+    border-radius: 3px;
+    background: var(--panel);
+    color: var(--mint);
+    pointer-events: none;
+  }
+
+  .demo-choice-preview svg {
+    width: 100%;
+    height: 100%;
+  }
+
+  .demo-button-field {
+    display: inline-flex;
+  }
+
+  .demo-button-preview {
+    position: absolute;
+    inset: 0;
+    border: 2px solid var(--ink);
+    border-radius: 6px;
+    background: color-mix(in srgb, var(--ink) 18%, transparent);
+    pointer-events: none;
   }
 
   .demo-click-halo {
@@ -14,7 +78,7 @@
     border-radius: 50%;
     background: color-mix(in srgb, var(--simulation-click) 12%, transparent);
     pointer-events: none;
-    animation: demo-preview-click 500ms linear forwards;
+    animation: demo-preview-click 1s linear forwards;
   }
 
   .demo-save-actions {
@@ -60,6 +124,13 @@
     line-height: 1.4;
   }
 
+  .demo-preview-timing {
+    margin-top: 4px;
+    color: var(--muted);
+    font-size: 10px;
+    line-height: 1.5;
+  }
+
   @keyframes demo-preview-click {
     from {
       transform: scale(0.6);
@@ -78,10 +149,22 @@
 }
 
 @layer responsive {
+  @media (max-width: 580px) {
+    .demo-note-input,
+    .demo-host-value,
+    .demo-text-preview {
+      height: 52px;
+    }
+
+    .demo-text-preview {
+      font-size: 16px;
+    }
+  }
+
   @media (prefers-reduced-motion: reduce) {
     .demo-click-halo {
       animation-name: demo-preview-click-static;
-      animation-duration: 500ms !important;
+      animation-duration: 1s !important;
       transform: none;
     }
   }

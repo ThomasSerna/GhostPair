@@ -221,10 +221,43 @@ async function inspectHeroFallbacks(browser, url) {
 
 async function inspectPreviews(page, context, width, origin) {
   const shared = page.getByRole('radio', { name: labels[0], exact: true });
+  const indicator = page.locator('.preview-active-indicator');
+  const switcher = page.locator('.preview-switch');
+  const waitForIndicator = async () => {
+    await page.waitForFunction(() => {
+      const switcher = document.querySelector('.preview-switch');
+      const indicator = switcher.querySelector('.preview-active-indicator');
+      const label = switcher.querySelector('input:checked + label');
+      if (switcher.dataset.indicatorReady !== 'true' || !indicator || !label) return false;
+      const active = indicator.getBoundingClientRect();
+      const target = label.getBoundingClientRect();
+      return ['left', 'top', 'width', 'height'].every(dimension => Math.abs(active[dimension] - target[dimension]) < 0.75);
+    });
+  };
   assert.ok(await shared.isChecked(), 'Shared view is the initial preview');
+  await switcher.scrollIntoViewIfNeeded();
+  await waitForIndicator();
+  assert.equal(await indicator.count(), 1, 'The segmented control keeps a single sliding active indicator');
+  assert.equal(await indicator.getAttribute('aria-hidden'), 'true', 'The decorative indicator does not add a focus or announcement target');
+  assert.equal(await indicator.evaluate(element => getComputedStyle(element).pointerEvents), 'none', 'The sliding indicator leaves native controls clickable');
+  const sliding = await page.evaluate(async () => {
+    const indicator = document.querySelector('.preview-active-indicator');
+    const initial = indicator.getBoundingClientRect().left;
+    document.querySelector('#preview-host').click();
+    await new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done)));
+    return { initial, moving: indicator.getBoundingClientRect().left, target: document.querySelector('label[for="preview-host"]').getBoundingClientRect().left };
+  });
+  assert.ok(sliding.moving > sliding.initial + 0.1 && sliding.moving < sliding.target - 0.1, `${width}px: the active indicator slides through intermediate positions`);
+  // Retarget before the first tween finishes; the final selection must still own
+  // the one indicator rather than leaving stale highlights behind.
+  await page.locator('#preview-guest').evaluate(element => element.click());
+  await waitForIndicator();
+  await page.locator('label[for="preview-shared"]').click();
+  await waitForIndicator();
   await shared.focus();
   for (const [index, choice] of [...choices, 'shared'].entries()) {
     await page.waitForFunction(name => document.getElementById(`preview-${name}`).checked, choice);
+    await waitForIndicator();
     for (const panel of choices) assert.equal(await page.locator(`#${panel}-preview`).isVisible(), panel === choice, `${width}px: ${choice} selection, ${panel} panel visibility`);
     await page.locator(`#${choice}-preview`).scrollIntoViewIfNeeded();
     await page.waitForFunction(() => [...document.querySelectorAll('.preview-stage')].filter(stage => stage.getBoundingClientRect().width > 0).every(stage => {
@@ -255,9 +288,20 @@ async function inspectPreviews(page, context, width, origin) {
     for (const choice of ['host', 'guest', 'shared']) {
       await page.locator(`label[for="preview-${choice}"]`).click();
       assert.ok(await page.locator(`#preview-${choice}`).isChecked(), `${width}px: label selects ${choice}`);
+      await waitForIndicator();
       await noOverflow(page, `${width}px: ${choice} touch target`);
     }
   }
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.locator('#preview-host').evaluate(element => element.click());
+  await settleFrames(page);
+  await waitForIndicator();
+  const reducedRect = await indicator.boundingBox();
+  await page.waitForTimeout(150);
+  assert.deepEqual(await indicator.boundingBox(), reducedRect, `${width}px: reduced motion keeps the selected indicator still`);
+  await page.locator('label[for="preview-shared"]').click();
+  await waitForIndicator();
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
 }
 
 async function inspectModeDemo(page, width) {
@@ -267,88 +311,196 @@ async function inspectModeDemo(page, width) {
   const hostPacked = page.locator('.demo-host-checkbox');
   const guestPage = page.locator('.demo-guest');
   const hostPage = page.locator('.demo-host');
-  const halos = guestPage.locator('.demo-click-halo');
+  const halos = hostPage.locator('.demo-click-halo');
+  const textPreview = hostPage.locator('.demo-text-preview');
+  const choicePreview = hostPage.locator('.demo-choice-preview');
+  const buttonPreview = hostPage.locator('.demo-button-preview');
+  const overlays = page.locator('.demo-text-preview, .demo-choice-preview, .demo-button-preview');
   const save = page.getByRole('button', { name: 'Save plans', exact: true });
+  const reset = page.getByRole('button', { name: 'Reset demonstration', exact: true });
+  const visualMode = page.getByRole('radio', { name: 'Visual only', exact: true });
+  const liveMode = page.getByRole('radio', { name: 'Live control', exact: true });
   const savedStatuses = page.locator('.demo-save-status');
+  const assertMappedHalo = async (target, message) => {
+    const mapping = await target.evaluate(element => {
+      const input = element.getBoundingClientRect();
+      const guest = document.querySelector('.demo-guest').getBoundingClientRect();
+      const hostElement = document.querySelector('.demo-host');
+      const host = hostElement.getBoundingClientRect();
+      const halo = [...document.querySelectorAll('.demo-host .demo-click-halo')].at(-1);
+      const haloStyle = getComputedStyle(halo);
+      return {
+        expectedX: ((input.left + input.width / 2 - guest.left) / guest.width) * host.width,
+        expectedY: ((input.top + input.height / 2 - guest.top) / guest.height) * host.height,
+        actualX: parseFloat(haloStyle.left) + 15 + hostElement.clientLeft,
+        actualY: parseFloat(haloStyle.top) + 15 + hostElement.clientTop,
+      };
+    });
+    assert.ok(Math.abs(mapping.actualX - mapping.expectedX) < 1 && Math.abs(mapping.actualY - mapping.expectedY) < 1, `${width}px: ${message}: ${JSON.stringify(mapping)}`);
+  };
+  const assertOriginal = async () => {
+    assert.equal(await hostNote.textContent(), 'Bring a camera.', 'Visual typing leaves the original Host value unchanged');
+    assert.equal(await hostPacked.getAttribute('data-checked'), 'false', 'Visual selection leaves the original Host checkbox unchanged');
+    assert.ok((await savedStatuses.allTextContents()).every(status => status.trim() === ''), 'Visual Save plans does not submit either panel');
+  };
   await guestPage.scrollIntoViewIfNeeded();
-  assert.ok(await page.getByRole('radio', { name: 'Visual only', exact: true }).isChecked());
-  await note.fill('A guest-only idea.');
+  assert.ok(await visualMode.isChecked());
+  assert.equal(await page.getByRole('heading', { name: 'Guest input', exact: true }).count(), 1, 'Guest is identified as the source of remote input');
+  assert.equal(await page.getByRole('heading', { name: 'Host’s shared page', exact: true }).count(), 1, 'Host is identified as the page receiving input');
+  assert.equal(await page.locator('.demo-preview-timing').textContent(), 'Demo previews last 1 second. Preview duration is configurable.', 'The small timing copy describes this illustration without claiming a different extension default');
+  await note.fill('A temporary guest idea.');
   await guestPacked.check();
-  assert.equal(await hostNote.textContent(), 'Bring a camera.', 'Visual typing leaves the original unchanged');
-  assert.equal(await hostPacked.getAttribute('data-checked'), 'false', 'Visual checkbox edits leave the original unchanged');
-  assert.equal(await halos.count(), 1, 'Clicking a Visual only checkbox adds one halo');
-  const haloStyle = await halos.evaluate(element => {
+  await assertOriginal();
+  assert.equal(await textPreview.textContent(), 'A temporary guest idea.', 'Visual typing is shown as a Host overlay');
+  assert.equal(await choicePreview.getAttribute('data-checked'), 'true', 'Visual selection is shown as a Host overlay');
+  for (const [preview, original] of [[textPreview, hostNote], [choicePreview, hostPacked]]) {
+    const previewBounds = await preview.boundingBox();
+    const originalBounds = await original.boundingBox();
+    assert.ok(['x', 'y', 'width', 'height'].every(dimension => Math.abs(previewBounds[dimension] - originalBounds[dimension]) < 1), `${width}px: passive previews sit directly above the original Host field`);
+    assert.equal(await preview.evaluate(element => getComputedStyle(element).pointerEvents), 'none', 'Passive Host overlays cannot execute input');
+  }
+  assert.equal(await halos.count(), 0, 'Visual checkbox feedback uses the selection preview without a click halo');
+  assert.equal(await guestPage.locator('.demo-click-halo, .demo-text-preview, .demo-choice-preview, .demo-button-preview').count(), 0, 'Guest inputs do not render Host preview effects');
+  await save.click();
+  assert.equal(await buttonPreview.count(), 1, 'Visual Save plans highlights the Host button without executing it');
+  assert.equal(await halos.count(), 1, 'Visual Save plans places click feedback on the Host');
+  await assertOriginal();
+  await assertMappedHalo(save, 'the Guest click maps to the corresponding Host coordinates');
+  const haloStyle = await halos.first().evaluate(element => {
     const style = getComputedStyle(element);
     const fill = style.backgroundColor;
     const channels = fill.match(/[\d.]+/g).map(Number);
     const srgb = fill.startsWith('color(srgb');
     return { width: style.width, height: style.height, border: style.borderTopWidth, accent: style.borderTopColor, fill: channels.map((value, index) => srgb && index < 3 ? Math.round(value * 255) : value), duration: style.animationDuration, iteration: style.animationIterationCount, pointerEvents: style.pointerEvents };
   });
-  assert.deepEqual(haloStyle, { width: '30px', height: '30px', border: '2px', accent: 'rgb(120, 113, 232)', fill: [120, 113, 232, 0.12], duration: '0.5s', iteration: '1', pointerEvents: 'none' }, 'Click halo matches the extension and ends without a JavaScript rendering loop');
-  await halos.waitFor({ state: 'detached' });
+  assert.deepEqual(haloStyle, { width: '30px', height: '30px', border: '2px', accent: 'rgb(120, 113, 232)', fill: [120, 113, 232, 0.12], duration: '1s', iteration: '1', pointerEvents: 'none' }, 'The Host halo uses the extension appearance and the requested one-second demonstration duration');
+  await page.waitForFunction(() => document.querySelectorAll('.demo-click-halo, .demo-text-preview, .demo-choice-preview, .demo-button-preview').length === 0);
+  assert.equal(await note.inputValue(), 'Bring a camera.', 'Expired visual text returns Guest input to the real Host value');
+  assert.equal(await guestPacked.isChecked(), false, 'Expired visual selection returns Guest input to the real Host selection');
 
-  await guestPage.locator('.demo-page-header').click();
-  assert.equal(await halos.count(), 1, 'Visual clicks in the simulated header show a halo');
-  await halos.waitFor({ state: 'detached' });
+  const guestHeader = guestPage.locator('.demo-page-header');
+  await guestHeader.click();
+  assert.equal(await halos.count(), 1, 'Guest header clicks render feedback on the Host');
+  await assertMappedHalo(guestHeader, 'header coordinates remain normalized across panel layouts');
+  await reset.click();
   if (width <= 390) {
-    await guestPage.locator('.demo-page-header').tap();
-    assert.equal(await halos.count(), 1, 'A touchscreen tap shows one Visual only halo');
-    await halos.waitFor({ state: 'detached' });
+    await guestHeader.tap();
+    assert.equal(await halos.count(), 1, 'A touchscreen tap sends one Host halo');
+    assert.equal(await guestPage.locator('.demo-click-halo').count(), 0, 'Touch feedback stays off the Guest input panel');
+    await assertMappedHalo(guestHeader, 'touch coordinates map to the Host');
+    await reset.click();
   }
   await guestPage.click({ position: { x: 12, y: 60 } });
-  assert.equal(await halos.count(), 1, 'Visual clicks in blank page space show a halo');
-  await halos.waitFor({ state: 'detached' });
+  assert.equal(await halos.count(), 1, 'Blank-space gestures still create Host feedback');
+  await reset.click();
   await guestPage.locator('.demo-check').click();
-  assert.equal(await halos.count(), 1, 'A label and its native input activation do not duplicate the halo');
-  await halos.waitFor({ state: 'detached' });
-  await guestPacked.check();
-  await halos.waitFor({ state: 'detached' });
+  assert.equal(await choicePreview.count(), 1, 'A native label activation creates one selection preview');
+  assert.equal(await halos.count(), 0, 'A Visual checkbox label does not also create a halo');
+  await reset.click();
+  await guestPacked.focus();
+  await page.keyboard.press('Space');
+  assert.equal(await choicePreview.getAttribute('data-checked'), 'true', 'Keyboard checkbox input previews the choice on the Host');
+  assert.equal(await halos.count(), 0, 'Visual keyboard choices do not add a click halo');
+  await reset.click();
   await hostPage.locator('.demo-page-header').click();
-  assert.equal(await page.locator('.demo-click-halo').count(), 0, 'Clicks outside the Guest preview do not create a halo');
-
-  await save.click();
-  assert.equal(await halos.count(), 1, 'Visual Save plans previews the click');
-  assert.ok((await savedStatuses.allTextContents()).every(status => status.trim() === ''), 'Visual Save plans does not save either panel');
-  await halos.waitFor({ state: 'detached' });
+  assert.equal(await halos.count(), 0, 'Direct Host-panel clicks are not Guest gestures');
   await save.focus();
   await page.keyboard.press('Enter');
-  assert.equal(await halos.count(), 1, 'The Visual only save control supports keyboard click feedback');
-  assert.ok((await savedStatuses.allTextContents()).every(status => status.trim() === ''), 'Keyboard activation keeps Visual only edits local');
-  await page.getByRole('radio', { name: 'Visual only', exact: true }).focus();
-  await page.keyboard.press('ArrowRight');
-  assert.ok(await page.getByRole('radio', { name: 'Live control', exact: true }).isChecked());
-  assert.equal(await page.locator('.demo-click-halo').count(), 0, 'Changing modes clears preview halos');
-  assert.equal(await hostNote.textContent(), 'Bring a camera.', 'Changing modes alone does not apply preview text');
-  assert.equal(await hostPacked.getAttribute('data-checked'), 'false', 'Changing modes alone does not apply preview selections');
-  assert.ok((await savedStatuses.allTextContents()).every(status => status.trim() === ''), 'Changing modes does not submit pending preview changes');
-  await note.fill('Bring a camera and a map.');
-  assert.equal(await hostNote.textContent(), 'Bring a camera and a map.', 'A live edit updates the original');
-  await guestPacked.uncheck();
+  assert.equal(await halos.count(), 1, 'Keyboard Save plans sends Host click feedback');
+  assert.equal(await buttonPreview.count(), 1, 'Keyboard Save plans highlights the Host button');
+  await assertMappedHalo(save, 'keyboard clicks use the corresponding Host control center');
+  await assertOriginal();
+  await note.fill('Discard this pending note.');
   await guestPacked.check();
-  assert.equal(await hostPacked.getAttribute('data-checked'), 'true', 'Live checkbox edits update the original');
+  await visualMode.focus();
+  await page.keyboard.press('ArrowRight');
+  assert.ok(await liveMode.isChecked());
+  assert.equal(await page.locator('.demo-click-halo').count(), 0, 'Changing modes clears preview halos');
+  assert.equal(await overlays.count(), 0, 'Changing modes clears all passive previews');
+  assert.equal(await note.inputValue(), 'Bring a camera.', 'Changing modes discards pending Guest visual text');
+  assert.equal(await guestPacked.isChecked(), false, 'Changing modes discards pending Guest visual selection');
+  await assertOriginal();
+  await note.fill('Bring a camera and a map.');
+  assert.equal(await hostNote.textContent(), 'Bring a camera and a map.', 'Live typing immediately updates the real Host value');
+  assert.equal(await textPreview.count(), 0, 'Live typing does not create a passive text overlay');
+  await guestPacked.check();
+  assert.equal(await hostPacked.getAttribute('data-checked'), 'true', 'Live selection immediately updates the real Host checkbox');
+  assert.equal(await choicePreview.count(), 0, 'Live selection does not create a passive selection overlay');
+  assert.equal(await halos.count(), 1, 'Live Guest choices still send click feedback to the Host');
+  await assertMappedHalo(guestPacked, 'live selection coordinates map to the Host');
   await save.focus();
   await page.keyboard.press('Enter');
   assert.equal(await guestPage.locator('.demo-save-status[role="status"]').textContent(), 'Plans saved', 'Live Save plans confirms the Guest action');
   assert.equal(await hostPage.locator('.demo-save-status[role="status"]').textContent(), 'Plans saved', 'Live Save plans confirms the original page action');
-  assert.equal(await page.locator('.demo-click-halo').count(), 0, 'Live control uses the page controls without preview halos');
-  await page.getByRole('button', { name: 'Reset demonstration', exact: true }).click();
-  assert.ok(await page.getByRole('radio', { name: 'Visual only', exact: true }).isChecked());
+  assert.equal(await guestPage.locator('.demo-click-halo').count(), 0, 'Live click feedback stays on the Host');
+  assert.equal(await buttonPreview.count(), 0, 'Live Save plans executes directly');
+  await assertMappedHalo(save, 'live keyboard Save coordinates map to the Host');
+  await page.locator('label[for="mode-visual"]').click();
+  assert.equal(await note.inputValue(), 'Bring a camera and a map.', 'Returning to Visual mode preserves the real live value');
+  assert.equal(await guestPacked.isChecked(), true, 'Returning to Visual mode preserves the real live selection');
+  await note.fill('An unsaved visual overlay.');
+  assert.ok((await savedStatuses.allTextContents()).every(status => status.trim() === 'Plans saved'), 'A visual preview cannot erase the real saved confirmation');
+  await page.locator('label[for="mode-live"]').click();
+  assert.ok((await savedStatuses.allTextContents()).every(status => status.trim() === 'Plans saved'), 'Returning to Live preserves the same real save state in both panels');
+  await reset.click();
+  assert.ok(await visualMode.isChecked());
   assert.equal(await note.inputValue(), 'Bring a camera.');
   assert.equal(await hostNote.textContent(), 'Bring a camera.');
   assert.equal(await guestPacked.isChecked(), false);
   assert.equal(await hostPacked.getAttribute('data-checked'), 'false');
   assert.ok((await savedStatuses.allTextContents()).every(status => status.trim() === ''), 'Reset clears both save confirmations');
-  await guestPage.locator('.demo-page-header').click();
-  await page.getByRole('button', { name: 'Reset demonstration', exact: true }).click();
-  assert.equal(await page.locator('.demo-click-halo').count(), 0, 'Reset clears active click feedback');
 
   await page.emulateMedia({ reducedMotion: 'reduce' });
-  await guestPage.locator('.demo-page-header').click();
-  assert.equal(await halos.count(), 1, 'Reduced motion retains click feedback');
-  const firstStatic = await halos.evaluate(element => ({ opacity: getComputedStyle(element).opacity, transform: getComputedStyle(element).transform }));
+  await guestHeader.click();
+  assert.equal(await halos.count(), 1, 'Reduced motion retains Host click feedback');
+  const firstStatic = await halos.first().evaluate(element => ({ opacity: getComputedStyle(element).opacity, transform: getComputedStyle(element).transform }));
   await page.waitForTimeout(150);
-  assert.deepEqual(await halos.evaluate(element => ({ opacity: getComputedStyle(element).opacity, transform: getComputedStyle(element).transform })), firstStatic, 'Reduced motion keeps click feedback static');
+  assert.deepEqual(await halos.first().evaluate(element => ({ opacity: getComputedStyle(element).opacity, transform: getComputedStyle(element).transform })), firstStatic, 'Reduced motion keeps Host click feedback static');
   await halos.waitFor({ state: 'detached' });
+
+  // Stagger actions to observe independent expiry with a generous margin on
+  // both sides of the one-second lifetime, without changing browser time.
+  await note.fill('First visual draft.');
+  await page.waitForTimeout(300);
+  await guestPacked.check();
+  await page.waitForTimeout(300);
+  await note.fill('Renewed visual draft.');
+  assert.equal(await choicePreview.count(), 1, 'Renewing text leaves an active choice preview intact');
+  await page.waitForTimeout(800);
+  assert.equal(await textPreview.textContent(), 'Renewed visual draft.', 'Typing renews its own expiry beyond the original deadline');
+  assert.equal(await choicePreview.count(), 0, 'Selection expires after its own action');
+  assert.equal(await guestPacked.isChecked(), false, 'The choice expiry restores the real Host selection');
+  await textPreview.waitFor({ state: 'detached' });
+  assert.equal(await note.inputValue(), 'Bring a camera.', 'Text expiry restores the real Host value');
+
+  await save.click();
+  await page.waitForTimeout(300);
+  await save.click();
+  await page.waitForTimeout(800);
+  assert.equal(await buttonPreview.count(), 1, 'Repeated Save input renews the Host pressed-state preview');
+  assert.equal(await halos.count(), 1, 'Each click halo expires independently of a renewed button preview');
+  await assertOriginal();
+  await page.waitForFunction(() => document.querySelectorAll('.demo-click-halo, .demo-button-preview').length === 0);
+
+  await guestHeader.evaluate(element => {
+    const bounds = element.getBoundingClientRect();
+    for (let index = 0; index < 20; index += 1) {
+      const options = { bubbles: true, pointerId: index + 1, isPrimary: true, button: 0, clientX: bounds.left + bounds.width / 2, clientY: bounds.top + bounds.height / 2 };
+      element.dispatchEvent(new PointerEvent('pointerdown', options));
+      element.dispatchEvent(new PointerEvent('pointerup', options));
+    }
+  });
+  assert.equal(await halos.count(), 12, 'Rapid Guest gestures keep Host feedback bounded to twelve halos');
+  await page.waitForFunction(() => document.querySelectorAll('.demo-click-halo').length === 0);
+  await note.fill('Reset this visual text.');
+  await guestPacked.check();
+  await save.click();
+  await reset.click();
+  assert.equal(await overlays.count(), 0, 'Reset clears active text, choice and button overlays');
+  assert.equal(await halos.count(), 0, 'Reset clears active Host click feedback');
+  await page.waitForTimeout(1100);
+  assert.equal(await note.inputValue(), 'Bring a camera.', 'Cleared expiry timers cannot overwrite the reset state');
+  await assertOriginal();
   await page.emulateMedia({ reducedMotion: 'no-preference' });
 }
 
@@ -382,6 +534,25 @@ async function captureReview(page, width, name) {
   if (name === 'desktop' || name === 'mobile') {
     const bounds = await page.locator('.hero').boundingBox();
     await page.screenshot({ path: resolve(output, `${name}-hero.png`), clip: { x: 0, y: 0, width, height: Math.ceil(bounds.y + bounds.height) } });
+    await page.locator('#preview-host').evaluate(element => element.click());
+    await settleFrames(page);
+    await page.locator('.preview-switch').screenshot({ path: resolve(output, `${name}-preview-switch.png`) });
+    try {
+      const note = page.getByRole('textbox', { name: 'Guest note', exact: true });
+      const checkbox = page.locator('#guest-pack');
+      const save = page.getByRole('button', { name: 'Save plans', exact: true });
+      await note.fill('Bring a camera and a map.');
+      await checkbox.check();
+      await save.click();
+      await page.locator('.mode-demo').screenshot({ path: resolve(output, `${name}-mode-visual.png`), animations: 'allow' });
+      await page.locator('label[for="mode-live"]').click();
+      await note.fill('Bring a camera and a map.');
+      await checkbox.check();
+      await save.click();
+      await page.locator('.mode-demo').screenshot({ path: resolve(output, `${name}-mode-live.png`), animations: 'allow' });
+    } finally {
+      await page.getByRole('button', { name: 'Reset demonstration', exact: true }).click();
+    }
   }
 }
 

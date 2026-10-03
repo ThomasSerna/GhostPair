@@ -41,7 +41,11 @@ This requires FFmpeg on PATH (or `GHOSTPAIR_FFMPEG` pointing to its executable) 
 
 ## Interaction illustration and performance checks
 
-Visual only retains guest field previews without applying them to the host. A CSS halo matching the extension appears throughout the simulated guest page, including its Save plans button. Live control applies subsequent field edits and Save plans shows confirmation in both panels. Switching modes does not commit pending fields; reset clears fields, confirmations and click effects. Reduced motion retains static click feedback.
+The product-example selector uses a single mint indicator that slides between native radio labels, follows their measured widths, and settles immediately with reduced motion.
+
+The mode illustration separates guest input from the host’s shared page. Visual only shows passive text, checkbox and button overlays on the host without changing original values or saving. Each demo preview expires one second after its latest action; typing and choices have independent timers. The small duration note labels this as the demo timing: the extension supports configurable text/choice lifetimes, with persistent previews by default. Guest inputs return to the host’s original values when their previews expire.
+
+Live control applies subsequent field edits to the host and Save plans confirms in both panels. Click halos originate on the host in both modes; Visual only checkbox choices use their own marker. The demo extends transient button/click feedback to one second to make it legible, while the extension’s own button and halo timings remain unchanged. In a real session the guest receives the host’s captured page, including visible overlays; the guest card here represents input, rather than a separate video rendering. Switching modes discards pending previews; reset clears fields, confirmations and click effects. Reduced motion retains static click feedback.
 
 `npm run test:landing` verifies five viewport widths, keyboard/touch interaction, video lifetime and poster fallbacks, earlier connection completion, authentic examples, and relative asset loading. It also saves stable desktop/mobile review captures using reduced motion.
 
