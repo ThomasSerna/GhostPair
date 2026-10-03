@@ -165,7 +165,10 @@ function Popup() {
     </section> : <section className="start-panel">
       <div className="intro"><h1>Browse together.</h1><p className="muted">What would you like to do?</p></div>
       <div className="session-choices">
-        <button ref={shareButton} className="intent-action primary" aria-label="Share my tab" aria-describedby="share-intent" disabled={busy || !state} onClick={() => { setScreen('share'); setError(''); }}><span>Share my tab</span><small id="share-intent">Invite someone to see and interact with your tab.</small></button>
+        <div className="share-choice">
+          <button ref={shareButton} className="intent-action primary" aria-label="Share my tab" aria-describedby="share-intent share-code" disabled={busy || !state} onClick={() => { setScreen('share'); setError(''); }}><span>Share my tab</span><small id="share-intent">Invite someone to see and interact with your tab.</small></button>
+          <p id="share-code" className="helper connection-code">Your connection code: <span>{formatDeviceId(state?.deviceId)}</span></p>
+        </div>
         <button className="intent-action secondary" aria-label="Join a session" aria-describedby="join-intent" disabled={busy || !state} onClick={openViewer}><span>Join a session</span><small id="join-intent">Connect to someone who is already sharing.</small></button>
       </div>
     </section>}

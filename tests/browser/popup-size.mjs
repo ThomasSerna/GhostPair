@@ -167,6 +167,7 @@ try {
         continue;
       }
       const layouts = [await checkSize(popup, name, 'home')];
+      assert.equal(await popup.evaluate(() => document.querySelector('#share-code').textContent), 'Your connection code: Generated when you share', 'first install explains when its code becomes available');
       await popup.click('.session-choices .primary');
       layouts.push(await checkSize(popup, name, 'share'));
       await popup.click('.back-button');
@@ -198,6 +199,11 @@ try {
       });
       assert.ok(footerVisible, 'End session stays visible and focusable with expanded feedback');
       await popup.click('.session-actions .danger');
+      await poll(() => popup.evaluate(() => Boolean(document.querySelector('.share-setup .back-button'))), 'sharing setup after session ends');
+      await popup.click('.back-button');
+      await poll(() => popup.evaluate(() => document.querySelector('#share-code')?.textContent.includes('Your connection code: ') && !document.querySelector('#share-code').textContent.includes('Generated when you share')), 'saved connection code on home screen');
+      const homeCode = await popup.evaluate(() => document.querySelector('#share-code span').textContent.replaceAll(' ', '').toLowerCase());
+      assert.equal(homeCode, (await call(popup, 'ui.status')).deviceId, 'home displays the actual shareable connection code');
       results.push({ browser: browser.version, nativeToolbarPopup: true, layouts });
       console.log(JSON.stringify({ browser: browser.version, nativeToolbarPopup: true, layouts: layouts.map(({ label, viewport }) => ({ label, ...viewport })), horizontalOverflow: false, focusedControlsVisible: true }));
     } finally {
