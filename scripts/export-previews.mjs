@@ -15,7 +15,7 @@ await cp(resolve('apps/extension/src/styles.css'), resolve(output, 'extension.cs
 const policy = `default-src 'none'; style-src 'self' 'unsafe-inline'; frame-src 'self'; base-uri 'none'; form-action 'none'`;
 const previews = [], geometry = [];
 function documentHtml(name, markup, bodyFont) {
-  const labels = { 'share-tab': 'GhostPair sharing example with a session password, tab sharing consent, and Share current tab button.', 'connect-host': 'GhostPair connection example with a host address, session password, and Connect button.', 'remote-viewer': 'Connected GhostPair viewer example with an approved shared page, browser tab, and navigation controls.' };
+  const labels = { 'share-tab': 'GhostPair sharing example with a password, tab sharing consent, and Share this tab button.', 'connect-host': 'GhostPair connection example with a connection code, password, and Join session button.', 'remote-viewer': 'Connected GhostPair viewer example with an approved shared page, browser tab, and navigation controls.' };
   // Chrome gives extension documents a platform body font. Preserve that computed baseline on the web.
   return `<!doctype html>\n<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta http-equiv="Content-Security-Policy" content="${policy}"><title>GhostPair · ${name} example</title><link rel="stylesheet" href="extension.css"></head><body style="font:${bodyFont.replaceAll('"', '&quot;')}" role="img" aria-label="${labels[name]}">${markup}</body></html>\n`;
 }
@@ -94,16 +94,17 @@ try {
   for (const browser of [host, guest]) browser.context.on('page', page => page.on('pageerror', error => errors.push(error.message)));
   const popup = await host.context.newPage(); await popup.goto(`chrome-extension://${host.id}/popup.html`);
   await popup.setViewportSize({ width: 398, height: 800 });
-  await popup.getByRole('button', { name: 'Share current tab →' }).waitFor();
-  await popup.getByLabel('Session password', { exact: true }).fill('Example-42');
-  await popup.getByLabel('I authorize sharing', { exact: false }).check();
+  await popup.getByRole('button', { name: 'Share my tab', exact: false }).click();
+  await popup.getByRole('button', { name: 'Share this tab', exact: true }).waitFor();
+  await popup.getByLabel('Password', { exact: true }).fill('Example-42');
+  await popup.getByLabel('I allow the person', { exact: false }).check();
   await exportPreview(popup, 'share-tab', 398, 694);
 
   const viewer = await guest.context.newPage(); await viewer.goto(`chrome-extension://${guest.id}/viewer.html`);
   await resizePage(guest, viewer, 512, 660);
-  await viewer.getByRole('heading', { name: 'Connect with your host.' }).waitFor();
-  await viewer.getByLabel('Host address', { exact: true }).fill('0123456789abcdef0123456789abcdef');
-  await viewer.getByLabel('Session password', { exact: true }).fill('Example-42');
+  await viewer.getByLabel('Connection code', { exact: true }).waitFor();
+  await viewer.getByLabel('Connection code', { exact: true }).fill('0123456789abcdef0123456789abcdef');
+  await viewer.getByLabel('Password', { exact: true }).fill('Example-42');
   await exportPreview(viewer, 'connect-host', 512, 660);
 
   await call(popup, 'ui.settings.save', { settings });
@@ -122,13 +123,13 @@ try {
   const waiting = await poll(async () => { const state = await call(popup, 'ui.status'); return state.status === 'waiting' && state.presentation && state; }, 'demo host sharing', 30000);
   await popup.close();
   for (const page of host.context.pages()) if (page.url() === 'about:blank') await page.close();
-  await viewer.getByLabel('Host address', { exact: true }).fill(waiting.deviceId);
-  await viewer.getByLabel('Session password', { exact: true }).fill('Example-42');
-  await viewer.bringToFront(); await viewer.getByRole('button', { name: 'Connect →', exact: true }).click();
+  await viewer.getByLabel('Connection code', { exact: true }).fill(waiting.deviceId);
+  await viewer.getByLabel('Password', { exact: true }).fill('Example-42');
+  await viewer.bringToFront(); await viewer.getByRole('button', { name: 'Join session', exact: true }).click();
   await resizePage(guest, viewer, 1365, 900);
   await poll(() => viewer.evaluate(() => { const video = document.querySelector('video'); return video?.dataset.generation && video.readyState >= 2 && video.videoWidth > 0; }), 'real shared video frame', 30000);
   await poll(() => viewer.locator('video').evaluate(video => video.getVideoPlaybackQuality().totalVideoFrames >= 90), 'steady shared video quality', 30000);
-  await viewer.getByText('Session connected', { exact: true }).waitFor();
+  await viewer.getByText('Connected', { exact: true }).waitFor();
   assert.equal(await viewer.getByRole('tab', { name: 'Our weekend plans', exact: false }).getAttribute('aria-selected'), 'true');
   assert.equal(await viewer.getByLabel('Remote keyboard input').isDisabled(), false);
   const [panel] = await host.worker.evaluate(tabId => chrome.scripting.executeScript({ target: { tabId }, world: 'ISOLATED', func: () => {

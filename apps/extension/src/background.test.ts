@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { GHOSTPAIR_SERVER_SETTINGS } from './connection-presets';
 
 const capture = vi.hoisted(() => ({
   start: vi.fn(async (_windowId: number) => {}), stop: vi.fn(async () => {}),
@@ -156,6 +157,37 @@ describe('background connection ownership and settings', () => {
     expect((await h.send('ui.status')).state.settings).toEqual(settings);
     expect((await h.send('ui.settings.reset')).state.settings).toEqual(defaults);
     expect(h.browser.storage.local.remove).toHaveBeenCalledWith('settings');
+  });
+  it('saves the official server over custom settings and restores its existing identity after restarting', async () => {
+    const custom = { signalingUrl: 'http://localhost:8787', stunUrls: ['stun:custom.example.com:3478'] };
+    const officialId = 'c'.repeat(32), customId = 'd'.repeat(32);
+    const identities = {
+      [GHOSTPAIR_SERVER_SETTINGS.signalingUrl]: { deviceId: officialId, ownerToken: 'e'.repeat(64) },
+      [custom.signalingUrl]: { deviceId: customId, ownerToken: 'f'.repeat(64) },
+    };
+    const h = await harness({ settings: custom, identities });
+    expect((await h.send('ui.status')).state.deviceId).toBe(customId);
+    const saved = await h.send('ui.settings.save', { settings: GHOSTPAIR_SERVER_SETTINGS });
+    expect(saved.ok).toBe(true);
+    expect(saved.state.settings).toEqual(GHOSTPAIR_SERVER_SETTINGS);
+    expect(saved.state.deviceId).toBe(officialId);
+    expect(h.stored.identities).toEqual(identities);
+    const restarted = await harness(h.stored);
+    expect((await restarted.send('ui.status')).state).toMatchObject({ settings: GHOSTPAIR_SERVER_SETTINGS, deviceId: officialId });
+    expect((await restarted.send('ui.settings.save', { settings: custom })).state.deviceId).toBe(customId);
+  });
+  it('rejects connection settings changes throughout an active session', async () => {
+    const h = await harness();
+    const original = (await h.send('ui.status')).state.settings;
+    await h.send('ui.host.start', { password: 'Eight-42' });
+    for (const type of ['ui.settings.save', 'ui.settings.reset']) {
+      const result = await h.send(type, { settings: GHOSTPAIR_SERVER_SETTINGS });
+      expect(result.ok).toBe(false);
+      expect(result.error).toBe('End the session before changing settings.');
+    }
+    expect((await h.send('ui.status')).state.settings).toEqual(original);
+    await h.send('ui.stop');
+    expect((await h.send('ui.settings.save', { settings: GHOSTPAIR_SERVER_SETTINGS })).ok).toBe(true);
   });
   it('focuses an existing viewer and starts guest transport in its owner without another tab', async () => {
     const h = await harness(); await h.send('ui.viewer.open'); expect(h.browser.tabs.create).toHaveBeenCalledTimes(1);

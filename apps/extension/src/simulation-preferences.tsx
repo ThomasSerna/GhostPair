@@ -11,26 +11,26 @@ export function SimulationPreferences({ preferences, busy, onChange }: {
   onChange: (preferences: VisualPreferences) => void;
 }) {
   return <>
-    <label className="check"><input type="checkbox" checked={preferences.showHostPanel} disabled={busy} onChange={e => onChange({ ...preferences, showHostPanel: e.target.checked })}/><span>Show host panel<small>Show the controls in the top right of the shared page. Restore a hidden panel from this menu.</small></span></label>
-    <label className="check"><input type="checkbox" checked={preferences.showInteractions} disabled={busy} onChange={e => onChange({ ...preferences, showInteractions: e.target.checked })}/><span>Show interactions<small>Show GhostPair previews and animations on the shared page. Real page changes in Live control remain visible.</small></span></label>
+    <label className="check"><input type="checkbox" checked={preferences.showInteractions} disabled={busy} onChange={e => onChange({ ...preferences, showInteractions: e.target.checked })}/><span>Show their actions<small>Show previews and click feedback on the shared page. Changes made with Full control remain visible.</small></span></label>
+    <label className="check"><input type="checkbox" checked={preferences.clickAnimations} disabled={busy} onChange={e => onChange({ ...preferences, clickAnimations: e.target.checked })}/><span>Show where they click<small>Highlight clicks when their actions are visible.</small></span></label>
     {(['text', 'other'] as const).map(category => <fieldset className="simulation-lifetime" key={category} disabled={busy}>
-    <legend>{category === 'text' ? 'Simulated text' : 'Other simulations'}</legend>
-    <label>Duration<select value={preferences[category].duration} onChange={e => onChange({ ...preferences, [category]: { ...preferences[category], duration: e.target.value } })}><option value="persistent">Until cleared</option><option value="temporary">Temporary</option></select></label>
-    {preferences[category].duration === 'temporary' && <label>Seconds without interaction<input type="number" min={0.1} max={30} step={0.1} defaultValue={preferences[category].seconds} key={preferences[category].seconds} onBlur={e => {
+    <legend>{category === 'text' ? 'Text previews' : 'Other previews'}</legend>
+    <label>Keep previews<select value={preferences[category].duration} onChange={e => onChange({ ...preferences, [category]: { ...preferences[category], duration: e.target.value } })}><option value="persistent">Until cleared</option><option value="temporary">For a short time</option></select></label>
+    {preferences[category].duration === 'temporary' && <label>Seconds without activity<input type="number" min={0.1} max={30} step={0.1} defaultValue={preferences[category].seconds} key={preferences[category].seconds} onBlur={e => {
       const seconds = e.target.valueAsNumber;
       if (!VisualSecondsSchema.safeParse(seconds).success) { e.target.value = String(preferences[category].seconds); return; }
       if (seconds !== preferences[category].seconds) onChange({ ...preferences, [category]: { ...preferences[category], seconds } });
     }}/><small className="helper">0.1–30 seconds, in steps of 0.1.</small></label>}
     </fieldset>)}
-    <label className="check"><input type="checkbox" checked={preferences.clickAnimations} disabled={busy} onChange={e => onChange({ ...preferences, clickAnimations: e.target.checked })}/><span>Click animations<small>Show brief circles at click positions when interactions are visible.</small></span></label>
     <fieldset className="simulation-colors" disabled={busy}>
-      <legend>Simulation color</legend>
+      <legend>Interaction color</legend>
       <div className="color-options">{colors.map(([name, color]) => <label key={color}>
         <input type="radio" name="simulation-color" value={color} checked={preferences.accentColor === color} onChange={() => onChange({ ...preferences, accentColor: color })}/>
         <span className="color-swatch" style={{ backgroundColor: color }}/><span>{name}</span>
       </label>)}</div>
-      <label className="custom-color">Custom color<input type="color" value={preferences.accentColor} onChange={e => onChange({ ...preferences, accentColor: e.target.value })}/><span>{preferences.accentColor}</span></label>
+      <label className="custom-color">Custom color<input type="color" value={preferences.accentColor} onChange={e => onChange({ ...preferences, accentColor: e.target.value })}/></label>
     </fieldset>
-    <label className="check"><input type="checkbox" checked={preferences.notices} disabled={busy} onChange={e => onChange({ ...preferences, notices: e.target.checked })}/><span>Simulation notices<small>Briefly label simulated clicks and typing on the shared page.</small></span></label>
+    <label className="check"><input type="checkbox" checked={preferences.showHostPanel} disabled={busy} onChange={e => onChange({ ...preferences, showHostPanel: e.target.checked })}/><span>Show page controls<small>Show GhostPair controls on the shared page. Turn this on to restore a hidden panel.</small></span></label>
+    <label className="check"><input type="checkbox" checked={preferences.notices} disabled={busy} onChange={e => onChange({ ...preferences, notices: e.target.checked })}/><span>Visual notices<small>Briefly label click and typing previews on the shared page.</small></span></label>
   </>;
 }

@@ -43,7 +43,7 @@ export async function hostPanel(page, name) {
   const visible = () => page.locator('[data-ghostpair-visual]').isVisible();
   await install(true); await install(true);
   assert.equal(await page.locator('[data-ghostpair-panel]').count(), 1);
-  assert.equal(await page.evaluate(() => hostPanelRoot.querySelector('strong').textContent), 'Visual only');
+  assert.equal(await page.evaluate(() => hostPanelRoot.querySelector('strong').textContent), 'Preview changes');
   await localClick('summary');
   await remoteClick('#answer'); await remote({ type: 'text', text: ' preview' });
   assert.equal(await visible(), true);
@@ -70,7 +70,7 @@ export async function hostPanel(page, name) {
     assert.equal(await page.evaluate(() => panelConfig.mode), mode);
     assert.equal(await page.evaluate(() => panelConfig.revision), previousRevision + 1);
     assert.equal(await page.locator('[data-ghostpair-visual]').count(), 0, 'mode revisions clear old previews');
-    assert.equal(await page.evaluate(() => hostPanelRoot.querySelector('strong').textContent), mode === 'visual' ? 'Visual only' : 'Live control');
+    assert.equal(await page.evaluate(() => hostPanelRoot.querySelector('strong').textContent), mode === 'visual' ? 'Preview changes' : 'Full control');
     assert.equal(await page.evaluate(() => hostPanelRoot.querySelector('select').value), mode);
     const before = await page.evaluate(() => panelMessages.length);
     await clickAt(await panelPoint('input'));

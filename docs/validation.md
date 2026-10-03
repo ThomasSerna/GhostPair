@@ -1,5 +1,15 @@
 # GhostPair validation
 
+## Sharing interface and 0.6.0 packages: October 3, 2026
+
+Workspace TypeScript checks, all **147 Vitest tests in 16 files**, the **8 Node release tests**, and extension production compilation passed. New checks cover official/custom preset inference, existing connection validation, settings persistence and identity restoration per server, and rejection of connection-setting changes during a session. Peer protocol 4 is unchanged.
+
+`node scripts/inspect-ui.mjs` passed **110 assertions** and produced **21 screenshots** with no browser page errors. Coverage includes Share/Join navigation, full sharing consent, password cleanup, denied and delayed permission requests, cancellation, official settings without technical fields, custom validation and persistence, a session starting while settings are open, clipboard initially off, waiting/connected/paused sessions, zero/one/five shared tabs, unavailable capture, automatic interaction preferences, and keyboard focus above the reserved session actions. The 398px popup and wide/narrow viewer captures were visually inspected; permission and state scenarios in this script use mocked extension APIs.
+
+The visual/page-panel probe passed in Chrome and Edge, including preview behavior, trusted local controls, hidden-panel restoration, narrow layout, and cleanup. The final production extension passed real local **Chrome→Chrome** and **Chrome→Edge** session suites on Chrome **154.0.8037.93** and Edge **154.0.4258.53**. These exercise native video, preview/full-control interactions, root and embedded questionnaires, pause, control withdrawal, tab authorization, cancellation, reconnect, and continued sessions after connection-server loss. Real viewer screenshots were inspected. Reports and captures are under the ignored `tests/browser/.artifacts` directory.
+
+`node scripts/package.mjs --store` passed. Both **0.6.0** ZIPs contain 18 files, Manifest V3, the existing permissions, the official connection preset, and no environment files, tests or source maps. Root/workspace/manifest versions match. Local fixture checks do not replace the existing publication checklist for native permission prompts, Windows clipboard sharing and sessions between separate computers. No push or deployment was performed.
+
 ## Host panel options and 0.5.1 packages: October 1, 2026
 
 Workspace TypeScript checks, all **141 Vitest tests in 15 files**, and the **8 Node test results** for CI/release behavior passed. Checks cover default-on and migrated panel visibility, persistence and restoration, host-only mode changes, current-document authorization, minimal page replies and inclusion of versioned release notes.

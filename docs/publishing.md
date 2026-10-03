@@ -2,7 +2,7 @@
 
 ## Delivery status
 
-Release 0.5.1 retains peer protocol 4 and the existing permission set. Both Chrome and Edge are targeted.
+Release 0.6.0 introduces a simpler sharing interface while retaining peer protocol 4 and the existing permission set. Both Chrome and Edge are targeted.
 
 The repository generates separate Chrome Web Store and Edge Add-ons packages. GitHub Releases distributes downloadable ZIPs automatically; store submission and approval remain separate. Complete the real-browser checks in [Validation](validation.md) and publisher information before submitting to stores.
 
@@ -15,13 +15,13 @@ Only a successful push to `main` can publish a release. The version comes from `
 To release the next version, update all workspaces and the root package without creating tags, then update the manifest to the same version. For example:
 
 ```powershell
-npm.cmd version 0.5.1 --workspaces --include-workspace-root --no-git-tag-version
-node --input-type=module -e "import fs from 'node:fs'; const path = 'apps/extension/public/manifest.json'; const manifest = JSON.parse(fs.readFileSync(path, 'utf8')); manifest.version = '0.5.1'; fs.writeFileSync(path, JSON.stringify(manifest, null, 2) + '\n');"
+npm.cmd version 0.6.0 --workspaces --include-workspace-root --no-git-tag-version
+node --input-type=module -e "import fs from 'node:fs'; const path = 'apps/extension/public/manifest.json'; const manifest = JSON.parse(fs.readFileSync(path, 'utf8')); manifest.version = '0.6.0'; fs.writeFileSync(path, JSON.stringify(manifest, null, 2) + '\n');"
 ```
 
 Commit the updated package files, `package-lock.json` and manifest together on `main`, then push. CI creates the tag and release after verification; no manual tag, personal access token, or version bump on ordinary commits is needed. This does not change branch protection or require a pull request for direct work on `main`.
 
-Write the version's changes in `docs/releases/<version>.md`. The publisher includes those notes before the installation instructions and GitHub's automatic notes. Versions without a notes file retain the installation instructions and automatic notes. [0.5.1 notes](releases/0.5.1.md) cover persistent panel visibility and the on-page interaction mode selector.
+Write the version's changes in `docs/releases/<version>.md`. The publisher includes those notes before the installation instructions and GitHub's automatic notes. Versions without a notes file retain the installation instructions and automatic notes. [0.6.0 notes](releases/0.6.0.md) cover clearer sharing and joining flows, interaction feedback, and the recommended or custom connection server.
 
 Publication is serialized by version. It creates a draft, uploads both verified ZIPs with checksum checks, then publishes. To recover from an interrupted upload, rerun the original **Publish extension release** job while its Actions artifact remains available; matching completed assets are retained. A draft or existing tag from a different commit fails instead of moving the tag or overwriting assets. Fix that original run or publish a new version. Published releases are never modified by reruns. If artifacts have expired, use a new version and a fresh CI run.
 
@@ -35,11 +35,11 @@ Publication is serialized by version. It creates a draft, uploads both verified 
 ## Preparation
 
 1. Obtain Google and Microsoft developer accounts, an HTTPS domain, and a monitored support email address.
-2. Confirm production health and the PostgreSQL configuration using [Deployment](deployment.md). Public production build defaults are committed in `.env.production`: `https://ghostpair.onrender.com` and external STUN. Override `VITE_SIGNALING_URL` and `VITE_STUN_URLS` through `.env.production.local` or process variables for another deployment. Existing manually saved settings require **Use build defaults** to adopt a new build's defaults.
+2. Confirm production health and the PostgreSQL configuration using [Deployment](deployment.md). Public production build defaults are committed in `.env.production`: `https://ghostpair.onrender.com` and external STUN. Override `VITE_SIGNALING_URL` and `VITE_STUN_URLS` through `.env.production.local` or process variables for another deployment. Existing manually saved settings survive builds; update **Custom server** explicitly for another deployment, or choose **GhostPair server** and **Save** to restore the official preset.
 3. Complete publisher fields in `docs/privacy.html`. Node (and the optional Caddy proxy) serves that page at `https://DOMAIN/privacy`.
 4. Run `npm ci`, `npm run typecheck`, `npm test`, browser checks, PostgreSQL/container checks, and `npm run package:store`. The store command validates the effective Vite production configuration, builds fresh assets, checks the recorded build defaults and produces both ZIPs. It rejects loopback/private-address literals, reserved/placeholder domains, credentialed URLs and non-HTTPS signaling. It checks configuration shape, not whether a domain actually hosts a working service; the public service must be verified separately. `npm run package` remains available for development endpoints.
 5. Register store listings and test both packages before final submission. Every valid Chrome/Edge extension ID is accepted by the server; no server ID configuration is required.
-6. Upload `dist/packages/ghostpair-chrome-0.5.1.zip` and `ghostpair-edge-0.5.1.zip` to the appropriate accounts. Include real screenshots, privacy policy, and contact details. Peer protocol 4 is unchanged; saved addresses and settings survive the update.
+6. Upload `dist/packages/ghostpair-chrome-0.6.0.zip` and `ghostpair-edge-0.6.0.zip` to the appropriate accounts. Include real screenshots, privacy policy, and contact details. Peer protocol 4 is unchanged; saved connection codes and settings survive the update.
 7. Give reviewers instructions for connecting two installations. Do not provide a permanent password or an unattended production session.
 
 ## Proposed listing
@@ -48,7 +48,7 @@ Publication is serialized by version. It creates a draft, uploads both verified 
 
 **Short description:** Share and control tabs with another person through an authorized P2P connection.
 
-**Description:** GhostPair connects two browsers for collaboration. Start a session, choose a password, and share your GhostPair address with a guest. Authorize each tab locally to share its video. Sessions start in Visual only: preview typing and choices without changing original form values. The host can edit, copy, cut, paste and move simulated text between supported fields. Text and other previews have independent persistent or temporary durations. Select Live control to enable basic page clicks and typing; scrolling and extension navigation remain real. Your guest can navigate and manage tabs in the shared window; new tabs wait for your approval before sharing. Pause, withdraw control, release a tab, or end the session from the extension. Native browser capture indicators remain visible.
+**Description:** GhostPair connects two browsers for collaboration. Choose **Share my tab**, set a password, and share your connection code with the other person. They choose **Join a session** and enter the code and password. Authorize each tab locally to share its video. Sessions start in **Preview changes**: preview typing and choices without changing original form values. The person sharing can edit, copy, cut, paste and move preview text between supported fields. Text and other previews have independent persistent or temporary durations under **Advanced options** → **Interaction feedback**. Select **Full control** to enable basic page clicks and typing; scrolling and extension navigation remain real. The other person can navigate and manage tabs in the shared window; new tabs wait for your approval before sharing. Pause, block control, stop sharing a tab, or end the session from the extension. Native browser capture indicators remain visible.
 
 Video and interactions travel directly over WebRTC. Signaling and STUN help establish the connection. There is no TURN relay, so some networks are incompatible. Optional clipboard synchronization shares new Windows clipboard text when both participants enable it. Audio, files, and desktop control are not included. Some complex pages cannot be controlled through DOM interactions.
 
@@ -64,7 +64,7 @@ The repository does not invent these facts or create publisher accounts. Product
 
 ## Reviewer walkthrough
 
-Install the reviewed package in two separate profiles or computers. Start a host session with a fresh temporary password, authorize one ordinary HTTPS tab, and connect the guest using the displayed GhostPair address. Confirm Visual only previews, host text editing, independent durations, circle-only radio marking, and unchanged original values. Switch to Live control to test a basic synthetic form. Verify pause, control withdrawal, tab authorization and termination. Clipboard synchronization is optional and requires both participants; local copy/paste inside simulated fields works independently. Use synthetic data and temporary credentials, never an unattended permanent session.
+Install the reviewed package in two separate profiles or computers. Choose **Share my tab** with a fresh temporary password and authorize one ordinary HTTPS tab. On the second installation, choose **Join a session** and enter the displayed **Connection code** and password. Confirm **Preview changes**, local preview text editing, independent durations, circle-only radio marking, and unchanged original values. Switch to **Full control** to test a basic synthetic form. Verify pause, control withdrawal, tab authorization and termination. **Share clipboard** is optional and requires both participants; local copy/paste inside preview fields works independently. Use synthetic data and temporary credentials, never an unattended permanent session.
 
 ## Permission rationale
 

@@ -60,7 +60,7 @@ for (const name of process.argv.slice(2).length ? process.argv.slice(2) : ['chro
     await click('#readonly'); await text('ignored'); await click('#disabled'); await text('ignored');
     const after = await page.evaluate(() => ({ html: document.querySelector('form').outerHTML, focus: document.activeElement.tagName, values: [...document.querySelectorAll('input,textarea')].map(e => [e.value,e.checked,e.selectionStart,e.selectionEnd]), editable: document.querySelector('#editable').innerHTML }));
     assert.deepEqual(after, original); assert.deepEqual(await page.evaluate(() => events), []); assert.equal(await page.evaluate(() => accepted), 0);
-    assert.ok(!(await contents()).some(t => t.startsWith('Simulated')));
+    assert.ok(!(await contents()).some(t => ['Typing preview', 'Click preview'].includes(t)));
     const oldContents = (await contents()).filter(Boolean);
     config.preferences.accentColor = '#12abcd';
     await send(undefined, { operation: 'configure', configuration: config });
@@ -87,11 +87,11 @@ for (const name of process.argv.slice(2).length ? process.argv.slice(2) : ['chro
     config.preferences.notices = true;
     await send(undefined, { operation: 'configure', configuration: config });
     await send(undefined, { operation: 'visual.notice', kind: 'typing' });
-    assert.equal((await contents()).filter(t => t === 'Simulated typing').length, 1);
-    await send(undefined, { operation: 'visual.notice', kind: 'click' }); assert.ok(!(await contents()).includes('Simulated click'));
-    await page.clock.runFor(1550); assert.ok(!(await contents()).includes('Simulated typing'));
-    await page.clock.runFor(1500); await send(undefined, { operation: 'visual.notice', kind: 'click' }); assert.ok((await contents()).includes('Simulated click'));
-    config.preferences.notices = false; await send(undefined, { operation: 'configure', configuration: config }); assert.ok(!(await contents()).includes('Simulated click'));
+    assert.equal((await contents()).filter(t => t === 'Typing preview').length, 1);
+    await send(undefined, { operation: 'visual.notice', kind: 'click' }); assert.ok(!(await contents()).includes('Click preview'));
+    await page.clock.runFor(1550); assert.ok(!(await contents()).includes('Typing preview'));
+    await page.clock.runFor(1500); await send(undefined, { operation: 'visual.notice', kind: 'click' }); assert.ok((await contents()).includes('Click preview'));
+    config.preferences.notices = false; await send(undefined, { operation: 'configure', configuration: config }); assert.ok(!(await contents()).includes('Click preview'));
     // Old input cannot become live input across a mode change.
     config.mode = 'live'; config.revision = 1;
     await send(undefined, { operation: 'configure', configuration: config });

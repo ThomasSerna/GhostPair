@@ -51,7 +51,7 @@ export function installDomControl(captureId: string, generation: number, root = 
     dragging = undefined;
   }
   function cancelDeferred() {
-    for (const pending of deferredInput.splice(0)) { clearTimeout(pending.timer); pending.respond({ ok: false, error: 'The simulated editor changed. Try again.' }); }
+    for (const pending of deferredInput.splice(0)) { clearTimeout(pending.timer); pending.respond({ ok: false, error: 'The preview changed. Try again.' }); }
   }
   function flushDeferred() {
     for (const pending of deferredInput.splice(0)) {
@@ -87,9 +87,9 @@ export function installDomControl(captureId: string, generation: number, root = 
 
   function updatePanel() {
     panel?.style.setProperty('display', configuration.preferences.showHostPanel === false ? 'none' : 'block', 'important');
-    if (panelMode) panelMode.textContent = configuration.mode === 'visual' ? 'Visual only' : 'Live control';
+    if (panelMode) panelMode.textContent = configuration.mode === 'visual' ? 'Preview changes' : 'Full control';
     if (panelSelect) panelSelect.value = configuration.mode;
-    if (panelHint) panelHint.textContent = configuration.mode === 'visual' ? 'Visibility applies to the shared view.' : 'Real page changes remain visible.';
+    if (panelHint) panelHint.textContent = configuration.mode === 'visual' ? 'Clicks and typing are previews. Scrolling, navigation and tab management still change the shared page.' : 'Actions change the page. Hiding feedback keeps these changes visible.';
     for (const [preference, input] of visibilityInputs) input.checked = configuration.preferences[preference] !== false;
   }
   function installPanel() {
@@ -102,7 +102,7 @@ export function installDomControl(captureId: string, generation: number, root = 
     const details = document.createElement('details');
     const summary = document.createElement('summary'); summary.append('GhostPair ·');
     panelMode = document.createElement('strong'); panelMode.setAttribute('role', 'status'); summary.append(panelMode);
-    const section = document.createElement('section'); section.setAttribute('aria-label', 'Host controls');
+    const section = document.createElement('section'); section.setAttribute('aria-label', 'Page sharing controls');
     const error = document.createElement('p'); error.setAttribute('role', 'alert');
     const controls: (HTMLInputElement | HTMLSelectElement | HTMLButtonElement)[] = [];
     async function changePanel(event: Event, message: object) {
@@ -111,18 +111,18 @@ export function installDomControl(captureId: string, generation: number, root = 
       error.textContent = '';
       try {
         const reply = await chrome.runtime.sendMessage({ target: 'background', captureId: context.captureId, generation: context.generation, controlRevision: configuration.revision, ...message });
-        if (!reply?.ok) throw new Error(reply?.error ?? 'Could not update host controls. Try again.');
-      } catch (reason) { error.textContent = reason instanceof Error ? reason.message : 'Could not update host controls. Try again.'; }
+        if (!reply?.ok) throw new Error(reply?.error ?? 'Could not update page controls. Try again.');
+      } catch (reason) { error.textContent = reason instanceof Error ? reason.message : 'Could not update page controls. Try again.'; }
       finally { updatePanel(); for (const field of controls) field.disabled = false; }
     }
     const modeLabel = document.createElement('label'); modeLabel.className = 'mode'; modeLabel.append('Interaction mode');
     panelSelect = document.createElement('select');
-    for (const [value, label] of [['visual', 'Visual only'], ['live', 'Live control']] as const) {
+    for (const [value, label] of [['visual', 'Preview changes'], ['live', 'Full control']] as const) {
       const option = document.createElement('option'); option.value = value; option.textContent = label; panelSelect.append(option);
     }
     panelSelect.addEventListener('change', event => void changePanel(event, { type: 'dom.control.mode', mode: panelSelect!.value }));
     controls.push(panelSelect); modeLabel.append(panelSelect); section.append(modeLabel);
-    for (const [preference, label] of [['showInteractions', 'Show interactions'], ['clickAnimations', 'Click animations']] as const) {
+    for (const [preference, label] of [['showInteractions', 'Show their actions'], ['clickAnimations', 'Show where they click']] as const) {
       const row = document.createElement('label'), input = document.createElement('input'); input.type = 'checkbox';
       input.name = preference;
       visibilityInputs.set(preference, input); row.append(input, label); section.append(row);
@@ -159,7 +159,7 @@ export function installDomControl(captureId: string, generation: number, root = 
     if (layer) { if (!layer.isConnected) document.documentElement.insertBefore(layer, panel?.isConnected ? panel : null); return; }
     layer = document.createElement('div');
     layer.dataset.ghostpairVisual = '';
-    layer.setAttribute('aria-label', 'GhostPair simulated fields');
+    layer.setAttribute('aria-label', 'GhostPair previews');
     layer.style.cssText = 'all:initial!important;position:fixed!important;inset:0!important;width:100vw!important;height:100vh!important;z-index:2147483647!important;pointer-events:none!important;overflow:hidden!important;contain:strict!important;';
     updateAccent();
     updateVisibility();
@@ -587,7 +587,7 @@ export function installDomControl(captureId: string, generation: number, root = 
   function showNotice(kind: string) {
     const now = performance.now();
     if (!root || !configuration.preferences.notices || configuration.preferences.showInteractions === false || now - lastNotice < 3000 || !['click', 'typing'].includes(kind)) return;
-    notice ??= node(); notice.textContent = kind === 'typing' ? 'Simulated typing' : 'Simulated click';
+    notice ??= node(); notice.textContent = kind === 'typing' ? 'Typing preview' : 'Click preview';
     notice.style.cssText = 'position:fixed;right:12px;bottom:12px;max-width:220px;padding:5px 8px;border-radius:5px;background:rgba(30,30,38,.82);color:#fff;font:11px/14px system-ui;white-space:nowrap;';
     noticeUntil = now + 1500; lastNotice = now; scheduleDraw();
   }
@@ -600,7 +600,7 @@ export function installDomControl(captureId: string, generation: number, root = 
   function previewFor(element: HTMLElement) {
     let preview = previews.get(element);
     if (!preview) {
-      if (previews.size >= 256) throw new Error('Clear the simulation before adding more fields.');
+      if (previews.size >= 256) throw new Error('Clear previews before adding more fields.');
       preview = { id: randomToken(), revision: 0, node: node(), anchor: 0, caret: 0 }; previews.set(element, preview);
     }
     scheduleDraw(); return preview;
@@ -629,7 +629,7 @@ export function installDomControl(captureId: string, generation: number, root = 
     const editor = element instanceof HTMLInputElement ? document.createElement('input') : document.createElement('textarea');
     if (editor instanceof HTMLInputElement) editor.type = element instanceof HTMLInputElement && element.type === 'password' ? 'password' : 'text';
     editor.dataset.gpEditor = preview.id;
-    editor.setAttribute('aria-label', `Simulated ${element.getAttribute('aria-label') || element.getAttribute('placeholder') || 'text'}`);
+    editor.setAttribute('aria-label', `Preview: ${element.getAttribute('aria-label') || element.getAttribute('placeholder') || 'text'}`);
     editor.autocomplete = 'off'; editor.spellcheck = false; editor.tabIndex = -1;
     editor.style.cssText = 'all:initial;position:absolute;box-sizing:border-box;margin:0;opacity:0;';
     editor.value = preview.value ?? '';
@@ -732,7 +732,7 @@ export function installDomControl(captureId: string, generation: number, root = 
     }).catch(() => undefined).finally(() => { dropping = false; localActivity('typing'); });
   }
   function dragOperation(message: Record<string, any>) {
-    if (configuration.mode !== 'visual') throw new Error('Simulation is unavailable.');
+    if (configuration.mode !== 'visual') throw new Error('Previews are unavailable in Full control.');
     const source = dragging && previews.get(dragging.element);
     if (message.operation === 'visual.drag.read') {
       if (!dragging || dragging.token !== message.token || !source || source.revision !== dragging.revision) throw new Error('The dragged text changed.');
@@ -757,7 +757,7 @@ export function installDomControl(captureId: string, generation: number, root = 
     }
     const text = typeof message.text === 'string' && element instanceof HTMLInputElement ? message.text.replace(/[\r\n]/g, '') : message.text;
     const next = value.slice(0, offset) + text + value.slice(offset);
-    if (typeof message.text !== 'string' || new TextEncoder().encode(next).length > 256 * 1024) throw new Error('Simulated text exceeds the limit.');
+    if (typeof message.text !== 'string' || new TextEncoder().encode(next).length > 256 * 1024) throw new Error('Preview text exceeds the limit.');
     preview.value = next; preview.revision++; preview.anchor = preview.caret = offset + text.length;
     paintText(element, preview); if (message.operation === 'visual.drag.move') endDrag(); return {};
   }
@@ -823,7 +823,7 @@ export function installDomControl(captureId: string, generation: number, root = 
     const preview = textPreview(element), value = preview.value!;
     const start = Math.min(preview.anchor, preview.caret), end = Math.max(preview.anchor, preview.caret);
     const next = value.slice(0, start) + text + value.slice(end);
-    if (new TextEncoder().encode(next).length > 256 * 1024) throw new Error('Simulated text exceeds the limit.');
+    if (new TextEncoder().encode(next).length > 256 * 1024) throw new Error('Preview text exceeds the limit.');
     preview.value = next; preview.revision++; preview.anchor = preview.caret = start + text.length; paintText(element, preview); return 'typing';
   }
   function executeVisual(command: ControlCommand): string | undefined {
@@ -1052,7 +1052,7 @@ export function installDomControl(captureId: string, generation: number, root = 
             clicked.dispatchEvent(new MouseEvent('click', fields));
             if (command.clickCount === 2) clicked.dispatchEvent(new MouseEvent('dblclick', { ...fields, detail: 2 }));
           } else if (command.button === 'right') clicked.dispatchEvent(new MouseEvent('contextmenu', fields));
-          else throw new Error('Middle-click browser actions require the host.');
+          else throw new Error('Ask the person sharing to use middle-click browser actions.');
         }
       }
       return;

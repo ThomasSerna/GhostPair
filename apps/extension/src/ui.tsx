@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import type { AppState } from '@ghostpair/protocol';
 
 export const statusLabels: Record<AppState['status'], string> = {
-  idle: 'Disconnected', starting: 'Preparing session', waiting: 'Waiting for a visitor', connecting: 'Connecting devices', connected: 'Session connected', paused: 'Session paused', error: 'Connection failed',
+  idle: 'Ready to connect', starting: 'Preparing session', waiting: 'Waiting for someone to join', connecting: 'Connecting…', connected: 'Connected', paused: 'Session paused', error: 'Could not connect',
 };
 
 export async function request(type: string, payload: Record<string, unknown> = {}): Promise<AppState> {

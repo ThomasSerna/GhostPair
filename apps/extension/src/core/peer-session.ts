@@ -155,12 +155,12 @@ async function verifyDirect(pc: RTCPeerConnection, current: number) {
     if (!selected) stats.forEach(report => { if (report.type === 'candidate-pair' && report.state === 'succeeded' && report.nominated) selected = report; });
     if (selected) {
       const local = stats.get(selected.localCandidateId); const remote = stats.get(selected.remoteCandidateId);
-      if (local?.candidateType === 'relay' || remote?.candidateType === 'relay') { fail('Relayed connections are not allowed.'); return; }
+      if (local?.candidateType === 'relay' || remote?.candidateType === 'relay') { fail('GhostPair cannot use this connection. Try another network.'); return; }
       if (local?.candidateType && remote?.candidateType) { direct = true; await establish(); return; }
     }
     await new Promise(resolve => setTimeout(resolve, 100));
   }
-  if (peer === pc && epoch === current) fail('Could not verify a direct route between the devices.');
+  if (peer === pc && epoch === current) fail('Could not verify the connection between the devices. Try another network.');
 }
 
 async function establish() {
@@ -168,7 +168,7 @@ async function establish() {
   connected = true; clearTimeout(timer);
   const current = epoch;
   clipboardSync = new ClipboardSync(role, clipboardAdapter, update => {
-    if (!clipboardPipe?.send(update)) notify('transport.notice', { message: 'The clipboard channel is congested. The latest change was not sent.' });
+    if (!clipboardPipe?.send(update)) notify('transport.notice', { message: 'Clipboard sharing is busy. The latest copied text was not sent.' });
   }, message => {
     if (!clipboardSync?.isActive) { clipboardEnabled = false; sendPeer({ type: 'clipboard.enabled', enabled: false }); notify('transport.clipboard', { remoteEnabled: remoteClipboardEnabled, disabled: true }); }
     notify('transport.notice', { message });
@@ -222,7 +222,7 @@ async function receiveControl(value: unknown) {
       let reply;
       try { reply = await dispatch({ type: 'transport.command', command: message.command }); }
       catch {
-        if (epoch === current && revision === inputRevision) { fail('The host input connection failed. Start a new session.'); return; }
+        if (epoch === current && revision === inputRevision) { fail('Page controls stopped working. Start a new session.'); return; }
       }
       if (epoch !== current) return;
       if (revision !== inputRevision && reply?.ok !== true) {
@@ -308,10 +308,10 @@ async function createPeer(settings: Settings, current: number) {
   pc.onconnectionstatechange = () => {
     if (peer !== pc || epoch !== current || ending) return;
     if (pc.connectionState === 'connected') void verifyDirect(pc, current).catch(() => { if (peer === pc && epoch === current) fail('Could not verify the connection.'); });
-    else if (['failed', 'disconnected', 'closed'].includes(pc.connectionState)) cleanup('The direct connection was interrupted. Start a new session.', true, true);
+    else if (['failed', 'disconnected', 'closed'].includes(pc.connectionState)) cleanup('The session connection was interrupted. Start a new session.', true, true);
   };
   pc.ondatachannel = event => { if (peer === pc && epoch === current) attachChannel(event.channel, current); else event.channel.close(); };
-  timer = setTimeout(() => { if (epoch === current && !connected) fail('No direct P2P connection was found within 30 seconds. The network may block it.'); }, 30000);
+  timer = setTimeout(() => { if (epoch === current && !connected) fail('Could not connect within 30 seconds. Your network may be blocking the connection. Try another network.'); }, 30000);
   if (role === 'host') {
     attachChannel(pc.createDataChannel('control', { ordered: true }), current);
 
@@ -326,13 +326,13 @@ async function createPeer(settings: Settings, current: number) {
 
 async function signal(payload: SignalPayload, current: number) {
   const pc = peer; if (!pc || epoch !== current) return;
-  if (isRelaySignal(payload)) { fail('The signal contains a disallowed relay route.'); return; }
+  if (isRelaySignal(payload)) { fail('GhostPair cannot use this connection. Try another network.'); return; }
   if (payload.type === 'ice') {
     if (!payload.candidate) return;
     if (!pc.remoteDescription) { if (pendingIce.length < 100) pendingIce.push(payload.candidate); return; }
     await pc.addIceCandidate(payload.candidate); return;
   }
-  if ((payload.type === 'offer' && role !== 'guest') || (payload.type === 'answer' && role !== 'host')) throw new Error('Incorrect signaling role.');
+  if ((payload.type === 'offer' && role !== 'guest') || (payload.type === 'answer' && role !== 'host')) throw new Error('The connection details do not match this session.');
   await pc.setRemoteDescription(payload);
   if (epoch !== current) return;
   const queuedIce = pendingIce; pendingIce = [];
@@ -356,7 +356,7 @@ async function start(message: Record<string, any>) {
   pulse = setInterval(() => notify('transport.pulse'), 20000);
   const url = new URL('/v1/connect', settings.signalingUrl); url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
   const ws = new WebSocket(url); socket = ws;
-  timer = setTimeout(() => { if (epoch === current) fail('Could not reach the signaling server.'); }, 12000);
+  timer = setTimeout(() => { if (epoch === current) fail('Could not reach the connection server. Check your network and try again.'); }, 12000);
   ws.onopen = () => {
     if (epoch !== current) return;
     ws.send(JSON.stringify(role === 'host' ? { type: 'host.open', deviceId: message.deviceId, ownerToken: message.ownerToken, password: message.password } : { type: 'guest.join', deviceId: message.deviceId, password: message.password }));
@@ -377,10 +377,10 @@ async function start(message: Record<string, any>) {
       if (message.role !== role || peer) { fail('The received session does not match.'); return; }
       sessionId = message.sessionId; clearTimeout(timer);
       notify('transport.status', { status: 'connecting', sessionId });
-      negotiation = createPeer(settings, current).catch(() => { if (epoch === current) fail('Could not prepare WebRTC.'); }); return;
+      negotiation = createPeer(settings, current).catch(() => { if (epoch === current) fail('Could not prepare the connection. Start a new session.'); }); return;
     }
     if (message.type === 'signal' && message.sessionId === sessionId) {
-      negotiation = negotiation.then(() => signal(message.payload, current)).catch(() => { if (epoch === current) fail('Could not negotiate the direct connection.'); }); return;
+      negotiation = negotiation.then(() => signal(message.payload, current)).catch(() => { if (epoch === current) fail('Could not connect the devices. Try again or use another network.'); }); return;
     }
     if (message.type === 'ended' && message.sessionId === sessionId) { cleanup(message.reason, true); return; }
     if (message.type === 'error') {
@@ -390,19 +390,19 @@ async function start(message: Record<string, any>) {
   };
   ws.onclose = () => {
     if (epoch !== current || ending) return;
-    if (connected) notify('transport.notice', { message: 'The signaling server disconnected. The P2P session continues.' });
+    if (connected) notify('transport.notice', { message: 'The connection server is unavailable. Your session is still connected.' });
     else fail('The server closed the connection. Check settings or start a new session.');
   };
-  ws.onerror = () => { if (epoch === current && !connected) fail('Could not connect. Check the signaling server address and availability.'); };
+  ws.onerror = () => { if (epoch === current && !connected) fail('Could not reach the connection server. Check your network and connection settings.'); };
 }
 
 async function onMessage(message: Record<string, any>) {
   switch (message.type) {
     case 'identity.register': {
       const settings = SettingsSchema.parse(message.settings);
-      if (!validateSignalingUrl(settings.signalingUrl)) throw new Error('Invalid signaling server.');
+      if (!validateSignalingUrl(settings.signalingUrl)) throw new Error('Enter a valid connection server address.');
       const response = await fetch(new URL('/v1/devices', settings.signalingUrl), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}', credentials: 'omit', redirect: 'error', signal: AbortSignal.timeout(10000) });
-      if (!response.ok) throw new Error(`Registration rejected (${response.status}). Check the signaling server address and availability.`);
+      if (!response.ok) throw new Error(`The connection server could not set up GhostPair (${response.status}). Check the connection settings and try again.`);
       return { ok: true, identity: await response.json() };
     }
     case 'session.start': await start(message); return { ok: true };
@@ -429,7 +429,7 @@ async function onMessage(message: Record<string, any>) {
         if (pendingCommands.size >= 32) { fail('Too many pending actions. Start a new session.'); return { ok: false, error: 'Too many pending actions.' }; }
         return new Promise<{ ok: boolean; error?: string }>(resolve => {
           const requestId = String(message.requestId);
-          const timer = setTimeout(() => { pendingCommands.delete(requestId); resolve({ ok: false, error: 'The host did not confirm the action. Check the tab list before trying again.' }); }, 10000);
+          const timer = setTimeout(() => { pendingCommands.delete(requestId); resolve({ ok: false, error: 'The person sharing did not confirm the action. Check the tab list before trying again.' }); }, 10000);
           pendingCommands.set(requestId, { resolve, timer });
           if (!sendPeer({ type: 'command', command, requestId })) { clearTimeout(timer); pendingCommands.delete(requestId); resolve({ ok: false, error: 'The connection is congested.' }); if (role) fail('The connection is congested. Start a new session.'); }
         });

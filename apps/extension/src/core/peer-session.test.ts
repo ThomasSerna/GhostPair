@@ -196,7 +196,7 @@ describe('peer session lifetime', () => {
     first.control.receive({ type: 'command', command: { type: 'text', controlRevision: 0, ...target, text: 'queued' } });
     delivery.reject(new Error('Extension connection lost')); await settled();
     expect(h.dispatch).toHaveBeenCalledTimes(1);
-    expect(h.notify).toHaveBeenCalledWith('transport.ended', expect.objectContaining({ failed: true, reason: expect.stringContaining('host input connection failed') }));
+    expect(h.notify).toHaveBeenCalledWith('transport.ended', expect.objectContaining({ failed: true, reason: 'Page controls stopped working. Start a new session.' }));
     expect(first.pc.close).toHaveBeenCalled();
   });
 

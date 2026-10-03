@@ -60,9 +60,9 @@ async function click(host, viewer, selector) {
 async function join(viewer, deviceId, password) {
   await viewer.bringToFront();
   await poll(() => viewer.evaluate(() => !document.hidden), 'connection page visible');
-  await viewer.getByLabel('Host address', { exact: true }).fill(deviceId);
-  await viewer.getByLabel('Session password', { exact: true }).fill(password);
-  await viewer.getByRole('button', { name: 'Connect →', exact: true }).click();
+  await viewer.getByLabel('Connection code', { exact: true }).fill(deviceId);
+  await viewer.getByLabel('Password', { exact: true }).fill(password);
+  await viewer.getByRole('button', { name: 'Join session', exact: true }).click();
 }
 try {
   for (const pair of process.argv.slice(2).length ? process.argv.slice(2) : ['chrome:chrome', 'edge:edge', 'chrome:edge']) {
@@ -114,7 +114,7 @@ try {
         await waitState(hostUi, s => !s.visualPreferences.clickAnimations, 'host panel disables circles');
         await call(hostUi, 'ui.visual.preferences', { preferences: { ...hidden.visualPreferences, showInteractions: true, clickAnimations: true } });
         const [result] = await host.worker.evaluate(tabId => chrome.scripting.executeScript({ target: { tabId }, world: 'ISOLATED', func: () => ({ mode: __gpPanelRoot.querySelector('strong').textContent, checked: [...__gpPanelRoot.querySelectorAll('input')].every(e => e.checked) }) }), panelTabId);
-        assert.deepEqual(result.result, { mode: mode === 'visual' ? 'Visual only' : 'Live control', checked: true });
+        assert.deepEqual(result.result, { mode: mode === 'visual' ? 'Preview changes' : 'Full control', checked: true });
       }
       await click(page, viewer, '#text'); await viewer.keyboard.insertText('Panel-independent preview');
       await page.locator('[data-ghostpair-visual]').waitFor({ state: 'visible' });
@@ -128,9 +128,10 @@ try {
       assert.equal(await page.locator('[data-ghostpair-visual]').isVisible(), true, 'hiding only the panel preserves visible interactions');
       assert.equal(await page.locator('#text').inputValue(), '', 'hiding the panel does not apply simulated text');
       assert.equal(await host.worker.evaluate(async () => (await chrome.storage.local.get('visualPreferences')).visualPreferences.showHostPanel), false);
-      await hostUi.getByLabel('Show host panel').click();
+      await hostUi.getByText('Advanced options', { exact: true }).click();
+      await hostUi.getByLabel('Show page controls').click();
       await waitState(hostUi, s => s.visualPreferences.showHostPanel, 'host menu restores panel');
-      await poll(() => hostUi.getByLabel('Show host panel').isChecked(), 'host menu shows saved panel preference');
+      await poll(() => hostUi.getByLabel('Show page controls').isChecked(), 'host menu shows saved panel preference');
       await page.bringToFront(); await videoReady(viewer, page.url());
       await page.locator('[data-ghostpair-panel]').waitFor({ state: 'visible' });
       for (const embedded of [false, true]) {
@@ -145,9 +146,9 @@ try {
       }
       const appearance = await host.worker.evaluate(async () => ({ badge: await chrome.action.getBadgeText({}), title: await chrome.action.getTitle({}) }));
       assert.deepEqual(appearance, { badge: '', title: 'GhostPair' });
-      await hostUi.getByLabel('Show host panel').click();
+      await hostUi.getByLabel('Show page controls').click();
       await waitState(hostUi, s => !s.visualPreferences.showHostPanel, 'host menu saves hidden panel');
-      await poll(async () => !await hostUi.getByLabel('Show host panel').isChecked(), 'host menu shows saved hidden preference');
+      await poll(async () => !await hostUi.getByLabel('Show page controls').isChecked(), 'host menu shows saved hidden preference');
       await page.bringToFront();
       await page.goto(`${base}/one`); await videoReady(viewer, page.url());
       assert.equal(await page.locator('[data-ghostpair-panel]').isVisible(), false, 'panel stays hidden after navigation');
@@ -195,15 +196,15 @@ try {
       await resizePage(host, second, 850, 650); await videoReady(viewer);
       await click(second, viewer, '#target'); await poll(() => second.evaluate(() => window.clicks === 2), 'resized video mapping');
       const reconnect = async () => {
-        await viewer.getByLabel('Host address', { exact: true }).waitFor();
-        assert.equal(await viewer.getByLabel('Session password', { exact: true }).inputValue(), '');
+        await viewer.getByLabel('Connection code', { exact: true }).waitFor();
+        assert.equal(await viewer.getByLabel('Password', { exact: true }).inputValue(), '');
         await waitState(hostUi, s => s.status === 'idle', 'previous host ended');
         await authorize(host, second);
         await call(hostUi, 'ui.host.start', { password: 'Eight-42', clipboard: false });
         const next = await waitState(hostUi, s => s.status === 'waiting', 'host restarted');
         assert.equal(next.deviceId, waiting.deviceId, 'host identity survives new sessions');
         assert.equal(next.visualPreferences.showHostPanel, false, 'panel visibility survives new sessions');
-        assert.equal(await viewer.getByLabel('Host address', { exact: true }).inputValue(), waiting.deviceId);
+        assert.equal(await viewer.getByLabel('Connection code', { exact: true }).inputValue(), waiting.deviceId);
         await join(viewer, next.deviceId, 'Eight-42');
         await waitState(viewer, s => s.status === 'connected', 'guest reconnected');
         await videoReady(viewer, second.url());
@@ -212,10 +213,10 @@ try {
         await waitState(viewer, s => s.controlMode === 'live', 'live mode restored');
       };
       await call(hostUi, 'ui.stop'); await reconnect();
-      await viewer.getByRole('button', { name: 'Disconnect', exact: true }).click(); await reconnect();
+      await viewer.getByRole('button', { name: 'Leave session', exact: true }).click(); await reconnect();
       await viewer.reload(); await reconnect();
       const duplicate = await guest.context.newPage(); await duplicate.goto(viewer.url());
-      await duplicate.getByText('Your connection page is already open.').waitFor();
+      await duplicate.getByText('Your session page is already open.').waitFor();
       await duplicate.close(); await call(viewer, 'ui.viewer.open');
       assert.equal((await state(viewer)).status, 'connected');
       assert.equal(guest.context.pages().filter(p => p.url() === viewer.url()).length, 1);
@@ -233,8 +234,8 @@ try {
       await viewer.getByRole('button', { name: 'Dismiss notification' }).click();
       await click(second, viewer, '#target'); await poll(() => second.evaluate(() => window.clicks === 3), 'P2P survives signaling loss');
       await viewer.screenshot({ path: resolve(artifactRoot, `native-${pair.replace(':', '-')}.png`) });
-      await viewer.getByRole('button', { name: 'Disconnect', exact: true }).click();
-      await viewer.getByLabel('Host address', { exact: true }).waitFor(); await waitState(hostUi, s => s.status === 'idle', 'host ended');
+      await viewer.getByRole('button', { name: 'Leave session', exact: true }).click();
+      await viewer.getByLabel('Connection code', { exact: true }).waitFor(); await waitState(hostUi, s => s.status === 'idle', 'host ended');
       await poll(async () => !(await host.worker.evaluate(() => chrome.tabCapture.getCapturedTabs())).some(t => ['active', 'pending'].includes(t.status)), 'capture tracks released');
       assert.equal(guest.context.pages().filter(p => p.url() === `chrome-extension://${guest.id}/viewer.html`).length, 1);
       assert.deepEqual(errors, []);

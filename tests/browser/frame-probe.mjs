@@ -59,9 +59,9 @@ try {
       const start = await call(menu, 'ui.host.start', { password: 'Frames-42', clipboard: false }); assert.notEqual(start.status, 'error');
       await call(menu, 'ui.control.mode', { mode: 'live' });
       const waiting = await poll(async () => { const s = await call(menu, 'ui.status'); return s.status === 'waiting' && s; }, 'host waiting');
-      await viewer.getByLabel('Host address', { exact: true }).fill(waiting.deviceId);
-      await viewer.getByLabel('Session password', { exact: true }).fill('Frames-42');
-      await viewer.getByRole('button', { name: 'Connect →', exact: true }).click();
+      await viewer.getByLabel('Connection code', { exact: true }).fill(waiting.deviceId);
+      await viewer.getByLabel('Password', { exact: true }).fill('Frames-42');
+      await viewer.getByRole('button', { name: 'Join session', exact: true }).click();
       const ready = () => poll(async () => {
         const s = await call(viewer, 'ui.status');
         const playing = await viewer.locator('video').evaluate(v => v.readyState >= 2 && v.videoWidth > 0 && v.dataset.generation);
