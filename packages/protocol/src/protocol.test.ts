@@ -14,10 +14,11 @@ describe('network boundaries', () => {
     for (const showInteractions of ['false', 0, null]) expect(VisualPreferencesSchema.safeParse({ showInteractions }).success).toBe(false);
     for (const showHostPanel of ['false', 0, null]) expect(VisualPreferencesSchema.safeParse({ showHostPanel }).success).toBe(false);
   });
-  it('defaults to silent persistent previews and bounds their configurable lifetime', () => {
-    expect(VisualPreferencesSchema.parse({})).toEqual({ notices: false, clickAnimations: true, showInteractions: true, showHostPanel: true, text: { duration: 'persistent', seconds: 10 }, other: { duration: 'persistent', seconds: 3 }, accentColor: '#7871e8' });
-    for (let tenths = 1; tenths <= 300; tenths++) expect(VisualPreferencesSchema.safeParse({ text: { seconds: tenths / 10 }, other: { seconds: tenths / 10 } }).success).toBe(true);
-    for (const seconds of [-1, 0, 0.01, 0.25, 30.1, 31, Infinity, NaN]) expect(VisualPreferencesSchema.safeParse({ text: { seconds } }).success).toBe(false);
+  it('defaults to half-second previews and bounds their configurable lifetime', () => {
+    expect(VisualPreferencesSchema.parse({})).toEqual({ notices: false, clickAnimations: true, showInteractions: true, showHostPanel: true, text: { duration: 'temporary', seconds: 0.5 }, other: { duration: 'temporary', seconds: 0.5 }, accentColor: '#7871e8' });
+    expect(VisualPreferencesSchema.parse({ text: { duration: 'persistent' }, other: {} })).toMatchObject({ text: { duration: 'persistent', seconds: 0.5 }, other: { duration: 'temporary', seconds: 0.5 } });
+    for (let tenths = 1; tenths <= 100; tenths++) expect(VisualPreferencesSchema.safeParse({ text: { seconds: tenths / 10 }, other: { seconds: tenths / 10 } }).success).toBe(true);
+    for (const seconds of [-1, 0, 0.01, 0.25, 10.1, 12, 30, Infinity, NaN]) expect(VisualPreferencesSchema.safeParse({ text: { seconds } }).success).toBe(false);
     expect(ControlCommandSchema.safeParse({ type: 'tab.create', url: 'https://example.com' }).success).toBe(false);
   });
   it('defaults legacy preferences to purple and accepts only opaque hex accents', () => {

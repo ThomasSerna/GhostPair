@@ -21,7 +21,7 @@ function mockChrome({ manifest, official, code }) {
   const scenario = new URLSearchParams(location.search).get('scenario');
   const state = {
     role: null, status: 'idle', deviceId: code, paused: false, controlEnabled: true, controlMode: 'visual', controlRevision: 0,
-    visualPreferences: { notices: false, clickAnimations: true, showInteractions: true, showHostPanel: true, text: { duration: 'persistent', seconds: 10 }, other: { duration: 'persistent', seconds: 3 }, accentColor: '#7871e8' },
+    visualPreferences: { notices: false, clickAnimations: true, showInteractions: true, showHostPanel: true, text: { duration: 'temporary', seconds: 0.5 }, other: { duration: 'temporary', seconds: 0.5 }, accentColor: '#7871e8' },
     clipboardEnabled: false, remoteClipboardEnabled: false, tabs: [], generation: 0, settings: structuredClone(official),
   };
   const tab = (id, authorized = true, active = id === 1) => ({ id, title: ['Weekend plans', 'Shared notes', 'Trip details', 'Packing list', 'Map'][id - 1] ?? 'Another page', url: `https://example.com/page-${id}`, supported: true, active, authorized, ...(authorized ? { captureState: 'ready' } : {}) });
@@ -133,6 +133,15 @@ try {
 
   const home = await open(context);
   await home.getByRole('button', { name: 'Share my tab', exact: true }).waitFor();
+  const connectionCode = home.locator('#share-code');
+  equal(await connectionCode.innerText(), 'Your connection code: 0123 4567 89AB CDEF 0123 4567 89AB CDEF', 'Home displays the current shareable code');
+  ok(await connectionCode.evaluate(element => {
+    const codeBox = element.getBoundingClientRect(), shareBox = document.querySelector('[aria-label="Share my tab"]').getBoundingClientRect();
+    return codeBox.top >= shareBox.bottom && parseFloat(getComputedStyle(element).fontSize) <= 12 && element.scrollWidth <= element.clientWidth && codeBox.right <= innerWidth;
+  }), 'Small connection-code text fits beneath Share my tab');
+  await set(home, { deviceId: null });
+  equal(await connectionCode.innerText(), 'Your connection code: Generated when you share', 'Missing identity uses a preparation hint without a stale code');
+  await set(home, { deviceId: code });
   equal(await home.getByLabel('Password', { exact: true }).count(), 0, 'Home offers intent before credentials');
   equal(await home.getByRole('button', { name: 'Join a session', exact: true }).count(), 1);
   await home.keyboard.press('Tab'); equal(await home.getByRole('button', { name: 'Open settings' }).evaluate(element => element === document.activeElement), true);
@@ -176,11 +185,13 @@ try {
   deepEqual(await editor.evaluate(() => uiState.settings), official); await resolvePermission(editor, true);
   await editor.getByRole('button', { name: 'Open settings' }).waitFor();
   deepEqual(await editor.evaluate(() => uiState.settings), { signalingUrl: 'https://pair.example.com', stunUrls: ['stun:one.example.com:3478', 'stuns:two.example.com:5349'] });
+  equal(await editor.locator('#share-code').innerText(), 'Your connection code: FEDC BA98 7654 3210 FEDC BA98 7654 3210', 'Home updates its connection code when the saved server changes');
   await settings(editor); equal(await editor.getByRole('radio', { name: 'Custom server', exact: false }).isChecked(), true);
   await editor.getByRole('radio', { name: 'GhostPair server', exact: false }).check(); equal(await editor.getByLabel('STUN servers', { exact: false }).count(), 0);
   equal(await editor.evaluate(() => uiState.settings.signalingUrl), 'https://pair.example.com', 'Returning to the official option is a draft until Save');
   await permission(editor, 'allow'); await editor.getByRole('button', { name: 'Save', exact: true }).click(); await editor.getByRole('button', { name: 'Open settings' }).waitFor();
   deepEqual(await editor.evaluate(() => uiState.settings), official); equal(await editor.evaluate(() => uiState.deviceId), code);
+  equal(await editor.locator('#share-code').innerText(), 'Your connection code: 0123 4567 89AB CDEF 0123 4567 89AB CDEF', 'Returning to the official server restores its code');
 
   const race = await open(context); await settings(race); await custom(race); await permission(race, 'delay');
   await race.getByRole('button', { name: 'Save', exact: true }).click(); await waitPermission(race);
@@ -212,13 +223,22 @@ try {
     await host.getByLabel(label, { exact: false }).check(); equal(await host.getByLabel(label, { exact: false }).isChecked(), true);
   }
   const text = host.getByRole('group', { name: 'Text previews', exact: true }), other = host.getByRole('group', { name: 'Other previews', exact: true });
-  await text.getByRole('combobox').selectOption('temporary'); await other.getByRole('combobox').selectOption('temporary');
-  equal(await other.getByLabel('Seconds without activity', { exact: false }).inputValue(), '3');
-  await text.getByLabel('Seconds without activity', { exact: false }).fill('0.5'); await text.getByLabel('Seconds without activity', { exact: false }).blur();
-  for (const invalid of ['0', '0.25', '31', '']) {
+  for (const group of [text, other]) {
+    equal(await group.getByRole('combobox').inputValue(), 'temporary');
+    const seconds = group.getByLabel('Seconds without activity', { exact: false });
+    equal(await seconds.inputValue(), '0.5');
+    deepEqual(await seconds.evaluate(element => [element.min, element.max, element.step]), ['0.1', '10', '0.1'], 'Preview duration exposes the supported range');
+  }
+  for (const invalid of ['0', '0.25', '10.1', '11', '']) {
     await text.getByLabel('Seconds without activity', { exact: false }).fill(invalid); await text.getByLabel('Seconds without activity', { exact: false }).blur();
     equal(await text.getByLabel('Seconds without activity', { exact: false }).inputValue(), '0.5');
   }
+  await other.getByLabel('Seconds without activity', { exact: false }).fill('10'); await other.getByLabel('Seconds without activity', { exact: false }).blur();
+  equal(await host.evaluate(() => uiState.visualPreferences.other.seconds), 10, 'The maximum preview lifetime saves automatically');
+  equal(await host.evaluate(() => uiState.visualPreferences.text.seconds), 0.5, 'Other duration changes preserve text duration');
+  await other.getByRole('combobox').selectOption('persistent');
+  equal(await other.getByLabel('Seconds without activity', { exact: false }).count(), 0, 'Until cleared hides the temporary lifetime');
+  equal(await host.evaluate(() => uiState.visualPreferences.other.duration), 'persistent', 'Until cleared saves automatically');
   for (const [name, hex] of [['Blue', '#3b82f6'], ['Green', '#22c55e'], ['Orange', '#f97316'], ['Pink', '#ec4899'], ['Purple', '#7871e8']]) {
     await host.getByLabel(name, { exact: true }).check(); equal(await host.evaluate(() => uiState.visualPreferences.accentColor), hex);
   }

@@ -119,7 +119,7 @@ describe('background connection ownership and settings', () => {
   });
   it('persists preview preferences independently and starts each new session in visual mode', async () => {
     const h = await harness();
-    expect((await h.send('ui.status')).state).toMatchObject({ controlMode: 'visual', visualPreferences: { notices: false, clickAnimations: true, showInteractions: true, showHostPanel: true, text: { duration: 'persistent', seconds: 10 }, other: { duration: 'persistent', seconds: 3 } } });
+    expect((await h.send('ui.status')).state).toMatchObject({ controlMode: 'visual', visualPreferences: { notices: false, clickAnimations: true, showInteractions: true, showHostPanel: true, text: { duration: 'temporary', seconds: 0.5 }, other: { duration: 'temporary', seconds: 0.5 } } });
     await h.send('ui.host.start', { password: 'Eight-42' });
     const preferences = { notices: true, clickAnimations: false, showInteractions: true, showHostPanel: true, text: { duration: 'temporary', seconds: 0.5 }, other: { duration: 'temporary', seconds: 0.5 }, accentColor: '#12abcd' };
     const saved = await h.send('ui.visual.preferences', { preferences });
@@ -138,7 +138,7 @@ describe('background connection ownership and settings', () => {
   });
   it('upgrades legacy visual preferences and saves colors before hosting', async () => {
     const legacy = { notices: true, duration: 'temporary', seconds: 12 };
-    const migrated = { notices: true, clickAnimations: true, showInteractions: true, showHostPanel: true, text: { duration: 'temporary', seconds: 12 }, other: { duration: 'temporary', seconds: 12 } };
+    const migrated = { notices: true, clickAnimations: true, showInteractions: true, showHostPanel: true, text: { duration: 'temporary', seconds: 10 }, other: { duration: 'temporary', seconds: 10 } };
     const h = await harness({ visualPreferences: legacy });
     expect((await h.send('ui.status')).state.visualPreferences).toEqual({ ...migrated, accentColor: '#7871e8' });
     const preferences = { ...migrated, text: { duration: 'temporary', seconds: 0.5 }, accentColor: '#abcdef' };
@@ -149,6 +149,16 @@ describe('background connection ownership and settings', () => {
     expect(h.stored.visualPreferences).toEqual(preferences);
     await h.send('ui.host.start', { password: 'Eight-42' });
     expect(capture.configure).toHaveBeenCalledWith({ mode: 'visual', revision: 0, preferences });
+  });
+  it('caps saved category lifetimes without losing persistent choices or visibility preferences', async () => {
+    const h = await harness({ visualPreferences: { notices: true, clickAnimations: false, showInteractions: false, showHostPanel: false, text: { duration: 'persistent', seconds: 20 }, other: { duration: 'temporary', seconds: 30 }, accentColor: '#12abcd' } });
+    const preferences = (await h.send('ui.status')).state.visualPreferences;
+    expect(preferences).toEqual({ notices: true, clickAnimations: false, showInteractions: false, showHostPanel: false, text: { duration: 'persistent', seconds: 10 }, other: { duration: 'temporary', seconds: 10 }, accentColor: '#12abcd' });
+    expect(h.stored.visualPreferences).toEqual(preferences);
+    expect((await h.send('ui.visual.preferences', { preferences: { ...preferences, other: { duration: 'temporary', seconds: 10.1 } } })).ok).toBe(false);
+    expect(h.stored.visualPreferences).toEqual(preferences);
+    const restarted = await harness(h.stored);
+    expect((await restarted.send('ui.status')).state.visualPreferences).toEqual(preferences);
   });
   it('preserves manual settings until build defaults are explicitly restored', async () => {
     const h = await harness(); const defaults = (await h.send('ui.status')).state.settings;

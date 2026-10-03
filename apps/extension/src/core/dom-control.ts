@@ -1,7 +1,7 @@
 import type { ControlCommand, ControlConfiguration, VisualActivity, VisualCategory } from '@ghostpair/protocol';
 
 /** Self-contained: Chrome serializes this function into the page's ISOLATED world. */
-export function installDomControl(captureId: string, generation: number, root = true, configuration: ControlConfiguration = { mode: 'visual', revision: 0, preferences: { notices: false, clickAnimations: true, showInteractions: true, showHostPanel: true, text: { duration: 'persistent', seconds: 10 }, other: { duration: 'persistent', seconds: 3 }, accentColor: '#7871e8' } }) {
+export function installDomControl(captureId: string, generation: number, root = true, configuration: ControlConfiguration = { mode: 'visual', revision: 0, preferences: { notices: false, clickAnimations: true, showInteractions: true, showHostPanel: true, text: { duration: 'temporary', seconds: 0.5 }, other: { duration: 'temporary', seconds: 0.5 }, accentColor: '#7871e8' } }) {
   type Context = { captureId: string; generation: number; ready: boolean; geometry: string; dispose: () => void; release: () => void; configure: (value: ControlConfiguration) => void };
   const scope = globalThis as typeof globalThis & { __ghostpairControl?: Context };
   const geometry = () => ({ viewportWidth: innerWidth, viewportHeight: innerHeight, offsetLeft: visualViewport?.offsetLeft ?? 0, offsetTop: visualViewport?.offsetTop ?? 0, scale: visualViewport?.scale ?? 1 });
@@ -29,7 +29,7 @@ export function installDomControl(captureId: string, generation: number, root = 
 
   // All preview data and nodes belong to the extension, never to a page control.
   type Replica = { key: string; root: ShadowRoot; surface: HTMLElement; container: HTMLElement; useful: boolean };
-  type Preview = { id: string; revision: number; editor?: HTMLInputElement | HTMLTextAreaElement; composing?: boolean; selecting?: boolean; node: HTMLDivElement; marker?: HTMLDivElement; cursor?: HTMLSpanElement; value?: string; anchor: number; caret: number; checked?: boolean; radio?: boolean; until?: number; replica?: Replica };
+  type Preview = { id: string; revision: number; editor?: HTMLInputElement | HTMLTextAreaElement; composing?: boolean; selecting?: boolean; node: HTMLDivElement; marker?: HTMLDivElement; cursor?: HTMLSpanElement; value?: string; anchor: number; caret: number; checked?: boolean; radio?: boolean; pressed?: boolean; replica?: Replica };
   const previews = new Map<HTMLElement, Preview>();
   const editors = new WeakMap<Element, HTMLElement>();
   const deferredInput: { command: ControlCommand; respond: (result: unknown) => void; timer: ReturnType<typeof setTimeout> }[] = [];
@@ -541,7 +541,7 @@ export function installDomControl(captureId: string, generation: number, root = 
     drawnAt = time; ensureLayer();
     if (virtualFocus && !virtualFocus.isConnected) virtualFocus = null;
     for (const [element, preview] of previews) {
-      if (!element.isConnected || preview.until !== undefined && time >= preview.until) { preview.node.remove(); preview.marker?.remove(); preview.editor?.remove(); previews.delete(element); continue; }
+      if (!element.isConnected) { preview.node.remove(); preview.marker?.remove(); preview.editor?.remove(); previews.delete(element); continue; }
       if (preview.checked !== undefined) { paintChoice(element, preview); continue; }
       if (preview.value !== undefined) {
         const { box, style } = rectStyle(element, preview.node);
@@ -565,7 +565,7 @@ export function installDomControl(captureId: string, generation: number, root = 
     const paintFocus = virtualFocus instanceof HTMLElement && !(virtualFocus instanceof HTMLIFrameElement || virtualFocus instanceof HTMLFrameElement) && !disabled(virtualFocus);
     if (paintFocus && virtualFocus instanceof HTMLElement) {
       const drawn = previews.get(virtualFocus);
-      if (drawn?.checked !== undefined || drawn?.until !== undefined) { focusMark?.remove(); focusMark = undefined; focusReplica.replica = undefined; }
+      if (drawn?.checked !== undefined || drawn?.pressed) { focusMark?.remove(); focusMark = undefined; focusReplica.replica = undefined; }
       else {
         focusMark ??= node();
         if (editable(virtualFocus) || virtualFocus.isContentEditable) paintOutline(virtualFocus, focusMark, true, 0);
@@ -813,7 +813,7 @@ export function installDomControl(captureId: string, generation: number, root = 
       }
       markChecked(element, isRadio || !(previews.get(element)?.checked ?? element.getAttribute('aria-checked') === 'true'), isRadio);
     } else if (element.matches('button,a[href],input[type="button"],input[type="submit"],input[type="reset"],[role="button"]')) {
-      const preview = previewFor(element); preview.until = performance.now() + 180;
+      previewFor(element).pressed = true;
     }
   }
   function insertVisual(text: string) {

@@ -57,6 +57,17 @@ for (const name of process.argv.slice(2).length ? process.argv.slice(2) : ['chro
     await click('#password'); await key('a', 2); await text('private');
     assert.ok((await contents()).includes('•••••••')); assert.ok(!(await contents()).includes('private'));
     await click('#trusted span'); await key('Enter'); await key(' '); await send({ type: 'text', text: ' ' });
+    // Button previews obey the category lifetime, including Until cleared.
+    assert.equal(await page.evaluate(() => {
+      const box = document.querySelector('#trusted').getBoundingClientRect();
+      globalThis.pressedPreview = [...preview.children].find(e => e.tagName === 'DIV' && e.style.display !== 'none' && Math.abs(parseFloat(e.style.left) - box.left) < 1 && Math.abs(parseFloat(e.style.top) - box.top) < 1);
+      return Boolean(pressedPreview?.isConnected);
+    }), true);
+    await page.clock.runFor(600);
+    assert.equal(await page.evaluate(() => pressedPreview.isConnected && getComputedStyle(pressedPreview).display !== 'none'), true, 'persistent pressed previews survive the old hardcoded 180 ms expiry');
+    await send(undefined, { operation: 'visual.clear', category: 'other' });
+    assert.equal(await page.evaluate(() => pressedPreview.isConnected), false, 'clearing Other interactions removes the pressed preview');
+    assert.ok((await contents()).includes('Visual á字'), 'clearing Other interactions preserves text previews');
     await click('#readonly'); await text('ignored'); await click('#disabled'); await text('ignored');
     const after = await page.evaluate(() => ({ html: document.querySelector('form').outerHTML, focus: document.activeElement.tagName, values: [...document.querySelectorAll('input,textarea')].map(e => [e.value,e.checked,e.selectionStart,e.selectionEnd]), editable: document.querySelector('#editable').innerHTML }));
     assert.deepEqual(after, original); assert.deepEqual(await page.evaluate(() => events), []); assert.equal(await page.evaluate(() => accepted), 0);

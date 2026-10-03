@@ -41,16 +41,16 @@ export const SettingsSchema = z.object({
   stunUrls: z.array(z.string().regex(/^stuns?:[^\s]+$/i, 'Only STUN servers are supported.')).min(1).max(5),
 }).strict();
 export type Settings = z.infer<typeof SettingsSchema>;
-export const VisualSecondsSchema = z.number().finite().min(0.1).max(30).multipleOf(0.1);
+export const VisualSecondsSchema = z.number().finite().min(0.1).max(10).multipleOf(0.1);
 export const VisualLifetimeSchema = z.object({
-  duration: z.enum(['persistent', 'temporary']).default('persistent'),
-  seconds: VisualSecondsSchema,
+  duration: z.enum(['persistent', 'temporary']).default('temporary'),
+  seconds: VisualSecondsSchema.default(0.5),
 }).strict();
 export const VisualPreferencesSchema = z.preprocess(value => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
   const saved = value as Record<string, unknown>;
   if (('duration' in saved || 'seconds' in saved) && !('text' in saved || 'other' in saved)) {
-    const { duration = 'persistent', seconds = 3, ...rest } = saved;
+    const { duration = 'temporary', seconds = 0.5, ...rest } = saved;
     return { ...rest, text: { duration, seconds }, other: { duration, seconds } };
   }
   return value;
@@ -59,8 +59,8 @@ export const VisualPreferencesSchema = z.preprocess(value => {
   clickAnimations: z.boolean().default(true),
   showInteractions: z.boolean().default(true),
   showHostPanel: z.boolean().default(true),
-  text: VisualLifetimeSchema.default({ duration: 'persistent', seconds: 10 }),
-  other: VisualLifetimeSchema.default({ duration: 'persistent', seconds: 3 }),
+  text: VisualLifetimeSchema.default({ duration: 'temporary', seconds: 0.5 }),
+  other: VisualLifetimeSchema.default({ duration: 'temporary', seconds: 0.5 }),
   accentColor: z.string().regex(/^#[\da-f]{6}$/i, 'Choose a six-digit hex color.').transform(value => value.toLowerCase()).default('#7871e8'),
 }).strict());
 export type VisualPreferences = z.infer<typeof VisualPreferencesSchema>;

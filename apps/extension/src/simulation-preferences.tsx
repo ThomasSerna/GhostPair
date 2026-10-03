@@ -16,11 +16,11 @@ export function SimulationPreferences({ preferences, busy, onChange }: {
     {(['text', 'other'] as const).map(category => <fieldset className="simulation-lifetime" key={category} disabled={busy}>
     <legend>{category === 'text' ? 'Text previews' : 'Other previews'}</legend>
     <label>Keep previews<select value={preferences[category].duration} onChange={e => onChange({ ...preferences, [category]: { ...preferences[category], duration: e.target.value } })}><option value="persistent">Until cleared</option><option value="temporary">For a short time</option></select></label>
-    {preferences[category].duration === 'temporary' && <label>Seconds without activity<input type="number" min={0.1} max={30} step={0.1} defaultValue={preferences[category].seconds} key={preferences[category].seconds} onBlur={e => {
+    {preferences[category].duration === 'temporary' && <label>Seconds without activity<input type="number" min={0.1} max={10} step={0.1} defaultValue={preferences[category].seconds} key={preferences[category].seconds} onBlur={e => {
       const seconds = e.target.valueAsNumber;
       if (!VisualSecondsSchema.safeParse(seconds).success) { e.target.value = String(preferences[category].seconds); return; }
       if (seconds !== preferences[category].seconds) onChange({ ...preferences, [category]: { ...preferences[category], seconds } });
-    }}/><small className="helper">0.1–30 seconds, in steps of 0.1.</small></label>}
+    }}/><small className="helper">0.1–10 seconds, in steps of 0.1.</small></label>}
     </fieldset>)}
     <fieldset className="simulation-colors" disabled={busy}>
       <legend>Interaction color</legend>

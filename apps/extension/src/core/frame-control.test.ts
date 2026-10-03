@@ -111,6 +111,28 @@ it('recalculates lifetime changes without clearing persistent categories', async
   } finally { vi.useRealTimers(); }
 });
 
+it('cancels temporary expiry when previews become persistent and restores the configured lifetime', async () => {
+  vi.useFakeTimers();
+  try {
+    const h = harness(); await h.control.bind(p); h.routes.clear();
+    const preferences = { notices: false, clickAnimations: true, showInteractions: true, showHostPanel: true, text: { duration: 'persistent' as const, seconds: 0.5 }, other: { duration: 'temporary' as const, seconds: 0.5 }, accentColor: '#7871e8' };
+    await h.control.configure({ mode: 'visual', revision: 1, preferences });
+    const original = h.sendMessage.getMockImplementation()!;
+    h.sendMessage.mockImplementation(async (...args) => ({ ...await original(...args), ...(args[1].operation === 'commit' ? { visualActivity: { category: 'other', kind: 'click' } } : {}) }));
+    await h.control.execute({ ...h.input(), controlRevision: 1 });
+    await vi.advanceTimersByTimeAsync(300);
+    await h.control.configure({ mode: 'visual', revision: 1, preferences: { ...preferences, other: { duration: 'persistent', seconds: 0.5 } } });
+    await vi.advanceTimersByTimeAsync(3000);
+    const clears = () => h.operations.filter(e => e.message.operation === 'visual.clear');
+    expect(clears()).toHaveLength(0);
+    await h.control.configure({ mode: 'visual', revision: 1, preferences: { ...preferences, other: { duration: 'temporary', seconds: 10 } } });
+    await vi.advanceTimersByTimeAsync(6699); expect(clears()).toHaveLength(0);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(clears()).toHaveLength(4); expect(clears().every(e => e.message.category === 'other')).toBe(true);
+    await h.control.clear(); expect(vi.getTimerCount()).toBe(0);
+  } finally { vi.useRealTimers(); }
+});
+
 it('routes identical-URL siblings and nested documents by browser identities and window indices', async () => {
   const h = harness(); await h.control.bind(p); await h.control.execute(h.input());
   expect(h.committed).toEqual([{ id: 'nested', command: expect.objectContaining({ x: 50, y: 50 }) }]);

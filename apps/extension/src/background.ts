@@ -65,7 +65,22 @@ const capture = new TabCapture({
 const ready = (async () => {
   await chrome.storage.local.setAccessLevel({ accessLevel: 'TRUSTED_CONTEXTS' });
   const saved = await chrome.storage.local.get(['settings', 'identities', 'visualPreferences']);
-  const preferences = VisualPreferencesSchema.safeParse(saved.visualPreferences);
+  // Keep valid saved preferences when narrowing the old 30-second maximum.
+  let storedPreferences: unknown = saved.visualPreferences;
+  if (storedPreferences && typeof storedPreferences === 'object' && !Array.isArray(storedPreferences)) {
+    const stored = { ...storedPreferences as Record<string, unknown> };
+    const capSeconds = (seconds: unknown) => typeof seconds === 'number' && seconds > 10 && seconds <= 30 && Math.abs(seconds * 10 - Math.round(seconds * 10)) < 1e-8 ? 10 : seconds;
+    if ('seconds' in stored) stored.seconds = capSeconds(stored.seconds);
+    for (const category of ['text', 'other'] as const) {
+      const lifetime = stored[category];
+      if (lifetime && typeof lifetime === 'object' && !Array.isArray(lifetime)) {
+        const fields = lifetime as Record<string, unknown>;
+        stored[category] = { ...fields, seconds: capSeconds(fields.seconds) };
+      }
+    }
+    storedPreferences = stored;
+  }
+  const preferences = VisualPreferencesSchema.safeParse(storedPreferences);
   visualPreferences = preferences.success ? preferences.data : VisualPreferencesSchema.parse({});
   if (saved.visualPreferences && preferences.success) await chrome.storage.local.set({ visualPreferences });
   const parsed = SettingsSchema.safeParse(saved.settings);
