@@ -4,7 +4,7 @@ Visit the [GhostPair introduction](https://thomasserna.github.io/GhostPair/) for
 
 Authorized collaboration between two browsers: share tabs, control basic page interactions, manage tabs, and synchronize clipboard text. A Manifest V3 extension for Chrome and Edge on Windows.
 
-Choose **Share my tab** to start a session, set a password, and authorize each shared tab locally. Your shareable code appears in small text beneath **Share my tab** as **Your connection code: {code}**. The other person chooses **Join a session** and enters the connection code and password in the viewer. Video, control, and clipboard text travel directly over WebRTC. The server authenticates and coordinates the connection; STUN helps establish a direct route. There is no TURN relay or automatic reconnection after restarting the browser.
+Choose **Share my tab** to start a session, set a password, and authorize each shared tab locally. Your shareable code appears in small text inside the **Share your tab** setup panel as **Your connection code: {code}**. The other person chooses **Join a session** and enters the connection code and password in the viewer. Video, control, and clipboard text travel directly over WebRTC. The server authenticates and coordinates the connection; STUN helps establish a direct route. There is no TURN relay or automatic reconnection after restarting the browser.
 
 ## Development
 
@@ -60,7 +60,7 @@ The signaling server loads the root `.env`; Vite also reads its environment file
 
 ## Using a session
 
-Version 0.6.2 shows your connection code beneath **Share my tab**, defaults text and other previews to 0.5 seconds, and fixes persistent button previews while retaining peer protocol 4. Update both participants together; saved connection codes, identities and duration choices are preserved, with temporary durations capped at 10 seconds.
+Version 0.6.2 shows your connection code inside the **Share your tab** setup panel, defaults text and other previews to 0.5 seconds, and fixes persistent button previews while retaining peer protocol 4. Update both participants together; saved connection codes, identities and duration choices are preserved, with temporary durations capped at 10 seconds.
 
 - **Authorization:** a session is limited to one host window. Capture and control require local authorization for each tab by invoking the extension on that tab. Up to five authorized tabs can be retained; release a tab before adding another at the limit. Only the active authorized tab is transmitted. The address bar, other windows, and desktop are not captured.
 - **New tabs:** guests can manage tabs in the authorized window. A remotely opened tab is marked **Waiting for permission** until the host invokes the extension on it and authorizes sharing. The integrated **Open tab** dialog accepts a URL or domain name; domains default to HTTPS.

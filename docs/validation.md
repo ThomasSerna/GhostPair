@@ -1,5 +1,9 @@
 # GhostPair validation
 
+## Connection-code placement correction: October 3, 2026
+
+The small **Your connection code** line now appears inside the **Share your tab** setup panel, between its introduction and password form. The initial Share/Join screen has no code. Version metadata remains **0.6.2**. Extension build and type checks, **126 UI assertions**, and the native popup checks in Chrome and Edge passed; sharing setup remains **398×565px** with no overflow. Updated screenshots and the exported sharing example confirm placement and readable text. Earlier release validation below records the original placement.
+
 ## Connection code and 0.6.2 preview durations: October 3, 2026
 
 Release metadata has matching version **0.6.2** in the root package, all four workspace packages, their lockfile records and the extension source manifest. The versioned release notes, current publishing package names and current behavior documentation cover the connection code beneath **Share my tab**, default 0.5-second temporary previews, the 0.1–10-second range and persistent button previews. Earlier validation records below describe their original releases.

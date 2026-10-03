@@ -155,6 +155,7 @@ function Popup() {
       <button className="text-button back-button" disabled={busy} onClick={back}>Back</button>
       <h1>Share your tab</h1>
       <p className="muted">Choose a password, then invite someone to browse with you.</p>
+      <p id="share-code" className="helper connection-code">Your connection code: <span>{formatDeviceId(state?.deviceId)}</span></p>
       <form onSubmit={e => { e.preventDefault(); void start(); }}>
         <label>Password<input autoFocus required type="password" autoComplete="new-password" minLength={MIN_PASSWORD_LENGTH} maxLength={256} value={password} onChange={e => setPassword(e.target.value)} placeholder={`At least ${MIN_PASSWORD_LENGTH} characters`} disabled={busy}/></label>
         <p className="helper">This password is only for this session.</p>
@@ -165,10 +166,7 @@ function Popup() {
     </section> : <section className="start-panel">
       <div className="intro"><h1>Browse together.</h1><p className="muted">What would you like to do?</p></div>
       <div className="session-choices">
-        <div className="share-choice">
-          <button ref={shareButton} className="intent-action primary" aria-label="Share my tab" aria-describedby="share-intent share-code" disabled={busy || !state} onClick={() => { setScreen('share'); setError(''); }}><span>Share my tab</span><small id="share-intent">Invite someone to see and interact with your tab.</small></button>
-          <p id="share-code" className="helper connection-code">Your connection code: <span>{formatDeviceId(state?.deviceId)}</span></p>
-        </div>
+        <button ref={shareButton} className="intent-action primary" aria-label="Share my tab" aria-describedby="share-intent" disabled={busy || !state} onClick={() => { setScreen('share'); setError(''); }}><span>Share my tab</span><small id="share-intent">Invite someone to see and interact with your tab.</small></button>
         <button className="intent-action secondary" aria-label="Join a session" aria-describedby="join-intent" disabled={busy || !state} onClick={openViewer}><span>Join a session</span><small id="join-intent">Connect to someone who is already sharing.</small></button>
       </div>
     </section>}

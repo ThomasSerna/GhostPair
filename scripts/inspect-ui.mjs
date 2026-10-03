@@ -133,15 +133,7 @@ try {
 
   const home = await open(context);
   await home.getByRole('button', { name: 'Share my tab', exact: true }).waitFor();
-  const connectionCode = home.locator('#share-code');
-  equal(await connectionCode.innerText(), 'Your connection code: 0123 4567 89AB CDEF 0123 4567 89AB CDEF', 'Home displays the current shareable code');
-  ok(await connectionCode.evaluate(element => {
-    const codeBox = element.getBoundingClientRect(), shareBox = document.querySelector('[aria-label="Share my tab"]').getBoundingClientRect();
-    return codeBox.top >= shareBox.bottom && parseFloat(getComputedStyle(element).fontSize) <= 12 && element.scrollWidth <= element.clientWidth && codeBox.right <= innerWidth;
-  }), 'Small connection-code text fits beneath Share my tab');
-  await set(home, { deviceId: null });
-  equal(await connectionCode.innerText(), 'Your connection code: Generated when you share', 'Missing identity uses a preparation hint without a stale code');
-  await set(home, { deviceId: code });
+  equal(await home.locator('#share-code').count(), 0, 'Home keeps the connection code in the sharing setup');
   equal(await home.getByLabel('Password', { exact: true }).count(), 0, 'Home offers intent before credentials');
   equal(await home.getByRole('button', { name: 'Join a session', exact: true }).count(), 1);
   await home.keyboard.press('Tab'); equal(await home.getByRole('button', { name: 'Open settings' }).evaluate(element => element === document.activeElement), true);
@@ -149,6 +141,15 @@ try {
   ok(await home.getByRole('button', { name: 'Share my tab', exact: true }).evaluate(element => parseFloat(getComputedStyle(element).outlineWidth) > 0), 'Keyboard focus is visible');
   await home.keyboard.press('Enter'); await home.getByLabel('Password', { exact: true }).waitFor();
   equal(await home.getByLabel('Password', { exact: true }).evaluate(element => element === document.activeElement), true, 'Share form focuses the password');
+  const connectionCode = home.locator('.share-setup #share-code');
+  equal(await connectionCode.innerText(), 'Your connection code: 0123 4567 89AB CDEF 0123 4567 89AB CDEF', 'Sharing setup displays the current shareable code');
+  ok(await connectionCode.evaluate(element => {
+    const codeBox = element.getBoundingClientRect(), introBox = document.querySelector('.share-setup>.muted').getBoundingClientRect(), formBox = document.querySelector('.share-setup form').getBoundingClientRect();
+    return codeBox.top >= introBox.bottom && codeBox.bottom <= formBox.top && parseFloat(getComputedStyle(element).fontSize) <= 12 && element.scrollWidth <= element.clientWidth && codeBox.right <= innerWidth;
+  }), 'Small connection-code text fits below the sharing intro and above the password form');
+  await set(home, { deviceId: null });
+  equal(await connectionCode.innerText(), 'Your connection code: Generated when you share', 'Missing identity uses a preparation hint without a stale code');
+  await set(home, { deviceId: code });
   equal(await home.getByLabel('Share clipboard', { exact: false }).isChecked(), false);
   equal(await home.getByLabel('I allow the person', { exact: false }).evaluate(element => element.required), true);
   await home.getByLabel('Password', { exact: true }).fill('Example-42'); await home.getByLabel('I allow the person', { exact: false }).check();
@@ -185,13 +186,17 @@ try {
   deepEqual(await editor.evaluate(() => uiState.settings), official); await resolvePermission(editor, true);
   await editor.getByRole('button', { name: 'Open settings' }).waitFor();
   deepEqual(await editor.evaluate(() => uiState.settings), { signalingUrl: 'https://pair.example.com', stunUrls: ['stun:one.example.com:3478', 'stuns:two.example.com:5349'] });
-  equal(await editor.locator('#share-code').innerText(), 'Your connection code: FEDC BA98 7654 3210 FEDC BA98 7654 3210', 'Home updates its connection code when the saved server changes');
+  await editor.getByRole('button', { name: 'Share my tab', exact: true }).click();
+  equal(await editor.locator('.share-setup #share-code').innerText(), 'Your connection code: FEDC BA98 7654 3210 FEDC BA98 7654 3210', 'Sharing setup updates its connection code when the saved server changes');
+  await editor.getByRole('button', { name: 'Back', exact: true }).click();
   await settings(editor); equal(await editor.getByRole('radio', { name: 'Custom server', exact: false }).isChecked(), true);
   await editor.getByRole('radio', { name: 'GhostPair server', exact: false }).check(); equal(await editor.getByLabel('STUN servers', { exact: false }).count(), 0);
   equal(await editor.evaluate(() => uiState.settings.signalingUrl), 'https://pair.example.com', 'Returning to the official option is a draft until Save');
   await permission(editor, 'allow'); await editor.getByRole('button', { name: 'Save', exact: true }).click(); await editor.getByRole('button', { name: 'Open settings' }).waitFor();
   deepEqual(await editor.evaluate(() => uiState.settings), official); equal(await editor.evaluate(() => uiState.deviceId), code);
-  equal(await editor.locator('#share-code').innerText(), 'Your connection code: 0123 4567 89AB CDEF 0123 4567 89AB CDEF', 'Returning to the official server restores its code');
+  await editor.getByRole('button', { name: 'Share my tab', exact: true }).click();
+  equal(await editor.locator('.share-setup #share-code').innerText(), 'Your connection code: 0123 4567 89AB CDEF 0123 4567 89AB CDEF', 'Returning to the official server restores its code');
+  await editor.getByRole('button', { name: 'Back', exact: true }).click();
 
   const race = await open(context); await settings(race); await custom(race); await permission(race, 'delay');
   await race.getByRole('button', { name: 'Save', exact: true }).click(); await waitPermission(race);
