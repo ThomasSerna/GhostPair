@@ -12,6 +12,7 @@ const docs = resolve(root, 'docs');
 const output = resolve(root, '.impeccable/review');
 const base = '/GhostPair/';
 const screenshots = !process.argv.includes('--check-only');
+const pagesOnly = process.argv.includes('--pages-only');
 const viewports = [[1440, 1000, 'desktop'], [768, 1024, 'tablet'], [390, 844, 'mobile'], [375, 812], [320, 812]];
 const choices = ['shared', 'host', 'guest'];
 const labels = ['Shared view', 'Share a tab', 'Join a session'];
@@ -72,8 +73,10 @@ async function inspectNavigation(page, width) {
   await page.keyboard.press('Enter');
   await page.waitForFunction(() => document.activeElement?.id === 'main');
   const navigation = page.getByRole('navigation', { name: 'Main navigation', includeHidden: true });
+  assert.deepEqual(await navigation.getByRole('link', { includeHidden: true }).allTextContents(), ['Home', 'Installation', 'Explore'], 'The header has exactly three destinations');
+  assert.equal(await navigation.getByRole('link', { name: 'Home', exact: true, includeHidden: true }).getAttribute('aria-current'), 'page');
+  assert.equal(await page.locator('.site-header .github-link, .site-header .header-download').count(), 0, 'Repository and download actions live in the page and footer');
   for (const anchor of ['how-it-works', 'preview']) {
-    assert.equal(await navigation.locator(`a[href="#${anchor}"]`).count(), 1);
     assert.equal(await page.locator(`#${anchor}`).count(), 1, `Navigation target ${anchor} exists`);
   }
   assert.equal(await navigation.getByRole('link', { name: 'Installation', exact: true, includeHidden: true }).getAttribute('href'), '?view=installation');
@@ -90,7 +93,7 @@ async function inspectNavigation(page, width) {
     assert.equal(await toggle.getAttribute('aria-expanded'), 'false', 'Escape closes navigation');
     assert.equal(await toggle.evaluate(element => element === document.activeElement), true, 'Escape returns focus to the toggle');
     await page.keyboard.press('Enter');
-    await navigation.locator('a[href="#preview"]').click();
+    await navigation.getByRole('link', { name: 'Home', exact: true }).click();
     assert.equal(await toggle.getAttribute('aria-expanded'), 'false', 'Following a mobile navigation link closes the menu');
     assert.equal(await navigation.isVisible(), false);
     await noOverflow(page, `${width}px: mobile menu`);
@@ -476,6 +479,10 @@ async function captureReview(page, width, name) {
   // Reduced motion gives review captures the same deterministic poster and
   // fully revealed connection that visitors requesting less motion receive.
   await page.emulateMedia({ reducedMotion: 'reduce' });
+  // Start the capture with this preference already active. Rapid media changes
+  // during the interaction checks can otherwise race the video's playing event.
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.getByRole('heading', { level: 1, name: 'Browse together.' }).waitFor();
   await page.waitForFunction(() => getComputedStyle(document.querySelector('.hero-scene img')).opacity === '1');
   for (const element of await page.locator('[data-reveal], .install-title').all()) await element.scrollIntoViewIfNeeded();
   await scrollToTop(page);
@@ -522,9 +529,9 @@ try {
   const origin = `http://127.0.0.1:${server.httpServer.address().port}`;
   const url = origin + base;
   browser = await launchHeadlessBrowser();
-  await inspectHeroFallbacks(browser, url);
+  if (!pagesOnly) await inspectHeroFallbacks(browser, url);
   if (screenshots) await mkdir(output, { recursive: true });
-  for (const [width, height, name] of viewports) {
+  for (const [width, height, name] of pagesOnly ? [] : viewports) {
     const context = await browser.newContext({ viewport: { width, height }, reducedMotion: 'no-preference', hasTouch: width <= 390, isMobile: width <= 390 });
     context.on('page', page => {
       page.on('pageerror', error => errors.push(`${width}px: ${error.message}`));
@@ -553,7 +560,7 @@ try {
   }
   await inspectWebsitePages({ browser, url, origin, docs, output, screenshots });
   const fonts = [...requests].filter(url => /\.woff2(?:\?|$)/.test(url));
-  assert.ok(fonts.length, 'The self-hosted display font was requested');
+  if (!pagesOnly) assert.ok(fonts.length, 'The self-hosted display font was requested');
   assert.ok(fonts.every(url => url.startsWith(`${origin}${base}assets/landing/`)), 'All display fonts load from this site');
   for (const request of requests) {
     const asset = new URL(request);
@@ -563,7 +570,7 @@ try {
   assert.equal(privacy.status, 200, 'Existing privacy document is preserved');
   assert.equal(await privacy.text(), await readFile(resolve(docs, 'privacy.html'), 'utf8'));
   assert.deepEqual(errors, [], 'No browser or resource errors');
-  process.stdout.write(`Site QA passed: 5 viewports, installation walkthroughs, local product explorer, query navigation and focus, keyboard/click previews, original product assets, interaction modes and save feedback, video playback/suspension/fallbacks, reduced motion, project-relative assets, and self-hosted fonts. JavaScript: ${(gzipBytes / 1024).toFixed(1)} KiB gzip.${screenshots ? ` Review captures: ${output}` : ''}\n`);
+  process.stdout.write(`${pagesOnly ? 'Website page QA passed: 5 viewports, installation guide, local guided demo, query navigation and focus, permission and interaction states, reduced motion, and project-relative assets.' : 'Site QA passed: 5 viewports, installation guide, local guided demo, query navigation and focus, keyboard/click previews, original product assets, interaction modes and save feedback, video playback/suspension/fallbacks, reduced motion, project-relative assets, and self-hosted fonts.'} JavaScript: ${(gzipBytes / 1024).toFixed(1)} KiB gzip.${screenshots ? ` Review captures: ${output}` : ''}\n`);
 } finally {
   await browser?.close();
   await server.close();

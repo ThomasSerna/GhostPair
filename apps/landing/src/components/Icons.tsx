@@ -9,6 +9,8 @@ type IconName =
   | "shield"
   | "close"
   | "menu"
+  | "copy"
+  | "plus"
   | "external";
 const paths: Record<Exclude<IconName, "github">, ReactNode> = {
   arrow: <path d="M4 12h15m-6-6 6 6-6 6" />,
@@ -28,6 +30,8 @@ const paths: Record<Exclude<IconName, "github">, ReactNode> = {
   ),
   close: <path d="m6 6 12 12M6 18 18 6" />,
   menu: <path d="M4 8h16M4 16h16" />,
+  copy: <><rect x="8" y="8" width="12" height="13" rx="2" /><path d="M16 8V3H3v13h5" /></>,
+  plus: <path d="M12 5v14M5 12h14" />,
   external: <path d="M8 5H5v14h14v-3M12 5h7v7M10 14l9-9" />,
 };
 

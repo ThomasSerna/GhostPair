@@ -125,6 +125,8 @@ async function waitForScreen(page, view) {
   await page.getByRole('heading', { level: 1 }).waitFor();
   assert.equal(await page.getByRole('heading', { level: 1 }).count(), 1, `${view}: one primary heading`);
   assert.equal(await page.locator('main#main').count(), 1, `${view}: one main landmark`);
+  const headerLinks = page.getByRole('navigation', { name: 'Main navigation', includeHidden: true }).getByRole('link', { includeHidden: true });
+  assert.deepEqual(await headerLinks.allTextContents(), ['Home', 'Installation', 'Explore'], `${view}: exactly three header destinations`);
   assert.equal(await page.getByRole('navigation', { name: 'Main navigation', includeHidden: true })
     .getByRole('link', { name: view === 'installation' ? 'Installation' : 'Explore', exact: true, includeHidden: true })
     .getAttribute('aria-current'), 'page', `${view}: navigation identifies the current screen`);
@@ -175,139 +177,84 @@ async function inspectRoutes(page, url, currentView, width) {
   await noOverflow(page, `${width}px: unknown screen falls back to home`);
 }
 
-async function assertStatus(scene, pattern, message) {
-  assert.match((await scene.locator('[role="status"]').allTextContents()).join(' '), pattern, message);
-}
-
 async function inspectInstallation(page, width) {
-  const install = page.locator('#install-extension .guide-scene');
-  assert.ok(await install.getByRole('radio', { name: 'Chrome', exact: true }).isChecked(), 'The installation example starts with Chrome');
+  const install = page.locator('#install-extension');
+  assert.equal(await page.getByRole('heading', { level: 1 }).textContent(), 'Install GhostPair');
+  assert.equal(await page.locator('.guide-scene').count(), 0, 'Installation has no practice scenes');
+  assert.equal(await page.locator('main input').count(), 2, 'Only the browser selector remains in the guide');
+  const steps = install.locator('ol.guide-install-steps > li');
+  assert.equal(await steps.count(), 5, 'The installation process is numbered');
+  for (const step of await steps.all()) assert.ok(await step.isVisible(), 'All installation steps are readable without completing an exercise');
+  for (const pattern of [/permanent/i, /Developer mode/, /Load unpacked/, /manifest\.json/]) assert.match(await install.textContent(), pattern);
+  assert.match(await page.locator('#connection-settings').textContent(), /ghostpair\.onrender\.com/, 'The download uses the production server');
+
+  const chrome = install.getByRole('radio', { name: 'Chrome', exact: true });
+  const edge = install.getByRole('radio', { name: 'Edge', exact: true });
+  assert.ok(await chrome.isChecked(), 'Installation defaults to Chrome');
   assert.match(await install.locator('.guide-release-file').textContent(), /ghostpair-chrome-<version>\.zip/);
-  await install.getByRole('radio', { name: 'Edge', exact: true }).check();
-  assert.match(await install.locator('.guide-release-file').textContent(), /ghostpair-edge-<version>\.zip/, 'Browser choice selects the actual extension package pattern');
-  await install.getByRole('button', { name: 'Practice choosing this ZIP' }).click();
-  await install.getByRole('button', { name: 'Practice extracting the ZIP' }).click();
-  assert.match(await install.locator('.guide-folder-block').textContent(), /manifest\.json/, 'The extracted folder contains the extension manifest');
-  await install.getByRole('button', { name: 'Continue to extensions' }).click();
-  const load = install.getByRole('button', { name: 'Load unpacked', exact: true });
-  assert.ok(await load.isDisabled(), 'Developer mode gates loading the example extension');
-  await install.getByRole('checkbox', { name: 'Developer mode', exact: true }).check();
-  await load.click();
-  await assertStatus(install, /folder containing manifest\.json/, 'Choosing the ZIP folder explains how to recover');
-  await install.getByRole('combobox', { name: 'Folder to load', exact: true }).selectOption('manifest');
-  await load.click();
-  assert.ok(await install.getByRole('heading', { name: 'GhostPair is ready.', exact: true }).isVisible(), 'The installation walkthrough reaches a ready state');
-  await install.getByRole('button', { name: 'Reset', exact: true }).click();
-  await install.getByRole('radio', { name: 'Chrome', exact: true }).check();
+  assert.equal(await install.locator('.guide-browser-address > code').textContent(), 'chrome://extensions');
+  await edge.focus();
+  await page.keyboard.press('Space');
+  assert.ok(await edge.isChecked(), 'The browser selector supports the keyboard');
+  assert.match(await install.locator('.guide-release-file').textContent(), /ghostpair-edge-<version>\.zip/);
+  assert.equal(await install.locator('.guide-browser-address > code').textContent(), 'edge://extensions');
 
-  const settings = page.locator('#connection-settings .guide-scene');
-  await settings.getByRole('radio', { name: /^Custom server/ }).check();
-  const server = settings.getByRole('textbox', { name: 'Connection server', exact: true });
-  const stun = settings.getByRole('textbox', { name: 'STUN servers', exact: true });
-  const save = settings.getByRole('button', { name: 'Save', exact: true });
-  await server.fill('https://user:secret@pair.example.org?private=1');
-  await save.click();
-  await assertStatus(settings, /Remove credentials, query parameters and fragments/, 'Custom settings reject embedded secrets');
-  await server.fill('https://pair.example.org/');
-  await stun.fill('turn:pair.example.org:3478');
-  await save.click();
-  await assertStatus(settings, /one to five STUN servers/, 'A TURN URL is not presented as supported STUN configuration');
-  await stun.fill('stun:pair.example.org:3478\nstun:stun.l.google.com:19302');
-  await save.click();
-  await assertStatus(settings, /Saved in this example: https:\/\/pair\.example\.org\./, 'A valid configuration saves locally with the normalized endpoint');
-  await settings.getByRole('button', { name: 'Try with a session active', exact: true }).click();
-  assert.ok(await server.isDisabled() && await stun.isDisabled() && await save.isDisabled(), 'An active session prevents changing the connection settings');
-  await settings.getByRole('button', { name: 'End example session', exact: true }).click();
-  assert.equal(await server.isDisabled(), false, 'Ending the example session enables settings again');
-  await settings.getByRole('button', { name: 'Reset', exact: true }).click();
-  assert.ok(await settings.getByRole('radio', { name: /^GhostPair server/ }).isChecked(), 'Reset restores the production preset');
+  // Only explicit guide copy actions can write; rejected copying still exposes selectable text.
+  await page.evaluate(() => {
+    window.__websiteOriginalClipboardDescriptor = Object.getOwnPropertyDescriptor(navigator.clipboard, 'writeText');
+    window.__websiteWrites = [];
+    Object.defineProperty(navigator.clipboard, 'writeText', { configurable: true, writable: true, value: async value => { window.__websiteWrites.push(value); } });
+  });
+  try {
+    const copy = install.getByRole('button', { name: 'Copy address', exact: true });
+    const copyRegion = copy.locator('..');
+    await copy.click();
+    assert.deepEqual(await page.evaluate(() => window.__websiteWrites), ['edge://extensions']);
+    await copyRegion.getByRole('status').filter({ hasText: 'Copied' }).waitFor();
+    assert.equal(await copy.getAttribute('aria-label'), 'Copy address', 'Copy feedback preserves its accessible name');
+    await chrome.check();
+    await page.evaluate(() => { navigator.clipboard.writeText = async () => { throw new Error('Clipboard unavailable for this test'); }; });
+    await copy.click();
+    const manual = install.getByRole('textbox', { name: 'Copy address manually', exact: true });
+    await manual.waitFor();
+    assert.equal(await manual.inputValue(), 'chrome://extensions', 'Manual copying uses the selected browser address');
+    assert.ok(await manual.evaluate(element => element.readOnly));
+    await manual.focus();
+    assert.ok(await manual.evaluate(element => element.selectionStart === 0 && element.selectionEnd === element.value.length), 'Manual copy selects the complete value');
+    assert.match(await copyRegion.textContent(), /Copy unavailable\. Select the text below\./);
+    await page.evaluate(() => { navigator.clipboard.writeText = async value => { window.__websiteWrites.push(value); }; });
 
-  const connection = page.locator('#first-session .guide-scene');
-  await connection.getByRole('button', { name: 'Start sharing' }).click();
-  await assertStatus(connection, /Confirm what you want to share/, 'A first session requires explicit host consent');
-  const hostPassword = connection.getByLabel('Session password', { exact: true });
-  await hostPassword.fill('short');
-  await connection.getByRole('checkbox', { name: /^I allow the person/ }).check();
-  await connection.getByRole('button', { name: 'Start sharing' }).click();
-  await assertStatus(connection, /between 8 and 256 characters/, 'The guide reflects the session-password length requirement');
-  await hostPassword.fill('Together-demo-42');
-  await connection.getByRole('button', { name: 'Start sharing' }).click();
-  await connection.getByRole('combobox', { name: 'Example active tab', exact: true }).selectOption('internal');
-  await connection.getByRole('button', { name: 'Allow this example tab', exact: true }).click();
-  await assertStatus(connection, /Internal browser pages cannot be shared/, 'Unsupported tabs cannot be authorized in the demonstration');
-  await connection.getByRole('combobox', { name: 'Example active tab', exact: true }).selectOption('regular');
-  await connection.getByRole('button', { name: 'Allow this example tab', exact: true }).click();
-  await connection.getByRole('button', { name: 'Fill example invitation' }).click();
-  const guestPassword = connection.getByLabel('Session password', { exact: true });
-  await guestPassword.fill('Incorrect-demo-42');
-  await connection.getByRole('button', { name: 'Join session', exact: true }).click();
-  await assertStatus(connection, /password is incorrect/, 'An incorrect guest password produces a recoverable error');
-  assert.equal(await guestPassword.inputValue(), '', 'The guest password clears after an unsuccessful attempt');
-  await connection.getByRole('button', { name: 'Fill example invitation' }).click();
-  await connection.getByRole('button', { name: 'Join session', exact: true }).click();
-  assert.ok(await connection.getByRole('heading', { name: 'Connected, together.', exact: true }).isVisible());
-  await assertStatus(connection, /starts in Preview changes/, 'A successful first session starts in preview mode');
-  await connection.getByRole('button', { name: 'End example session', exact: true }).click();
+    const advanced = page.locator('details#custom-server-settings, details#self-hosting, details#troubleshooting');
+    assert.equal(await advanced.count(), 3, 'Advanced instructions use native disclosures');
+    for (const details of await advanced.all()) assert.equal(await details.evaluate(element => element.open), false, 'Advanced instructions start collapsed');
+    for (const pattern of [/Host/, /Guest/, /Connection code/, /Session password/, /Preview changes/]) assert.match(await page.locator('#first-session').textContent(), pattern);
+    assert.ok(await page.locator('#updates-help').isVisible(), 'Update instructions stay visible');
+    assert.match(await page.locator('#updates-help').textContent(), /Reload/);
 
-  const hosting = page.locator('#self-hosting .guide-scene');
-  const domain = hosting.getByRole('textbox', { name: 'Public domain', exact: true });
-  await domain.fill('https://pair.example.org/path');
-  await hosting.getByRole('button', { name: 'Continue to configuration' }).click();
-  await assertStatus(hosting, /public hostname, without https:\/\//, 'The self-hosting guide rejects a URL where a DNS hostname is needed');
-  await domain.fill('pair.example.org');
-  await hosting.getByRole('button', { name: 'Continue to configuration' }).click();
-  await assertStatus(hosting, /Confirm the example DNS record/, 'The walkthrough requires the DNS preparation step');
-  await hosting.getByRole('checkbox', { name: 'Practice confirming DNS points to this VPS', exact: true }).check();
-  await hosting.getByRole('button', { name: 'Continue to configuration' }).click();
-  const environment = (await hosting.locator('.guide-command pre').allTextContents()).join('\n');
-  assert.match(environment, /SIGNAL_DOMAIN=pair\.example\.org/);
-  assert.match(environment, /VITE_SIGNALING_URL=https:\/\/pair\.example\.org/);
-  assert.match(environment, /VITE_STUN_URLS=stun:pair\.example\.org:3478/, 'Generated configuration consistently uses the chosen public domain');
-  assert.ok(await hosting.getByRole('button', { name: 'Continue to startup' }).isDisabled());
-  await hosting.getByRole('checkbox', { name: 'Practice merging these entries without replacing existing values', exact: true }).check();
-  await hosting.getByRole('button', { name: 'Continue to startup' }).click();
-  assert.ok(await hosting.getByRole('button', { name: 'Practice starting services', exact: true }).isDisabled());
-  await hosting.getByRole('checkbox', { name: 'Practice opening TCP 80/443 and UDP/TCP 3478 in the VPS firewall', exact: true }).check();
-  await hosting.getByRole('button', { name: 'Practice starting services', exact: true }).click();
-  assert.match((await hosting.locator('.guide-command pre').allTextContents()).join('\n'), /https:\/\/pair\.example\.org\/health[\s\S]*https:\/\/pair\.example\.org\/ready/);
-  const network = hosting.getByRole('combobox', { name: 'Example network', exact: true });
-  await network.selectOption('storage');
-  await hosting.getByRole('button', { name: 'Run example checks', exact: true }).click();
-  await assertStatus(hosting, /\/ready: 503/, 'Unavailable identity storage blocks readiness');
-  assert.ok(await hosting.getByRole('button', { name: 'Continue to both browsers' }).isDisabled());
-  await network.selectOption('restricted');
-  await hosting.getByRole('button', { name: 'Run example checks', exact: true }).click();
-  await assertStatus(hosting, /STUN is not a relay/, 'Healthy signaling does not imply a viable peer route');
-  await network.selectOption('direct');
-  await hosting.getByRole('button', { name: 'Run example checks', exact: true }).click();
-  await hosting.getByRole('button', { name: 'Continue to both browsers' }).click();
-  await hosting.getByRole('checkbox', { name: 'Host settings saved', exact: true }).check();
-  assert.equal((await hosting.locator('[role="status"]').allTextContents()).some(text => text.includes('Both example browsers are configured')), false);
-  await hosting.getByRole('checkbox', { name: 'Guest settings saved', exact: true }).check();
-  await assertStatus(hosting, /Both example browsers are configured/, 'Both participants need the same self-hosted configuration');
-  await hosting.getByRole('button', { name: 'Reset', exact: true }).click();
-
-  const help = page.locator('#updates-help .guide-scene');
-  assert.ok(await help.getByRole('button', { name: 'Reload host extension', exact: true }).isDisabled());
-  await help.getByRole('button', { name: 'Practice replacing the files', exact: true }).click();
-  await help.getByRole('button', { name: 'Reload host extension', exact: true }).click();
-  await help.getByRole('button', { name: 'Reload guest extension', exact: true }).click();
-  await assertStatus(help, /Reloading preserves saved settings and identities/, 'Updating the loaded folder preserves the saved installation');
-  await help.getByRole('combobox', { name: 'Try a troubleshooting scenario', exact: true }).selectOption('network');
-  assert.match(await help.textContent(), /no TURN relay or automatic reconnection/, 'Troubleshooting distinguishes pairing from video transport');
-  await help.getByRole('button', { name: 'Check the server’s /health and /ready endpoints', exact: true }).click();
-  await help.getByRole('button', { name: 'Try a network with a direct route and reconnect explicitly', exact: true }).click();
-  await assertStatus(help, /End the failed attempt, then join again/);
-  await help.getByRole('button', { name: 'Reset', exact: true }).click();
-  await page.getByRole('navigation', { name: 'Installation chapters' }).locator('a[href="#self-hosting"]').click();
-  await page.waitForURL(target => target.hash === '#self-hosting');
+    await page.getByRole('navigation', { name: 'Installation chapters' }).locator('a[href="#self-hosting"]').click();
+    await page.waitForURL(target => target.hash === '#self-hosting');
+    const hosting = page.locator('details#self-hosting');
+    await page.waitForFunction(() => document.getElementById('self-hosting').open);
+    for (const pattern of [/Docker/, /SQLite/, /PostgreSQL/, /Render/, /80/, /443/, /3478/, /\/health/, /\/ready/, /backup|back up/i]) assert.match(await hosting.textContent(), pattern);
+    const commands = (await hosting.locator('pre').allTextContents()).join('\n');
+    for (const pattern of [/SIGNAL_DOMAIN=pair\.example\.org/, /VITE_SIGNALING_URL=https:\/\/pair\.example\.org/, /VITE_STUN_URLS=stun:pair\.example\.org:3478/]) assert.match(commands, pattern);
+    await hosting.getByRole('button', { name: 'Copy command', exact: true }).first().click();
+    assert.ok((await page.evaluate(() => window.__websiteWrites)).at(-1)?.length > 0, 'A command copy writes displayed instructions');
+    await noOverflow(page, `${width}px: expanded self hosting instructions`);
+  } finally {
+    await page.evaluate(() => { Object.defineProperty(navigator.clipboard, 'writeText', window.__websiteOriginalClipboardDescriptor); });
+  }
   await page.reload({ waitUntil: 'domcontentloaded' });
   await waitForScreen(page, 'installation');
+  assert.ok(await page.locator('details#self-hosting').evaluate(element => element.open), 'The self-hosting deep link opens its disclosure after refresh');
   await page.waitForFunction(() => {
     const bounds = document.getElementById('self-hosting').getBoundingClientRect();
     return bounds.bottom > 0 && bounds.top < innerHeight;
   });
-  await noOverflow(page, `${width}px: installation walkthroughs`);
+  await page.locator('details#self-hosting > summary').focus();
+  await page.keyboard.press('Enter');
+  assert.equal(await page.locator('details#self-hosting').evaluate(element => element.open), false, 'Disclosures support keyboard toggling');
+  await noOverflow(page, `${width}px: installation document`);
 }
 
 async function perspective(page, side) {
@@ -319,9 +266,10 @@ async function perspective(page, side) {
 }
 
 async function setSharedScroll(page, side, value) {
-  await page.getByRole('slider', { name: `${side} shared page scroll`, exact: true }).evaluate((input, position) => {
-    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, String(position));
-    input.dispatchEvent(new Event('input', { bubbles: true }));
+  await page.getByTestId(`${side}-page-scroll`).evaluate((scroller, position) => {
+    if (scroller.scrollHeight <= scroller.clientHeight) throw new Error('The shared page must support natural scrolling');
+    scroller.scrollTop = (scroller.scrollHeight - scroller.clientHeight) * position / 100;
+    scroller.dispatchEvent(new Event('scroll', { bubbles: true }));
   }, value);
   await assertSharedScroll(page, side, value);
 }
@@ -333,64 +281,169 @@ async function assertSharedScroll(page, side, value) {
   }, { side, value });
 }
 
-async function inspectExplore(page, width) {
+async function assertVisibleInViewport(page, selector, label) {
+  try {
+    await page.waitForFunction(target => {
+      const element = document.querySelector(target);
+      if (!element) return false;
+      const bounds = element.getBoundingClientRect();
+      const header = document.querySelector('.site-header');
+      const top = header && ['fixed', 'sticky'].includes(getComputedStyle(header).position) ? Math.max(0, header.getBoundingClientRect().bottom) : 0;
+      return bounds.width > 0 && bounds.height > 0 && bounds.top >= top - 1 && bounds.bottom <= innerHeight + 1;
+    }, selector);
+  } catch (error) {
+    const state = await page.evaluate(target => ({ bounds: document.querySelector(target)?.getBoundingClientRect().toJSON(), viewport: innerHeight, scroll: scrollY }), selector);
+    throw new Error(`${label}: the highlighted control is outside the visible viewport: ${JSON.stringify(state)}`, { cause: error });
+  }
+}
+
+async function assertInitialSampleControls(page, width) {
+  // Geometry reads precede every demo action, so Playwright cannot conceal clipping by scrolling to a control.
+  const geometry = await page.evaluate(() => {
+    const scroller = document.querySelector('[data-testid="guest-page-scroll"]');
+    const bounds = scroller.getBoundingClientRect();
+    return {
+      scroll: scroller.scrollTop,
+      top: bounds.top + scroller.clientTop,
+      bottom: bounds.top + scroller.clientTop + scroller.clientHeight,
+      controls: ['guest-notify', 'guest-submit'].map(id => ({ id, bounds: document.querySelector(`[data-testid="${id}"]`).getBoundingClientRect().toJSON() })),
+    };
+  });
+  assert.equal(geometry.scroll, 0, `${width}px: the sample opens at its natural top`);
+  for (const { id, bounds } of geometry.controls) {
+    assert.ok(bounds.width > 0 && bounds.height > 0 && bounds.top >= geometry.top - 1 && bounds.bottom <= geometry.bottom + 1, `${width}px: ${id} is fully discoverable in the initial sample viewport (${JSON.stringify(bounds)})`);
+  }
+}
+
+async function sessionSnapshot(page) {
+  return page.evaluate(() => {
+    const test = name => document.querySelector(`[data-testid="${name}"]`);
+    return {
+      notes: test('host-notes')?.getAttribute('data-original'),
+      checked: test('host-notify')?.checked,
+      saved: Boolean(test('host-plan-saved')),
+      address: test('host-address')?.value,
+      mode: test('interaction-mode')?.value,
+      control: test('allow-control')?.checked,
+      pause: test('pause-session')?.textContent,
+      tabs: [...document.querySelectorAll('[data-testid="host-view"] .ex-browser-tab')].map(tab => ({ text: tab.textContent, active: tab.querySelector('button')?.getAttribute('aria-pressed') })),
+    };
+  });
+}
+
+async function inspectTour(page, width) {
+  const tour = page.getByTestId('tour-step');
+  assert.equal(await tour.getAttribute('data-step'), '1', 'The optional tour starts at its first moment');
+  assert.ok(await page.getByTestId('tour-previous').isDisabled());
+  if (await page.locator('.ex-perspective-switch').isVisible()) {
+    assert.ok(await page.getByTestId('guest-view').isVisible(), 'Mobile starts in the guest perspective');
+    assert.equal(await page.getByTestId('host-view').isVisible(), false);
+  }
+  const initial = await sessionSnapshot(page);
+  await page.getByTestId('tour-next').focus();
+  await page.keyboard.press('Enter');
+  assert.equal(await tour.getAttribute('data-step'), '2');
+  assert.deepEqual(await sessionSnapshot(page), initial, 'Tour navigation preserves the session, original fields and approvals');
+  if (await page.locator('.ex-perspective-switch').isVisible()) assert.ok(await page.getByTestId('host-view').isVisible(), 'The mode moment reveals host controls on mobile');
+  assert.ok(await page.getByTestId('interaction-mode').locator('..').evaluate(element => element.classList.contains('ex-tour-target')), 'The mode moment highlights its actual control');
+  await assertVisibleInViewport(page, '[data-testid="interaction-mode"]', `${width}px: mode tour moment`);
+  await page.getByTestId('tour-next').click();
+  assert.equal(await tour.getAttribute('data-step'), '3');
+  assert.ok(await page.getByTestId('tour-next').isDisabled(), 'The tour ends after three moments');
+  assert.deepEqual(await sessionSnapshot(page), initial);
+  await page.getByTestId('tour-show-host').click();
+  assert.ok(await page.getByTestId('host-view').isVisible(), 'The tab moment can reveal host approval');
+  await assertVisibleInViewport(page, '.ex-shared-tab-row', `${width}px: host approval tour moment`);
+  assert.deepEqual(await sessionSnapshot(page), initial);
+  await page.getByTestId('tour-previous').click();
+  assert.equal(await tour.getAttribute('data-step'), '2');
+  await page.getByTestId('tour-previous').click();
+  assert.equal(await tour.getAttribute('data-step'), '1');
+  await page.getByTestId('close-tour').click();
+  assert.equal(await tour.count(), 0, 'The tour can be dismissed for free interaction');
+  await page.getByTestId('open-tour').click();
+  assert.equal(await tour.getAttribute('data-step'), '1', 'The tour can be reopened');
+  await page.getByTestId('close-tour').click();
+  await perspective(page, 'guest');
+  await noOverflow(page, `${width}px: short tour`);
+}
+
+async function inspectExplore(page, width, url) {
   const host = page.getByTestId('host-view');
   const mode = page.getByTestId('interaction-mode');
-  const name = page.getByTestId('guest-name');
-  const hostName = page.getByTestId('host-name');
+  const guestNotes = page.getByTestId('guest-notes');
+  const hostNotes = page.getByTestId('host-notes');
   const feedback = page.getByTestId('demo-message');
-  assert.equal(await mode.inputValue(), 'preview', 'The local simulator starts in Preview changes');
-  await name.fill('A temporary guest idea.');
-  assert.equal(await hostName.getAttribute('data-original'), 'Alex', 'A preview preserves the host’s original field');
-  assert.equal(await hostName.inputValue(), 'A temporary guest idea.', 'Both participants see the same preview');
-  await page.waitForFunction(() => document.querySelector('[data-testid="guest-name"]').value === 'Alex');
-  assert.equal(await hostName.inputValue(), 'Alex', 'An expired text preview restores the original value in both views');
+  const original = 'Find a quiet place by the water.';
+  assert.equal(await mode.inputValue(), 'preview', 'The demo starts connected in Preview changes');
+  assert.equal(await page.getByTestId('guest-withheld').count(), 0);
+  assert.equal(await page.locator('.ex-chapter-nav, .ex-preview-editor, .ex-feedback, .ex-clipboard, .ex-limits, .ex-connect-grid').count(), 0, 'The demo omits the old practice chapters and advanced modules');
+  assert.equal(await guestNotes.inputValue(), original);
+  assert.equal(await page.getByTestId('guest-notify').isChecked(), false);
+  await assertInitialSampleControls(page, width);
+  await inspectTour(page, width);
 
-  await perspective(page, 'host');
-  const preferences = host.locator('.ex-feedback').first();
-  await preferences.locator('summary').click();
-  await preferences.getByRole('combobox', { name: 'Text preview lifetime', exact: true }).selectOption('persistent');
-  await perspective(page, 'guest');
-  await name.fill('A persistent suggestion.');
-  assert.equal(await hostName.getAttribute('data-original'), 'Alex');
-  await perspective(page, 'host');
-  const editName = page.getByTestId('edit-preview-name');
-  await editName.fill('A host suggestion.');
-  assert.equal(await hostName.inputValue(), 'A host suggestion.', 'The host can edit a guest text preview');
-  const editor = host.locator('.ex-preview-editor');
-  await editor.getByRole('combobox', { name: 'Preview destination', exact: true }).selectOption('notes');
-  await editor.locator('.ex-edit-row').filter({ has: editName }).getByRole('button', { name: 'Copy', exact: true }).click();
-  assert.match(await page.getByTestId('guest-notes').inputValue(), /A host suggestion\./, 'Keyboard and touch controls can copy preview text into another field');
-  assert.equal(await page.getByTestId('host-notes').getAttribute('data-original'), 'Find a quiet place by the water.', 'Copying preview text does not change the original destination');
-  await perspective(page, 'guest');
-  await page.getByTestId('guest-password').fill('A private example reminder');
-  assert.equal(await page.getByTestId('host-password').getAttribute('type'), 'password', 'Password previews stay masked');
-  await perspective(page, 'host');
-  assert.equal(await editor.locator('.ex-edit-row').filter({ has: page.getByTestId('edit-preview-password') }).getByRole('button').count(), 0, 'Password preview text cannot be moved or copied');
-  await mode.selectOption('full');
-  assert.equal(await editName.count(), 0, 'Changing interaction mode clears uncommitted previews');
-  assert.equal(await name.inputValue(), 'Alex');
-  await perspective(page, 'guest');
-  await name.fill('Taylor');
+  await guestNotes.fill('A temporary guest idea.');
+  assert.equal(await hostNotes.getAttribute('data-original'), original, 'A preview preserves the original note');
+  assert.equal(await hostNotes.inputValue(), 'A temporary guest idea.', 'Both people see the same preview');
+  await page.waitForFunction(expected => document.querySelector('[data-testid="guest-notes"]').value === expected, original);
+  assert.equal(await hostNotes.inputValue(), original, 'The half-second preview restores both views');
   await page.getByTestId('guest-notify').check();
-  assert.equal(await hostName.getAttribute('data-original'), 'Taylor', 'Full control commits the guest edit to the original shared page');
-  assert.ok(await page.getByTestId('host-notify').isChecked(), 'Full control changes the actual checkbox state');
+  assert.ok(await page.getByTestId('host-notify').isChecked(), 'Checkbox proposals appear in both views');
+  await page.waitForFunction(() => !document.querySelector('[data-testid="guest-notify"]').checked);
+  assert.equal(await page.getByTestId('host-notify').isChecked(), false, 'An expired checkbox proposal restores its original state');
   await page.getByTestId('guest-submit').click();
-  assert.match(await page.getByTestId('host-plan-saved').textContent(), /Plan saved/, 'Full control submits the example form');
+  assert.equal(await page.getByTestId('host-plan-saved').count(), 0, 'A preview does not submit the form');
+  await page.waitForFunction(() => !document.querySelector('[data-testid="guest-submit"]').classList.contains('ex-has-preview'));
+
+  await guestNotes.fill('Do not commit this suggestion.');
+  await perspective(page, 'host');
+  await mode.selectOption('full');
+  assert.equal(await hostNotes.getAttribute('data-original'), original, 'Changing mode never commits an existing suggestion');
+  assert.equal(await guestNotes.inputValue(), original, 'Mode changes clear uncommitted previews');
+  await perspective(page, 'guest');
+  await guestNotes.fill('Meet by the lake at nine.');
+  await page.getByTestId('guest-notify').check();
+  assert.equal(await hostNotes.getAttribute('data-original'), 'Meet by the lake at nine.', 'Full control commits the guest note');
+  assert.ok(await page.getByTestId('host-notify').isChecked(), 'Full control commits the checkbox');
+  await page.getByTestId('guest-submit').click();
+  assert.match(await page.getByTestId('host-plan-saved').textContent(), /Plan saved/, 'Full control saves without removed fields');
+
+  const edited = await sessionSnapshot(page);
+  await page.getByTestId('open-tour').click();
+  assert.match(await page.getByTestId('tour-step').textContent(), /Full control is on/, 'Guidance reflects the preserved interaction mode');
+  await page.getByTestId('tour-next').click();
+  assert.deepEqual(await sessionSnapshot(page), edited, 'Reopening and advancing guidance preserves a saved page');
+  await page.getByTestId('tour-next').click();
+  assert.deepEqual(await sessionSnapshot(page), edited);
+  await page.getByTestId('close-tour').click();
   await perspective(page, 'host');
   await mode.selectOption('preview');
   await perspective(page, 'guest');
   await page.getByTestId('guest-address').fill('https://example.ghostpair.test/notes');
   await page.getByTestId('guest-address').press('Enter');
   await page.waitForFunction(() => document.querySelector('[data-testid="host-address"]').value === 'https://example.ghostpair.test/notes');
-  assert.equal(await page.getByTestId('host-address').inputValue(), 'https://example.ghostpair.test/notes', 'Navigation changes the shared page even in Preview changes');
-  assert.equal(await hostName.getAttribute('data-original'), 'Alex', 'Navigation loads the next example page’s real initial fields');
+  assert.equal(await hostNotes.getAttribute('data-original'), original, 'Navigation loads the next page’s original fields');
+  await page.getByRole('button', { name: 'guest go back', exact: true }).click();
+  await page.waitForFunction(() => document.querySelector('[data-testid="guest-address"]').value === 'https://example.ghostpair.test/trip');
+  assert.equal(await page.getByTestId('guest-address').inputValue(), 'https://example.ghostpair.test/trip');
+  await page.getByRole('button', { name: 'guest go forward', exact: true }).click();
+  await page.waitForFunction(() => document.querySelector('[data-testid="guest-address"]').value === 'https://example.ghostpair.test/notes');
+  assert.equal(await page.getByTestId('guest-address').inputValue(), 'https://example.ghostpair.test/notes');
+  await page.getByRole('button', { name: 'guest reload example page', exact: true }).click();
+  assert.equal(await page.getByTestId('host-plan-saved').count(), 0, 'Reload resets the sample without an external request');
 
   await page.getByTestId('guest-new-tab').click();
-  assert.ok(await page.getByTestId('guest-withheld').isVisible(), 'A guest-opened tab is withheld until the host approves it');
-  await perspective(page, 'host');
+  assert.ok(await page.getByTestId('guest-withheld').isVisible(), 'Each new tab requires host approval');
+  const awaitingApproval = await sessionSnapshot(page);
+  await page.getByTestId('open-tour').click();
+  await page.getByTestId('tour-show-host').click();
+  assert.ok(await page.getByTestId('share-active-tab').evaluate(element => element.classList.contains('ex-tour-target')), 'The tab moment highlights the pending approval action');
+  await assertVisibleInViewport(page, '[data-testid="share-active-tab"]', `${width}px: pending tab approval`);
+  assert.deepEqual(await sessionSnapshot(page), awaitingApproval, 'Showing approval changes guidance without approving the pending tab');
+  await page.getByTestId('close-tour').click();
   await page.getByTestId('share-active-tab').click();
-  assert.equal(await page.getByTestId('guest-withheld').count(), 0, 'Host approval makes the active tab available');
+  assert.equal(await page.getByTestId('guest-withheld').count(), 0, 'Host approval shares the active tab');
   assert.match(await host.locator('.ex-controls-heading').textContent(), /2\/5 tabs approved/);
   if (width === 1440) {
     for (let approved = 2; approved < 5; approved += 1) {
@@ -399,13 +452,13 @@ async function inspectExplore(page, width) {
     }
     await page.getByTestId('guest-new-tab').click();
     await page.getByTestId('share-active-tab').click();
-    assert.match(await feedback.textContent(), /Five tabs are already approved/, 'The sixth tab cannot bypass the approved-tab limit');
+    assert.match(await feedback.textContent(), /Five tabs are already approved/, 'The approval limit remains enforced');
     assert.ok(await page.getByTestId('guest-withheld').isVisible());
     await host.locator('.ex-browser-tab').first().locator('button').first().click();
     await host.getByRole('button', { name: 'Stop sharing tab', exact: true }).click();
     await host.locator('.ex-browser-tab').last().locator('button').first().click();
     await page.getByTestId('share-active-tab').click();
-    assert.equal(await page.getByTestId('guest-withheld').count(), 0, 'Releasing an approved tab makes room for another');
+    assert.equal(await page.getByTestId('guest-withheld').count(), 0, 'Releasing a tab makes room for another');
   }
   await perspective(page, 'guest');
   await setSharedScroll(page, 'guest', 75);
@@ -416,21 +469,21 @@ async function inspectExplore(page, width) {
   await assertSharedScroll(page, 'guest', 30);
   await perspective(page, 'host');
   await page.getByTestId('pause-session').click();
-  assert.match(await page.getByTestId('guest-withheld').textContent(), /A moment to pause/, 'Pause suspends the guest’s shared view');
-  assert.ok(await page.getByTestId('guest-new-tab').isDisabled(), 'Guest tab management stops while sharing is paused');
+  assert.match(await page.getByTestId('guest-withheld').textContent(), /A moment to pause/);
+  assert.ok(await page.getByTestId('guest-new-tab').isDisabled(), 'Guest tab actions stop during a pause');
   await setSharedScroll(page, 'host', 85);
   await page.getByTestId('pause-session').click();
-  assert.equal(await page.getByTestId('guest-withheld').count(), 0, 'Resume restores the active approved view');
+  assert.equal(await page.getByTestId('guest-withheld').count(), 0, 'Resume restores the approved view');
   await perspective(page, 'guest');
   await assertSharedScroll(page, 'guest', 85);
   await perspective(page, 'host');
   await page.getByTestId('allow-control').uncheck();
-  assert.ok(await name.isDisabled(), 'Withdrawing page interaction disables guest input');
-  assert.equal(await page.getByTestId('guest-withheld').count(), 0, 'Withdrawing control retains the view of the approved tab');
+  assert.ok(await guestNotes.isDisabled(), 'Withdrawing interaction disables guest input');
+  assert.equal(await page.getByTestId('guest-withheld').count(), 0, 'View remains available when control is withdrawn');
   await page.getByTestId('allow-control').check();
-  assert.equal(await name.isDisabled(), false);
+  assert.equal(await guestNotes.isDisabled(), false);
   await host.getByRole('button', { name: 'Stop sharing tab', exact: true }).click();
-  assert.equal(await page.getByTestId('guest-withheld').count(), 1, 'Releasing the active tab withdraws its guest view');
+  assert.equal(await page.getByTestId('guest-withheld').count(), 1);
   await setSharedScroll(page, 'host', 35);
   await page.getByTestId('share-active-tab').click();
   await perspective(page, 'guest');
@@ -438,66 +491,33 @@ async function inspectExplore(page, width) {
   await perspective(page, 'host');
   await host.getByRole('button', { name: 'End session', exact: true }).click();
   assert.match(await page.getByTestId('guest-withheld').textContent(), /session has ended/);
-  assert.ok(await mode.isDisabled(), 'An ended session cannot accept page-control changes');
+  assert.ok(await mode.isDisabled(), 'Ended sessions cannot change modes');
   await page.getByTestId('reset-demo').click();
   assert.equal(await mode.inputValue(), 'preview');
-  assert.equal(await hostName.getAttribute('data-original'), 'Alex');
-  assert.match(await host.locator('.ex-controls-heading').textContent(), /1\/5 tabs approved/, 'Reset returns to one connected, approved example tab');
-
-  const hostBuffer = page.getByTestId('host-buffer').locator('p');
-  const guestBuffer = page.getByTestId('guest-buffer').locator('p');
-  const originalGuestBuffer = await guestBuffer.textContent();
-  await page.getByTestId('host-clipboard').check();
-  await page.getByRole('textbox', { name: 'host next example clipboard text', exact: true }).fill('A host-only example.');
-  await page.getByTestId('host-copy').click();
-  assert.equal(await guestBuffer.textContent(), originalGuestBuffer, 'One clipboard opt-in does not share text');
-  await page.getByTestId('guest-clipboard').check();
-  assert.equal(await guestBuffer.textContent(), originalGuestBuffer, 'Enabling both clipboards does not send old contents');
-  await page.getByRole('textbox', { name: 'host next example clipboard text', exact: true }).fill('New shared example text.');
-  await page.getByTestId('host-copy').click();
-  assert.equal(await hostBuffer.textContent(), 'New shared example text.');
-  assert.equal(await guestBuffer.textContent(), 'New shared example text.', 'New local clipboard text synchronizes after both people opt in');
-  await perspective(page, 'host');
-  await page.getByTestId('pause-session').click();
-  await page.getByRole('textbox', { name: 'host next example clipboard text', exact: true }).fill('A paused local copy.');
-  await page.getByTestId('host-copy').click();
-  assert.equal(await hostBuffer.textContent(), 'A paused local copy.');
-  assert.equal(await guestBuffer.textContent(), 'New shared example text.', 'Pause also suspends clipboard synchronization');
-  await page.getByTestId('pause-session').click();
-  await page.getByRole('textbox', { name: 'guest next example clipboard text', exact: true }).fill('A new guest copy.');
-  await page.getByTestId('guest-copy').click();
-  assert.equal(await hostBuffer.textContent(), 'A new guest copy.', 'Clipboard synchronization works in both directions');
-  await page.getByTestId('guest-clipboard').uncheck();
-  await page.getByRole('textbox', { name: 'host next example clipboard text', exact: true }).fill('A private host copy.');
-  await page.getByTestId('host-copy').click();
-  assert.equal(await guestBuffer.textContent(), 'A new guest copy.', 'Either participant can withdraw clipboard sharing');
+  assert.equal(await hostNotes.getAttribute('data-original'), original);
+  assert.equal(await page.getByTestId('host-notify').isChecked(), false);
+  assert.match(await host.locator('.ex-controls-heading').textContent(), /1\/5 tabs approved/);
+  assert.equal(await page.getByTestId('tour-step').count(), 0, 'Reset keeps a dismissed tour closed');
+  await page.getByTestId('open-tour').click();
+  assert.equal(await page.getByTestId('tour-step').getAttribute('data-step'), '3', 'Reset preserves the current tour moment');
   await page.getByTestId('reset-demo').click();
-  assert.equal(await page.getByTestId('host-clipboard').isChecked(), false);
-  assert.equal(await page.getByTestId('guest-clipboard').isChecked(), false);
+  assert.equal(await page.getByTestId('tour-step').getAttribute('data-step'), '3', 'Reset keeps an open tour at its selected moment');
 
-  await page.locator('.ex-chapter-nav').getByRole('button', { name: '01 / Connect', exact: true }).click();
-  await page.getByRole('button', { name: 'Share this tab', exact: true }).click();
-  assert.match(await feedback.textContent(), /Confirm what you want to share/, 'The guided lab also requires host consent');
-  await page.getByTestId('share-consent').check();
-  await page.getByRole('button', { name: 'Share this tab', exact: true }).click();
-  await page.getByRole('button', { name: 'Decline', exact: true }).click();
-  assert.match(await feedback.textContent(), /Capture permission was declined/, 'The simulated capture request can be declined');
-  await page.getByRole('button', { name: 'Share this tab', exact: true }).click();
-  await page.getByRole('button', { name: 'Allow example capture', exact: true }).click();
-  await page.getByTestId('join-password').fill('An incorrect example password');
-  await page.getByRole('button', { name: 'Join example session' }).click();
-  assert.match(await feedback.textContent(), /password does not match/, 'The guided session checks the example password');
-  await page.getByTestId('join-password').fill(await page.locator('.ex-waiting strong').textContent());
-  await page.getByRole('button', { name: 'Join example session' }).click();
-  assert.equal(await page.getByTestId('interaction-mode').inputValue(), 'preview', 'Joining a new guided session defaults to Preview changes');
-  await page.locator('.ex-chapter-nav').getByRole('button', { name: '07 / Host controls', exact: true }).click();
+  for (const [hash, expected] of [['modes', '2'], ['tabs', '3'], ['connect', '1'], ['feedback', '1'], ['preview', '1'], ['clipboard', '1'], ['host', '1'], ['limits', '1'], ['free', '1']]) {
+    await page.goto(screenUrl(url, 'explore', hash), { waitUntil: 'domcontentloaded' });
+    await waitForScreen(page, 'explore');
+    assert.equal(await page.getByTestId('tour-step').getAttribute('data-step'), expected, `Legacy #${hash} opens its compact tour moment`);
+    assert.equal(await page.getByTestId('interaction-mode').inputValue(), 'preview', 'Deep links choose guidance without changing the session');
+  }
+  await page.goto(screenUrl(url, 'explore', 'tabs'), { waitUntil: 'domcontentloaded' });
   await page.reload({ waitUntil: 'domcontentloaded' });
   await waitForScreen(page, 'explore');
-  assert.ok(await page.locator('.ex-chapter-nav').getByRole('button', { name: '07 / Host controls', exact: true }).getAttribute('aria-pressed') === 'true', 'Explore chapter deep links survive a refresh');
-  await page.locator('.ex-chapter-nav').getByRole('button', { name: 'Free exploration', exact: true }).click();
-  await page.getByTestId('reset-demo').click();
+  assert.equal(await page.getByTestId('tour-step').getAttribute('data-step'), '3', 'The tabs deep link survives refresh');
+  await page.goto(screenUrl(url, 'explore'), { waitUntil: 'domcontentloaded' });
+  await waitForScreen(page, 'explore');
+  assert.equal(await page.getByTestId('tour-step').getAttribute('data-step'), '1', 'Review captures show the intended arrival state');
   await perspective(page, 'guest');
-  await noOverflow(page, `${width}px: complete local simulator flows`);
+  await noOverflow(page, `${width}px: compact demo interactions`);
 }
 
 export async function inspectWebsitePages({ browser, url, origin, docs, output, screenshots }) {
@@ -536,7 +556,7 @@ export async function inspectWebsitePages({ browser, url, origin, docs, output, 
         await noOverflow(page, `${width}px: ${view} direct load and refresh`);
         await inspectSkipAndMenu(page, width);
         if (view === 'installation') await inspectInstallation(page, width);
-        else await inspectExplore(page, width);
+        else await inspectExplore(page, width, url);
         await assertLocalAssets(page, origin, docs, base);
         await noOverflow(page, `${width}px: ${view} completed interactions`);
         await assertLocalDemonstration(page, requests, origin, `${width}px: ${view}`);

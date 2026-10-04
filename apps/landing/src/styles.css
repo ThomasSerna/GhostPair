@@ -234,11 +234,6 @@
   .main-nav a:hover {
     color: var(--mint);
   }
-  .header-actions {
-    display: flex;
-    align-items: center;
-    gap: 24px;
-  }
   .github-link {
     display: inline-flex;
     align-items: center;
@@ -249,30 +244,6 @@
     transition: color 0.25s;
   }
   .github-link:hover {
-    color: var(--mint);
-  }
-  .header-download {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 18px;
-    min-height: 43px;
-    border: 1px solid var(--line);
-    border-radius: 8px;
-    padding: 10px 16px;
-    font-size: 12px;
-    font-weight: 600;
-    transition:
-      background 0.25s,
-      border-color 0.25s;
-  }
-  .header-download:hover {
-    background: var(--panel);
-    border-color: var(--mint);
-  }
-  .header-download .icon {
-    width: 16px;
-    height: 16px;
     color: var(--mint);
   }
   .menu-toggle {
@@ -1147,12 +1118,6 @@
     .main-nav {
       gap: 22px;
     }
-    .header-actions {
-      gap: 17px;
-    }
-    .header-actions .github-link span {
-      display: none;
-    }
     .hero-main {
       min-height: 470px;
     }
@@ -1230,9 +1195,6 @@
       padding: 16px 0;
       font-size: 14px;
     }
-    .header-actions {
-      gap: 16px;
-    }
     .menu-toggle {
       width: 44px;
       height: 44px;
@@ -1241,15 +1203,6 @@
       background: transparent;
       border: 1px solid var(--line);
       border-radius: 7px;
-    }
-    .header-download {
-      min-height: 40px;
-      gap: 9px;
-      font-size: 11px;
-      padding: 9px 12px;
-    }
-    .header-actions .github-link {
-      display: none;
     }
     .hero {
       padding-top: 48px;
@@ -1423,19 +1376,6 @@
     .brand-mark {
       width: 33px;
       height: 33px;
-    }
-    .header-actions {
-      gap: 10px;
-    }
-    .header-download {
-      min-height: 44px;
-      font-size: 10px;
-      padding: 8px 10px;
-      gap: 8px;
-    }
-    .header-download .icon {
-      width: 13px;
-      height: 13px;
     }
     .menu-toggle {
       width: 44px;
@@ -1792,16 +1732,6 @@
   @media (max-width: 360px) {
     .wrap {
       width: calc(100% - 32px);
-    }
-    .header-download {
-      padding-inline: 8px;
-      font-size: 9px;
-    }
-    .header-download .icon {
-      display: none;
-    }
-    .header-actions {
-      gap: 8px;
     }
     .hero-description {
       font-size: 15px;

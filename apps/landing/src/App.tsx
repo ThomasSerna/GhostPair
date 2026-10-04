@@ -6,7 +6,6 @@ const HomePage = lazy(() => import("./pages/HomePage"));
 const InstallationPage = lazy(() => import("./pages/InstallationPage"));
 const ExplorePage = lazy(() => import("./pages/ExplorePage"));
 const repository = "https://github.com/ThomasSerna/GhostPair";
-const releases = `${repository}/releases/latest`;
 type View = "home" | "installation" | "explore";
 
 function SiteHeader({ view }: { view: View }) {
@@ -26,16 +25,11 @@ function SiteHeader({ view }: { view: View }) {
   return <header className="site-header wrap">
     <a className="brand" href={`${home}#main`} aria-label="GhostPair home"><BrandMark /><span>GhostPair</span></a>
     <nav id="main-nav" className={menuOpen ? "main-nav is-open" : "main-nav"} aria-label="Main navigation">
-      <a href={`${home}#how-it-works`} onClick={() => setMenuOpen(false)}>The connection</a>
-      <a href={`${home}#preview`} onClick={() => setMenuOpen(false)}>Inside GhostPair</a>
+      <a href={`${home}#main`} aria-current={view === "home" ? "page" : undefined} onClick={() => setMenuOpen(false)}>Home</a>
       <a href="?view=installation" aria-current={view === "installation" ? "page" : undefined} onClick={() => setMenuOpen(false)}>Installation</a>
       <a href="?view=explore" aria-current={view === "explore" ? "page" : undefined} onClick={() => setMenuOpen(false)}>Explore</a>
     </nav>
-    <div className="header-actions">
-      <a className="github-link" href={repository} aria-label="GhostPair repository on GitHub"><Icon name="github" /><span>GitHub</span></a>
-      <a className="header-download" href={releases}>Get GhostPair <Icon name="arrow" /></a>
-      <button className="menu-toggle" ref={menuButton} type="button" aria-expanded={menuOpen} aria-controls="main-nav" aria-label={menuOpen ? "Close navigation" : "Open navigation"} onClick={() => setMenuOpen(!menuOpen)}><Icon name={menuOpen ? "close" : "menu"} /></button>
-    </div>
+    <button className="menu-toggle" ref={menuButton} type="button" aria-expanded={menuOpen} aria-controls="main-nav" aria-label={menuOpen ? "Close navigation" : "Open navigation"} onClick={() => setMenuOpen(!menuOpen)}><Icon name={menuOpen ? "close" : "menu"} /></button>
   </header>;
 }
 

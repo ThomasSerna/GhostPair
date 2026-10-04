@@ -4,18 +4,20 @@ The public website is a React + Vite workspace. Its production build is committe
 
 ## Installation and Explore
 
-The header opens two additional English screens without replacing the home page:
+The header has three English destinations: Home, Installation and Explore. Repository links remain in the footer and download links in the page content.
 
-- `?view=installation` is a chapter-based guide to loading Chrome/Edge release ZIPs, connection settings, a first session, Docker/VPS self-hosting, updates and troubleshooting. Each chapter contains a local interactive scene with manual controls and reset. `?view=installation#self-hosting` opens the hosting chapter directly.
-- `?view=explore` is a local host/guest laboratory. It opens connected in **Preview changes**, offers reproducible chapters and free exploration, and keeps host and guest perspectives synchronized. Mobile users switch perspectives without losing the session state.
+- `?view=installation` is a continuous guide to loading Chrome/Edge release ZIPs and starting a first session. Browser selection adapts package names and extension-page addresses. Updates remain visible; custom connection settings, Docker/VPS self-hosting and troubleshooting use native disclosures. `?view=installation#self-hosting` opens the hosting instructions directly. No installation step is simulated or gated.
+- `?view=explore` opens a local host/guest demo already connected in **Preview changes**. A short, nonblocking guide covers suggesting an edit, enabling real changes and approving another tab. Both perspectives stay synchronized; mobile starts with Guest and lets visitors switch views.
 
 These are ordinary links on the same static entry, so refreshing, Back/Forward, opening another tab and the GitHub Pages `/GhostPair/` base work without a server rewrite. Unknown `view` values show the home page. The original `#main`, `#how-it-works`, `#preview` and `#install` destinations remain available. Each screen is lazy-loaded; home motion and hero media only mount on the home page.
 
-The laboratory separates sample-page values from presentation previews. Text and other previews have independent lifetimes, defaulting to 0.5 seconds; the host can choose **Until cleared**. **Full control** edits the example page, while navigation, scroll and tab management act in both modes. New tabs require host approval, and only the active approved tab is visible. Clipboard examples use two synthetic text buffers; both participants must enable sharing, only new copies synchronize, and pause suspends synchronization. Demonstration state stays in the page and resets on reload or **Reset demo**.
+The demo separates sample-page values from presentation previews. Text and other previews expire independently after 0.5 seconds. **Full control** edits the example note and checkbox and allows saving locally, while navigation, scroll and tab management act in both modes. New tabs require host approval, and only the active approved tab is visible. The host can withdraw control, pause, stop sharing a tab or end the session. Demonstration state stays in the page and resets on reload or **Reset demo**.
 
-No demonstration starts signaling/WebRTC, loads visitor-entered websites, reads the real clipboard, or requests capture permissions. Guide **Copy** buttons write only after an explicit click and offer selectable text when clipboard writing is unavailable. Permission prompts and server checks are labeled examples. The self-hosting guide prepares commands for the existing SQLite/Caddy/STUN Compose configuration; it does not execute them. Custom server settings work in the release ZIPs without rebuilding the extension. There is no TURN relay.
+Guide navigation changes only its position and the visible perspective; it never edits fields, changes interaction mode, opens tabs or grants sharing. Closing or reopening the guide preserves session state, and resetting the demo preserves the guide position. Legacy Explore hashes remain usable: `#modes` opens the second guide moment, `#tabs` the third, and other old chapter hashes the first.
 
-`scripts/inspect-website-pages.mjs` extends the existing landing browser inspection with query navigation, accessibility, local-capability/network guards, installation tasks and simulator behavior. It captures both new screens at desktop/mobile sizes. The existing aggregate **150 KiB gzip** budget includes every generated JavaScript chunk, including lazy screens.
+No demonstration starts signaling/WebRTC, loads visitor-entered websites, accesses the real clipboard, or requests capture permissions. Installation **Copy** buttons write only after an explicit click and offer selectable text when clipboard writing is unavailable. Self-hosting instructions document the existing SQLite/Caddy/STUN Compose deployment and distinguish PostgreSQL on production Render; commands and health checks must be run on the visitor's deployment. Custom server settings work in the release ZIPs without rebuilding the extension. There is no TURN relay.
+
+`scripts/inspect-website-pages.mjs` extends the landing browser inspection with query navigation, accessibility, local-capability/network guards, installation instructions, disclosures, copy fallback and the guided session. It captures both screens at desktop/mobile sizes. The existing aggregate **150 KiB gzip** budget includes every generated JavaScript chunk, including lazy screens. Website changes do not alter the extension, its exported interfaces, protocol or server.
 
 ## Work locally
 
@@ -30,7 +32,7 @@ npm run preview:landing
 npm run test:landing
 ```
 
-The dev server binds to localhost. Vite prints the address. The site inspection runs against the built `docs/` site under `/GhostPair/`; build before running it. Root `npm run build` also builds the landing after the extension and server workspaces.
+The dev server binds to localhost. Vite prints the address. The site inspection runs against the built `docs/` site under `/GhostPair/`; build before running it. `npm run test:landing -- --pages-only` checks Installation and Explore at all five widths when the unchanged home page has already been verified. The default inspection still covers all three pages; `--check-only` skips review captures. Root `npm run build` also builds the landing after the extension and server workspaces.
 
 ## Publishing
 
@@ -66,7 +68,13 @@ Live control applies subsequent field edits to the host and Save plans confirms 
 
 For a repeatable local before/after comparison, run `npm run benchmark:landing -- --label baseline` before rebuilding and `npm run benchmark:landing -- --label optimized --require-video` afterward, with other browser/encoding work stopped. Reports go to the ignored `.impeccable/review/` folder. Three eight-second samples per viewport measure scripting, main-thread work, frame intervals, transfer sizes and video playback. They measure headless Chromium's page main thread, not whole-PC CPU or GPU decoding.
 
-### Verified results, 2026-10-02
+### Guide and demo verification, 2026-10-04
+
+Workspace typecheck, all 12 demo-model tests, `build:landing` and the complete `test:landing` inspection passed. Browser checks cover 320, 375, 390, 768 and 1440px: three-destination navigation, history/reload/deep links, keyboard, copy/manual fallback, disclosures, guidance without session mutations, previews versus saved changes, approved tabs, synchronized scrolling, pause, withdrawn control and reset. The real-connection/capture/clipboard/external-request guards remain enabled. Aggregate JavaScript is **125.0 KiB gzip** against the 150 KiB limit.
+
+The joint desktop/mobile review confirmed readable installation instructions and a compact demo with its note, checkbox and Save plan visible on arrival. The bounded Impeccable detector pass found only advisory palette differences for retained sample colors; their intentional scope is documented in `DESIGN.md`. Only the website output was regenerated; the extension, exported product interfaces, protocol and server are unchanged.
+
+### Hero benchmark results, 2026-10-02
 
 The root typecheck/build passed, along with 141 unit tests and 8 release tests. On this Windows host, the existing forked Vitest runner hit an IPC channel error; the same 141 tests passed with `--pool=threads --maxWorkers=1 --minWorkers=1`. Landing browser QA passed at 320, 375, 390, 768 and 1440px, including native looping, offscreen/hidden-tab suspension, missing/blocked media fallbacks, reduced motion, keyboard/touch effects, saving and reset. An independent visual review found no material defects.
 

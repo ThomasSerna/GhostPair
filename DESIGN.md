@@ -119,7 +119,7 @@ The hero consists of two orthogonal interlocked loops, each with a shaded tube s
 
 ### Actions and navigation
 
-Primary and inverse actions share the frontmatter geometry. Hover lifts them 2px with the common cubic-bezier(0.16, 1, 0.3, 1) easing. Header download and explore links use thin bordered controls; repository and navigation links turn mint on hover. Mobile actions use 50px minimum height and 15px 18px padding.
+Primary and inverse actions share the frontmatter geometry. Hover lifts them 2px with the common cubic-bezier(0.16, 1, 0.3, 1) easing. The header contains only Home, Installation and Explore, with mint identifying the current page. Repository links remain in the footer and download actions in page content. Repository and navigation links turn mint on hover. Mobile actions use 50px minimum height and 15px 18px padding.
 
 At 800px navigation becomes a button-controlled vertical menu. The menu exposes its expanded state, closes when a destination is chosen, and returns focus to its button on Escape. Focus uses a 2px mint outline with a 5px offset; the mint installation field uses ink. The skip link appears on focus.
 
@@ -142,6 +142,12 @@ Inputs use a canvas background, thin line border, field radius, and mint focus b
 ### Disclosure
 
 A native details element contains connection facts between thin rules. Its plus mark becomes a horizontal line when open. The three text columns become one on mobile; summary focus follows the common outline.
+
+### Installation guide and Explore
+
+The Installation page inherits the forest/mint tokens and presents readable numbered instructions, browser selection and real copy actions. Advanced connection, hosting and diagnosis sections use native disclosures; the page does not simulate installation.
+
+Explore preserves the existing sample world's cream page, dark green ink, purple previews and distinct participant colors inside synchronized browser frames. These scene-specific colors are intentional exceptions to the public website palette and stay scoped to Explore; detector color advisories for this sample do not authorize restyling it. Surrounding forest surfaces and mint controls retain the established identity. A compact inline tour highlights three controls without changing session state. On phones, Guest is the initial perspective and Host controls precede its browser; the sample contains only a note, a checkbox and Save plan.
 
 ### Hero and motion
 
