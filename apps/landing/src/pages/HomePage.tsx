@@ -6,6 +6,7 @@ import { useLandingMotion } from "../motion/useLandingMotion";
 
 const HeroScene = lazy(() => import("../components/hero/HeroScene"));
 const releases = "https://github.com/ThomasSerna/GhostPair/releases/latest";
+const repository = "https://github.com/ThomasSerna/GhostPair";
 
 export default function HomePage() {
   const root = useRef<HTMLElement>(null);
@@ -29,10 +30,10 @@ export default function HomePage() {
                 </a>
                 <a
                   className="hero-explore"
-                  href="#how-it-works"
-                  aria-label="Explore how GhostPair connects two browsers"
+                  href={repository}
+                  aria-label="GhostPair repository on GitHub"
                 >
-                  <Icon name="arrow" />
+                  <Icon name="github" />
                 </a>
               </div>
               <p className="hero-availability">

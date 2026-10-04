@@ -119,7 +119,7 @@ The hero consists of two orthogonal interlocked loops, each with a shaded tube s
 
 ### Actions and navigation
 
-Primary and inverse actions share the frontmatter geometry. Hover lifts them 2px with the common cubic-bezier(0.16, 1, 0.3, 1) easing. The header contains only Home, Installation and Explore, with mint identifying the current page. Repository links remain in the footer and download actions in page content. Repository and navigation links turn mint on hover. Mobile actions use 50px minimum height and 15px 18px padding.
+Primary and inverse actions share the frontmatter geometry. Hover lifts them 2px with the common cubic-bezier(0.16, 1, 0.3, 1) easing. The header contains only Home, Installation and Explore, with mint identifying the current page. The icon action beside the home download uses the GitHub mark and opens the repository, also linked in the footer. Download actions remain in page content. Repository and navigation links turn mint on hover. Mobile actions use 50px minimum height and 15px 18px padding.
 
 At 800px navigation becomes a button-controlled vertical menu. The menu exposes its expanded state, closes when a destination is chosen, and returns focus to its button on Escape. Focus uses a 2px mint outline with a 5px offset; the mint installation field uses ink. The skip link appears on focus.
 

@@ -4,7 +4,7 @@ The public website is a React + Vite workspace. Its production build is committe
 
 ## Installation and Explore
 
-The header has three English destinations: Home, Installation and Explore. Repository links remain in the footer and download links in the page content.
+The header has three English destinations: Home, Installation and Explore. Repository links appear beside the home download action and in the footer; download links remain in the page content.
 
 - `?view=installation` is a continuous guide to loading Chrome/Edge release ZIPs and starting a first session. Browser selection adapts package names and extension-page addresses. Updates remain visible; custom connection settings, Docker/VPS self-hosting and troubleshooting use native disclosures. `?view=installation#self-hosting` opens the hosting instructions directly. No installation step is simulated or gated.
 - `?view=explore` opens a local host/guest demo already connected in **Preview changes**. A short, nonblocking guide covers suggesting an edit, enabling real changes and approving another tab. Both perspectives stay synchronized; mobile starts with Guest and lets visitors switch views.

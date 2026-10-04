@@ -101,6 +101,11 @@ async function inspectNavigation(page, width) {
     assert.ok(await navigation.isVisible(), 'Desktop navigation is visible');
   }
   for (const link of await page.locator('.github-link').all()) assert.equal(await link.getAttribute('href'), 'https://github.com/ThomasSerna/GhostPair');
+  const heroRepository = page.locator('a.hero-explore');
+  assert.equal(await heroRepository.getAttribute('href'), 'https://github.com/ThomasSerna/GhostPair', 'The icon beside the Home download opens the repository');
+  assert.equal(await heroRepository.getAttribute('aria-label'), 'GhostPair repository on GitHub', 'The repository icon has an accessible destination name');
+  assert.equal(await heroRepository.locator('svg.github-icon').count(), 1, 'The Home repository link uses the existing GitHub icon');
+  assert.equal(await heroRepository.locator('svg.github-icon path').getAttribute('d'), await page.locator('.site-footer .github-link svg.github-icon path').getAttribute('d'), 'Home and footer share the authored GitHub mark');
   assert.equal(await page.getByRole('link', { name: 'Download GhostPair', exact: true }).getAttribute('href'), 'https://github.com/ThomasSerna/GhostPair/releases/latest');
 }
 
