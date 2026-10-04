@@ -16,9 +16,7 @@ const previewDuration = 1000;
 
 export default function ModeDemo() {
   const [mode, setMode] = useState<InteractionMode>("visual");
-  const [guestNote, setGuestNote] = useState(initialNote);
   const [hostNote, setHostNote] = useState(initialNote);
-  const [guestPacked, setGuestPacked] = useState(false);
   const [hostPacked, setHostPacked] = useState(false);
   const [hostSaved, setHostSaved] = useState(false);
   const [previewNote, setPreviewNote] = useState<string | null>(null);
@@ -125,8 +123,6 @@ export default function ModeDemo() {
   function changeMode(nextMode: InteractionMode) {
     clearPreviews();
     clearClickHalos();
-    setGuestNote(hostNote);
-    setGuestPacked(hostPacked);
     setMode(nextMode);
   }
 
@@ -150,30 +146,22 @@ export default function ModeDemo() {
   }
 
   function updateNote(note: string) {
-    setGuestNote(note);
     if (mode === "live") {
       setHostNote(note);
       setHostSaved(false);
     } else {
       setPreviewNote(note);
-      expirePreview("text", () => {
-        setPreviewNote(null);
-        setGuestNote(hostNote);
-      });
+      expirePreview("text", () => setPreviewNote(null));
     }
   }
 
   function updatePacked(packed: boolean) {
-    setGuestPacked(packed);
     if (mode === "live") {
       setHostPacked(packed);
       setHostSaved(false);
     } else {
       setPreviewPacked(packed);
-      expirePreview("choice", () => {
-        setPreviewPacked(null);
-        setGuestPacked(hostPacked);
-      });
+      expirePreview("choice", () => setPreviewPacked(null));
     }
   }
 
@@ -190,9 +178,7 @@ export default function ModeDemo() {
     clearPreviews();
     clearClickHalos();
     setMode("visual");
-    setGuestNote(initialNote);
     setHostNote(initialNote);
-    setGuestPacked(false);
     setHostPacked(false);
     setHostSaved(false);
   }
@@ -268,7 +254,7 @@ export default function ModeDemo() {
                 id="guest-note"
                 className="demo-note-input"
                 type="text"
-                value={guestNote}
+                value={previewNote ?? hostNote}
                 maxLength={120}
                 onChange={(event) => updateNote(event.target.value)}
                 autoComplete="off"
@@ -277,7 +263,7 @@ export default function ModeDemo() {
                 <input
                   id="guest-pack"
                   type="checkbox"
-                  checked={guestPacked}
+                  checked={previewPacked ?? hostPacked}
                   onChange={(event) => updatePacked(event.target.checked)}
                 />
                 <span>Pack a camera</span>

@@ -98,8 +98,9 @@ function Viewer() {
     function connectPort() {
       if (disposed.current) return;
       const connection = chrome.runtime.connect({ name: 'viewer' }); port.current = connection;
+      let receivedState = false;
       connection.onMessage.addListener(message => {
-        if (message.type === 'state') applyState(message.state);
+        if (message.type === 'state') { receivedState = true; applyState(message.state); }
         if (message.type === 'viewer.duplicate') { setDuplicate(true); peer.current?.stop(); }
         if (message.type === 'transport.request') {
           void peer.current!.handle(message.message).then(reply => connection.postMessage({ type: 'transport.reply', requestId: message.requestId, reply })).catch(error => {
@@ -114,15 +115,14 @@ function Viewer() {
         setError('The extension connection was interrupted. Start a new session.');
         retry = setTimeout(connectPort, 500);
       });
-      void request('ui.status').then(applyState).catch(e => setError(e.message));
+      void request('ui.status').then(next => { if (connection === port.current && !receivedState) applyState(next); }).catch(e => setError(e.message));
     }
     connectPort();
-    const refresh = setInterval(() => { void request('ui.status').then(applyState).catch(() => undefined); }, 15000);
     const leave = () => { releaseInput(); peer.current?.stop('The connection page closed.'); };
     const visibility = () => { if (document.hidden) releaseInput(); };
     window.addEventListener('blur', releaseInput); window.addEventListener('pagehide', leave);
     document.addEventListener('visibilitychange', visibility);
-    return () => { disposed.current = true; clearTimeout(retry); clearInterval(refresh); leave(); window.removeEventListener('blur', releaseInput); window.removeEventListener('pagehide', leave); document.removeEventListener('visibilitychange', visibility); port.current?.disconnect(); port.current = null; };
+    return () => { disposed.current = true; clearTimeout(retry); leave(); window.removeEventListener('blur', releaseInput); window.removeEventListener('pagehide', leave); document.removeEventListener('visibilitychange', visibility); port.current?.disconnect(); port.current = null; };
   }, []);
   useEffect(() => {
     const element = video.current;
@@ -198,7 +198,7 @@ function Viewer() {
     <form className="navigation" onSubmit={e => { e.preventDefault(); const t = target(); if (t) send({ type: 'navigate', ...t, url: address.includes('://') ? address : `https://${address}` }); }}><button type="button" aria-label="Back" disabled={!interactive} onClick={() => { const t = target(); if (t) send({ type: 'history', ...t, direction: 'back' }); }}><ViewerIcon name="back"/></button><button type="button" aria-label="Forward" disabled={!interactive} onClick={() => { const t = target(); if (t) send({ type: 'history', ...t, direction: 'forward' }); }}><ViewerIcon name="forward"/></button><button type="button" aria-label="Reload" disabled={!interactive} onClick={() => { const t = target(); if (t) send({ type: 'reload', ...t }); }}><ViewerIcon name="reload"/></button><input aria-label="Remote page address" value={address} onChange={e => setAddress(e.target.value)} placeholder="Shared page address" disabled={!interactive}/><button type="submit" disabled={!interactive}>Go <ViewerIcon name="go"/></button></form>
     <section ref={stage} className="remote-stage" aria-label="Remote page"><video ref={video} style={{ width: videoWidth, height: videoWidth / aspect, objectFit: 'cover' }} autoPlay muted playsInline data-generation={hasFrame ? frame.current?.generation : undefined} className={!hasFrame ? 'invisible' : ''} aria-label="Shared page video" onPointerDown={e => pointer(e, 'down')} onPointerMove={e => pointer(e, 'move')} onPointerUp={e => pointer(e, 'up')} onPointerCancel={releaseInput} onLostPointerCapture={() => { if (heldPointer.current) releaseInput(); }} onContextMenu={e => e.preventDefault()} onWheel={e => { const point = coordinates(e); if (point) send({ type: 'wheel', ...point, deltaX: Math.max(-10000, Math.min(10000, e.deltaX)), deltaY: Math.max(-10000, Math.min(10000, e.deltaY)), modifiers: modifiers(e) }); }}/>
       <textarea ref={keyboard} className="keyboard-input" aria-label="Remote keyboard input" autoCapitalize="off" autoComplete="off" spellCheck={false} disabled={!interactive} onFocus={() => setFocused(true)} onBlur={() => { releaseInput(); setFocused(false); }} onKeyDown={e => key(e, 'down')} onKeyUp={e => key(e, 'up')} onCompositionStart={() => { composing.current = true; compositionRevision.current = stateRef.current?.controlRevision; }} onCompositionEnd={e => { const valid = composing.current && compositionRevision.current === stateRef.current?.controlRevision; composing.current = false; compositionRevision.current = undefined; if (valid) text(e.data); e.currentTarget.value = ''; }} onInput={e => { if (!composing.current && !(e.nativeEvent as InputEvent).isComposing && !(e.nativeEvent as InputEvent).inputType?.includes('Composition')) { text(e.currentTarget.value); e.currentTarget.value = ''; } }} onPaste={e => { e.preventDefault(); text(e.clipboardData.getData('text/plain')); }}/>
-      {(!hasFrame || state?.paused || state?.status !== 'connected') && <div className="stage-overlay"><div className="empty-symbol"><ViewerIcon className="stage-icon" name={state?.paused ? 'pause' : selected && !selected.supported ? 'unavailable' : 'waiting'}/></div><h1>{state?.paused ? 'The session is paused.' : selected && !selected.supported ? "This tab can't be shared." : state?.status === 'idle' || state?.status === 'error' ? 'The session ended.' : 'Preparing your shared view.'}</h1><p>{state?.paused ? 'The person sharing can resume the session from GhostPair.' : selected && !selected.supported ? 'Ask the person sharing to choose another web page.' : state?.status === 'idle' || state?.status === 'error' ? 'Use the connection form to join again.' : selected && !selected.authorized ? 'The person sharing needs to allow this tab before you can see it.' : 'Waiting for the shared view to load.'}</p></div>}
+      {(!hasFrame || state?.paused || state?.status !== 'connected') && <div className="stage-overlay"><div className="empty-symbol"><ViewerIcon className="stage-icon" name={state?.paused ? 'pause' : selected && !selected.supported ? 'unavailable' : 'waiting'}/></div><h1>{state?.paused ? 'The session is paused.' : selected && !selected.supported ? "This tab can't be shared."  : 'Preparing your shared view.'}</h1><p>{state?.paused ? 'The person sharing can resume the session from GhostPair.' : selected && !selected.supported ? 'Ask the person sharing to choose another web page.'  : selected && !selected.authorized ? 'The person sharing needs to allow this tab before you can see it.' : 'Waiting for the shared view to load.'}</p></div>}
     </section><footer className="viewer-footer"><span><i className={`connection-dot ${focused ? 'live' : ''}`}/>{focused ? 'Typing on the shared page · Esc to stop' : state?.controlEnabled ? 'Click the page to interact' : 'View only'}</span><span>{state?.clipboardEnabled && state.remoteClipboardEnabled ? 'Clipboard sharing on' : 'Clipboard sharing off'}</span></footer>
     <Notifications state={state} error={error} onError={setError} floating/>
   </main>;

@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import { createServer as httpServer } from 'node:http';
-import { cp, mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { createServer } from '../../apps/signaling/dist/server.js';
-import { launchExtension, closeBrowser, removeTestArtifact, poll, resizePage, artifactRoot } from './helpers.mjs';
+import { launchExtension, closeBrowser, removeTestArtifact, poll, resizePage, artifactRoot, copyTestExtension, callBackground as call, authorizeTab as authorize } from './helpers.mjs';
 import { startStun } from './stun.mjs';
 import { questionnaireHtml } from './questionnaire-fixture.mjs';
 import { questionnaireWorkflow } from './questionnaire-workflow.mjs';
@@ -17,30 +17,14 @@ const fixture = httpServer((request, response) => {
 });
 await new Promise(done => fixture.listen(0, done));
 const base = `http://127.0.0.1:${fixture.address().port}`;
-await mkdir(artifactRoot, { recursive: true });
-const extensionPath = await mkdtemp(resolve(artifactRoot, 'smoke-extension-'));
-await cp(resolve('dist/extension'), extensionPath, { recursive: true });
+const extensionPath = await copyTestExtension('smoke-extension-');
 const manifest = JSON.parse(await readFile(resolve(extensionPath, 'manifest.json'), 'utf8'));
 assert.ok(!manifest.permissions.includes('debugger'));
-// Test-only grants bypass permission dialogs, but do not bypass tab capture invocation.
-manifest.host_permissions = ['http://*/*', 'https://*/*'];
-await writeFile(resolve(extensionPath, 'manifest.json'), JSON.stringify(manifest));
 // Different unpacked paths produce independent extension IDs, as store installs do.
-const guestExtensionPath = await mkdtemp(resolve(artifactRoot, 'smoke-guest-extension-'));
-await cp(extensionPath, guestExtensionPath, { recursive: true });
+const guestExtensionPath = await copyTestExtension('smoke-guest-extension-', extensionPath);
 const results = [], stun = await startStun();
-async function call(page, type, fields = {}) {
-  const reply = await page.evaluate(({ type, fields }) => chrome.runtime.sendMessage({ target: 'background', type, ...fields }), { type, fields });
-  if (!reply?.ok) throw new Error(`${type}: ${reply?.error}`);
-  return reply.state;
-}
 const state = page => call(page, 'ui.status');
 async function waitState(page, check, label) { return poll(async () => { const current = await state(page); return check(current) ? current : false; }, label, 30000); }
-async function authorize(browser, page) {
-  await page.bringToFront();
-  const { targetInfos } = await browser.cdp.send('Target.getTargets', { filter: [{ type: 'tab', exclude: false }] });
-  await browser.cdp.send('Extensions.triggerAction', { id: browser.id, targetId: targetInfos.find(target => target.url === page.url()).targetId });
-}
 async function videoReady(viewer, expectedUrl) {
   try { return await poll(() => viewer.evaluate(async expectedUrl => { const reply = await chrome.runtime.sendMessage({ target: 'background', type: 'ui.status' }); const state = reply.state; const video = document.querySelector('video'); return state.presentation && (!expectedUrl || state.tabs.find(t => t.id === state.activeTabId)?.url === expectedUrl) && video?.dataset.generation === String(state.generation) && video.readyState >= 2 && video.videoWidth > 0; }, expectedUrl), 'current native video', 30000); }
   catch (error) { throw new Error(`${error.message}; state=${JSON.stringify(await state(viewer))}; page=${await viewer.locator('body').innerText()}`); }

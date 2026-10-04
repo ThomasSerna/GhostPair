@@ -211,6 +211,19 @@ describe('generation-scoped video connections', () => {
     h.session.stop();
   });
 
+  it('queues host ICE until the native remote description is installed', async () => {
+    const h = harness(); await h.session.present(presentation(), h.source);
+    const remote = Promise.withResolvers<void>(); Peer.nextRemote = remote.promise;
+    const answer = h.session.receive({ type: 'media.signal', generation: 1, payload: { type: 'answer', sdp: 'answer' } });
+    await settled();
+    await h.session.receive({ type: 'media.signal', generation: 1, payload: { type: 'ice', candidate: { candidate: 'pending' } } });
+    expect(h.peer().addIceCandidate).not.toHaveBeenCalled();
+    remote.resolve(); await answer;
+    await h.session.receive({ type: 'media.signal', generation: 1, payload: { type: 'ice', candidate: null } });
+    expect(h.peer().addIceCandidate.mock.calls).toEqual([[{ candidate: 'pending' }], [undefined]]);
+    h.session.stop();
+  });
+
   it('bounds ICE candidates and seals overflowed generations until the next host reset', async () => {
     const h = harness('guest'); await h.session.receive({ type: 'media.reset', generation: 1 });
     for (let i = 0; i < 101; i++) await h.session.receive({ type: 'media.signal', generation: 1, payload: { type: 'ice', candidate: { candidate: `candidate-${i}` } } });

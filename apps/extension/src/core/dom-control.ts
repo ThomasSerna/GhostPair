@@ -28,7 +28,7 @@ export function installDomControl(captureId: string, generation: number, root = 
   scope.__ghostpairControl = context;
 
   // All preview data and nodes belong to the extension, never to a page control.
-  type Replica = { key: string; root: ShadowRoot; surface: HTMLElement; container: HTMLElement; useful: boolean };
+  type Replica = { key: string; root: ShadowRoot; container: HTMLElement; useful: boolean };
   type Preview = { id: string; revision: number; editor?: HTMLInputElement | HTMLTextAreaElement; composing?: boolean; selecting?: boolean; node: HTMLDivElement; marker?: HTMLDivElement; cursor?: HTMLSpanElement; value?: string; anchor: number; caret: number; checked?: boolean; radio?: boolean; pressed?: boolean; replica?: Replica };
   const previews = new Map<HTMLElement, Preview>();
   const editors = new WeakMap<Element, HTMLElement>();
@@ -78,7 +78,7 @@ export function installDomControl(captureId: string, generation: number, root = 
   const visualKeys = new Map<string, Element | null>();
   let layer: HTMLDivElement | undefined, shadow: ShadowRoot | undefined, focusMark: HTMLDivElement | undefined, notice: HTMLDivElement | undefined;
   let drawing: number | undefined, drawnAt = 0, noticeUntil = 0, lastNotice = -Infinity;
-  const halos: { node: HTMLDivElement; x: number; y: number; until: number }[] = [];
+  const halos: { node: HTMLDivElement; until: number }[] = [];
   const focusReplica: { replica?: Replica } = {};
   const styleCache = new Map<Document | ShadowRoot, { at: number; css: string; sheet: CSSStyleSheet; complete: boolean; version: number }>();
   let panel: HTMLDivElement | undefined, panelMode: HTMLElement | undefined, panelHint: HTMLElement | undefined;
@@ -439,7 +439,7 @@ export function installDomControl(captureId: string, generation: number, root = 
         context.append(replica); context = replica;
       }
       const replicaSurface = copy(surface, true) as HTMLElement | null;
-      if (!replicaSurface) { container.style.display = 'none'; holder.replica = { key, root: isolated, surface: container, container, useful: false }; return false; }
+      if (!replicaSurface) { container.style.display = 'none'; holder.replica = { key, root: isolated, container, useful: false }; return false; }
       context.append(replicaSurface);
       // Preserve radio peers for relational selectors without displaying other options.
       for (const peer of peers) if (!pairs.has(peer)) {
@@ -463,7 +463,7 @@ export function installDomControl(captureId: string, generation: number, root = 
       for (const [name, value] of Object.entries({ position: 'relative', left: '0', top: '0', right: 'auto', bottom: 'auto', margin: '0', transform: 'none', 'box-sizing': 'border-box', width: `${dimensions.width}px`, 'min-width': '0', 'max-width': 'none' })) replicaSurface.style.setProperty(name, value, 'important');
       if (getComputedStyle(surface).display === 'inline') replicaSurface.style.setProperty('display', 'inline-block', 'important');
       const target = pairs.get(element) as HTMLElement | undefined;
-      if (!target) { container.style.display = 'none'; holder.replica = { key, root: isolated, surface: replicaSurface, container, useful: false }; return false; }
+      if (!target) { container.style.display = 'none'; holder.replica = { key, root: isolated, container, useful: false }; return false; }
       const visualNodes = [replicaSurface, ...replicaSurface.querySelectorAll('*')];
       function state(checked: boolean, focus: boolean, pressed: boolean) {
         // Probing a native radio's opposite state also unchecks its peers.
@@ -485,7 +485,7 @@ export function installDomControl(captureId: string, generation: number, root = 
       const changed = before !== stateSignature(visualNodes);
       const native = target instanceof HTMLInputElement && getComputedStyle(target).appearance !== 'none' && visibleSurface(element);
       const useful = safe && (native || styles.complete && changed);
-      holder.replica = { key, root: isolated, surface: replicaSurface, container, useful };
+      holder.replica = { key, root: isolated, container, useful };
     }
     const replica = holder.replica;
     const container = replica.container;
@@ -595,7 +595,7 @@ export function installDomControl(captureId: string, generation: number, root = 
     if (configuration.preferences.clickAnimations === false || configuration.preferences.showInteractions === false) return;
     const dot = node(); dot.style.cssText = `left:${x - 15}px;top:${y - 15}px;width:30px;height:30px;border:2px solid var(--gp-accent);border-radius:50%;background:color-mix(in srgb,var(--gp-accent) 12%,transparent);`;
     dot.dataset.gpClick = '';
-    halos.push({ node: dot, x, y, until: performance.now() + 500 }); scheduleDraw();
+    halos.push({ node: dot, until: performance.now() + 500 }); scheduleDraw();
   }
   function previewFor(element: HTMLElement) {
     let preview = previews.get(element);

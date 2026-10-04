@@ -10,11 +10,9 @@ interface MediaHooks {
 
 interface Connection {
   pc: RTCPeerConnection;
-  epoch: number;
   presentation: Presentation;
   tracks: MediaStreamTrack[];
   pendingIce: (RTCIceCandidateInit | null)[];
-  remoteSet: boolean;
   awaitingAnswer: boolean;
   direct: boolean;
   delivered: boolean;
@@ -27,7 +25,6 @@ interface Connection {
 /** A disposable video connection. The authenticated control connection carries its signals. */
 export class MediaSession {
   private generation = -1;
-  private epoch = 0;
   private stopped = false;
   private awaitingOffer = false;
   private sealed = false;
@@ -115,7 +112,6 @@ export class MediaSession {
         this.pendingIce = [];
         await connection.pc.setRemoteDescription(payload);
         if (!this.current(connection)) return;
-        connection.remoteSet = true;
         await this.flushIce(connection);
         if (!this.current(connection)) return;
         const answer = await connection.pc.createAnswer();
@@ -127,10 +123,9 @@ export class MediaSession {
         connection.awaitingAnswer = false;
         await connection.pc.setRemoteDescription(payload);
         if (!this.current(connection)) return;
-        connection.remoteSet = true;
         await this.flushIce(connection);
       } else if (connection) {
-        if (connection.remoteSet) await connection.pc.addIceCandidate(payload.candidate ?? undefined);
+        if (connection.pc.remoteDescription) await connection.pc.addIceCandidate(payload.candidate ?? undefined);
         else if (connection.pendingIce.length < 100) connection.pendingIce.push(payload.candidate);
         else this.fail(connection, 'Too many pending video candidates.');
       } else if (this.role === 'guest' && this.awaitingOffer) {
@@ -153,13 +148,13 @@ export class MediaSession {
   }
 
   private current(connection: Connection): boolean {
-    return !this.stopped && this.connection === connection && connection.epoch === this.epoch;
+    return !this.stopped && this.connection === connection;
   }
 
   private create(presentation: Presentation): Connection {
     const pc = new RTCPeerConnection({ iceServers: this.iceServers, bundlePolicy: 'max-bundle', iceCandidatePoolSize: 0 });
     const connection: Connection = {
-      pc, epoch: this.epoch, presentation: { ...presentation }, tracks: [], pendingIce: [], remoteSet: false,
+      pc, presentation: { ...presentation }, tracks: [], pendingIce: [],
       awaitingAnswer: false, direct: false, delivered: false, verifying: false,
     };
     this.connection = connection;
@@ -243,7 +238,6 @@ export class MediaSession {
   }
 
   private clear(): void {
-    ++this.epoch;
     const previous = this.connection;
     this.connection = undefined;
     this.awaitingOffer = false;

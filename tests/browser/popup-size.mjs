@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import { createServer as httpServer } from 'node:http';
-import { cp, mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { createServer } from '../../apps/signaling/dist/server.js';
-import { artifactRoot, closeBrowser, launchExtension, poll, removeTestArtifact } from './helpers.mjs';
+import { artifactRoot, closeBrowser, launchExtension, poll, removeTestArtifact, copyTestExtension, callBackground as call, authorizeTab } from './helpers.mjs';
 
 // Unlike the mocked UI and session suites, this opens the actual toolbar action.
 // Never set a viewport or resize the popup: Chromium must size it from its CSS.
@@ -13,14 +13,7 @@ process.env.GHOSTPAIR_HEADED ??= '1';
 const recordBug = process.argv.includes('--record-bug');
 const names = process.argv.slice(2).filter(value => !value.startsWith('--'));
 const results = [];
-await mkdir(artifactRoot, { recursive: true });
-const extension = await mkdtemp(resolve(artifactRoot, 'popup-size-extension-'));
-await cp(resolve('dist/extension'), extension, { recursive: true });
-const manifest = JSON.parse(await readFile(resolve(extension, 'manifest.json'), 'utf8'));
-// Grant only this disposable copy, so native permission dialogs do not obscure
-// the popup size test. Session permission-denial behavior has a separate suite.
-manifest.host_permissions = ['http://*/*', 'https://*/*'];
-await writeFile(resolve(extension, 'manifest.json'), JSON.stringify(manifest));
+const extension = await copyTestExtension('popup-size-extension-');
 const fixture = httpServer((request, response) => {
   response.setHeader('Content-Type', 'text/html; charset=utf-8');
   response.end('<!doctype html><title>Shared popup fixture</title><h1>Shared popup fixture</h1>');
@@ -141,22 +134,13 @@ async function checkFocusVisible(popup, selector, label) {
   assert.ok(focused.left >= 0 && focused.right <= focused.width, `${label}: focused control is horizontally visible`);
 }
 
-async function call(page, type, fields = {}) {
-  const reply = await page.evaluate(({ type, fields }) => chrome.runtime.sendMessage({ target: 'background', type, ...fields }), { type, fields });
-  assert.ok(reply?.ok, `${type}: ${reply?.error}`);
-  return reply.state;
-}
-
 try {
   for (const name of names.length ? names : ['chrome', 'edge']) {
     let browser, signal, popup;
     try {
       browser = await launchExtension(name, extension, { nativeVisibility: true });
-      const tab = await browser.context.newPage(); await tab.goto(fixtureUrl); await tab.bringToFront();
-      const { targetInfos } = await browser.cdp.send('Target.getTargets', { filter: [{ type: 'tab', exclude: false }] });
-      const target = targetInfos.find(info => info.url === fixtureUrl + '/');
-      assert.ok(target, 'fixture tab target');
-      await browser.cdp.send('Extensions.triggerAction', { id: browser.id, targetId: target.targetId });
+      const tab = await browser.context.newPage(); await tab.goto(fixtureUrl);
+      assert.ok(await authorizeTab(browser, tab), 'fixture tab target');
       popup = await attachPopup(browser);
       await poll(() => popup.evaluate(() => location.href).then(url => url === `chrome-extension://${browser.id}/popup.html`), 'toolbar target loads extension popup');
       await poll(() => popup.evaluate(() => !!document.querySelector('.session-choices button:not(:disabled)')), 'popup UI ready');

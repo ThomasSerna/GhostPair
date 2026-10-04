@@ -1,6 +1,6 @@
 {
   "name": "ghostpair",
-  "version": "0.6.2",
+  "version": "0.6.3",
   "license": "MIT",
   "private": true,
   "type": "module",
@@ -12,7 +12,7 @@
     "node": ">=24.13.0"
   },
   "scripts": {
-    "build": "npm run build -w @ghostpair/protocol && npm run build -w @ghostpair/signaling && npm run build -w @ghostpair/extension && npm run build:landing",
+    "build": "npm run build -w @ghostpair/signaling && npm run build -w @ghostpair/extension && npm run build:landing",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "test": "vitest run && node --test scripts/release.test.mjs",
     "dev:server": "npm run dev -w @ghostpair/signaling",
@@ -29,7 +29,7 @@
     "test:frames": "node tests/browser/frame-probe.mjs",
     "test:visual": "node tests/browser/visual-probe.mjs",
     "test:questionnaires": "node tests/browser/questionnaire-probe.mjs",
-    "test:postgres": "npm run build -w @ghostpair/protocol && npm run build -w @ghostpair/signaling && node tests/server/postgres.mjs",
+    "test:postgres": "npm run build -w @ghostpair/signaling && node tests/server/postgres.mjs",
     "migrate:identities": "node apps/signaling/dist/migrate-main.js",
     "package:store": "node scripts/package-store.mjs"
   },

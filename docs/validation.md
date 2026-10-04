@@ -1,5 +1,19 @@
 # GhostPair validation
 
+## Repository simplification and 0.6.3: October 3, 2026
+
+Release **0.6.3** implements the repository audit: shared browser helpers and connection validation, derived landing-demo state, simpler media bookkeeping, standard-library password hashing and test waits, and removal of unused telemetry, polling, metadata, styles and protocol build output. Saved connection codes, settings, preview durations, permissions and peer protocol **4** remain compatible. The direct-route checks and extension keepalive are retained.
+
+Final workspace type checks, **153 Vitest tests in 16 files**, **8 Node release tests**, production builds and `npm run package:store` passed. Root/workspace/lockfile/manifest versions match **0.6.3**. Both ZIPs contain **18 files**, the official signaling endpoint, Manifest V3 and the existing permission set, without environment files, tests or source maps.
+
+UI inspection passed **138 assertions** and produced **21 screenshots** without page errors. New regressions cover delayed initial status responses in the popup and viewer, stale replies from replaced viewer ports, and current-port snapshot fallback. Subscribed state remains authoritative after periodic status polling is removed.
+
+The complete native **Chrome→Chrome**, **Edge→Edge** and **Chrome→Edge** session suites passed on Chrome **154.0.8037.93** and Edge **154.0.4258.53**, including independent extension IDs, native video, root/embedded questionnaires, cancellation, pause, tab authorization, reconnect and continued sessions after signaling loss. Capture authorization, DOM control, environment/package isolation, embedded-frame routing, visual simulation and all **40 questionnaire comparisons** passed. Native toolbar popup checks passed **seven states per browser**, at **398px** wide and **432–600px** tall without overflow; the sharing setup remains **398×565px**. Native sharing and viewer screenshots were inspected.
+
+Production landing QA passed **five viewports**, navigation/focus, embedded previews, interaction modes, video lifecycle/fallbacks, reduced motion and local assets. JavaScript is **113.8 KiB gzip**. The native example exporter verified matching geometry/styles, inert behavior and responsive scaling. The synthetic Chrome loopback benchmark passed for both the historical MVP and current native-video build; it is a fixture comparison, not a measurement of this cleanup's performance gain.
+
+PostgreSQL integration passed storage contracts, restart persistence, migration, dry run and conflict rollback. The signaling Docker image built and passed health/readiness, configured-port, privacy, origin and restart-identity checks. Its runtime resolves protocol source, runs as the nonroot user and excludes React, React DOM, Scheduler, signaling source and protocol tests. No push or production deployment was performed.
+
 ## Connection-code placement correction: October 3, 2026
 
 The small **Your connection code** line now appears inside the **Share your tab** setup panel, between its introduction and password form. The initial Share/Join screen has no code. Version metadata remains **0.6.2**. Extension build and type checks, **126 UI assertions**, and the native popup checks in Chrome and Edge passed; sharing setup remains **398×565px** with no overflow. Updated screenshots and the exported sharing example confirm placement and readable text. Earlier release validation below records the original placement.

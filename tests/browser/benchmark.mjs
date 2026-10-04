@@ -6,7 +6,7 @@ import { resolve } from 'node:path';
 import { build } from 'vite';
 import react from '@vitejs/plugin-react';
 import { createServer } from '../../apps/signaling/dist/server.js';
-import { artifactRoot, launchExtension, closeBrowser, removeTestArtifact, poll, resizePage } from './helpers.mjs';
+import { artifactRoot, launchExtension, closeBrowser, removeTestArtifact, poll, resizePage, callBackground as call, authorizeTab } from './helpers.mjs';
 import { startStun } from './stun.mjs';
 
 // Synthetic loopback comparison. Instrumentation is added only to disposable copies.
@@ -55,10 +55,6 @@ const fixture = httpServer((_request, response) => {
 });
 await new Promise(done => fixture.listen(0, '127.0.0.1', done));
 const stun = await startStun(), results = [];
-async function call(page, type, fields = {}) {
-  const reply = await page.evaluate(({type,fields}) => chrome.runtime.sendMessage({target:'background',type,...fields}), {type,fields});
-  if (!reply?.ok) throw new Error(`${type}: ${reply?.error}`); return reply.state;
-}
 async function cpu(browser) { return new Map((await browser.cdp.send('SystemInfo.getProcessInfo')).processInfo.map(p => [p.id, p.cpuTime])); }
 function cpuDelta(before, after) { let total=0; for(const [id,time] of after) if(before.has(id)) total+=Math.max(0,time-before.get(id)); return total; }
 async function stats(page, context) { return page.evaluate(context => chrome.runtime.sendMessage({target:'benchmark.stats',context}), context); }
@@ -74,10 +70,7 @@ try {
       await call(hostUi, 'ui.settings.save', {settings}); await call(guestUi, 'ui.settings.save', {settings});
       const page = await host.context.newPage(); await page.goto(`http://127.0.0.1:${fixture.address().port}`); await resizePage(host, page, 1280, 720);
       await page.bringToFront();
-      if(variant === 'native') {
-        const {targetInfos}=await host.cdp.send('Target.getTargets',{filter:[{type:'tab',exclude:false}]});
-        await host.cdp.send('Extensions.triggerAction',{id:host.id,targetId:targetInfos.find(t=>t.url===page.url()).targetId});
-      }
+      if(variant === 'native') await authorizeTab(host, page);
       await call(hostUi,'ui.host.start',{password:'Synthetic-session-42',clipboard:false});
       const waiting=await poll(async()=>{const s=await call(hostUi,'ui.status');return s.status==='waiting'?s:false},'benchmark host waiting');
       await call(guestUi,'ui.guest.start',{deviceId:waiting.deviceId,password:'Synthetic-session-42',clipboard:false});

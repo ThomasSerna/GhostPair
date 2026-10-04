@@ -11,7 +11,7 @@ const changed = () => new Error('The embedded page changed. Try the action again
 export class FrameControl {
   private presentation?: Presentation;
   private frames = new Map<string, Frame>();
-  private failures = new Map<string, string>();
+  private failures = new Set<string>();
   private blocked = new Set<number>();
   private revision = 0;
   private queue: Promise<void> = Promise.resolve();
@@ -205,7 +205,7 @@ export class FrameControl {
     await Promise.all([...live.values()].filter(frame => frame.frameId !== 0 && belongs(frame) && !this.frames.has(frame.documentId) && !this.failures.has(frame.documentId)).map(async frame => {
       // Related blank/srcdoc/blob documents are attempted only inside this authorized tree.
       const related = /^(about:(blank|srcdoc)|blob:)/.test(frame.url);
-      if (!isSupportedUrl(frame.url) && !related) { this.failures.set(frame.documentId, 'Chrome does not allow control of this embedded surface.'); return; }
+      if (!isSupportedUrl(frame.url) && !related) { this.failures.add(frame.documentId); return; }
       try {
         const result = (await chrome.scripting.executeScript({ target: { tabId: p.tabId, documentIds: [frame.documentId] }, world: 'ISOLATED', injectImmediately: true, func: installDomControl, args: [p.captureId, p.generation, false, this.configuration] }))[0];
         if (this.presentation !== p || this.revision !== revision || this.blocked.has(frame.frameId)) {
@@ -214,7 +214,7 @@ export class FrameControl {
         if (result?.documentId !== frame.documentId) return;
         this.frames.set(frame.documentId, frame); this.failures.delete(frame.documentId);
       } catch {
-        if (this.presentation === p) this.failures.set(frame.documentId, 'Site access is unavailable for this embedded page. Check its permissions in the extension menu.');
+        if (this.presentation === p) this.failures.add(frame.documentId);
       }
     }));
   }

@@ -3,8 +3,8 @@ import { access, mkdir, readFile, readdir } from 'node:fs/promises';
 import { dirname, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { gzipSync } from 'node:zlib';
-import { chromium } from 'playwright';
 import { createServer } from 'vite';
+import { launchHeadlessBrowser } from '../tests/browser/helpers.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const docs = resolve(root, 'docs');
@@ -37,15 +37,6 @@ const server = await createServer({ configFile: false, root: docs, base, plugins
   },
 }], server: { host: '127.0.0.1', port: 0 } });
 let browser;
-
-async function launchBrowser() {
-  const failures = [];
-  for (const options of [{}, { channel: 'chrome' }, { channel: 'msedge' }]) {
-    try { return await chromium.launch({ ...options, headless: true }); }
-    catch (error) { failures.push(`${options.channel ?? 'Playwright Chromium'}: ${error.message.split('\n')[0]}`); }
-  }
-  throw new Error(`No browser available. Install Playwright Chromium, Chrome or Edge.\n${failures.join('\n')}`);
-}
 
 async function noOverflow(page, label) {
   const dimensions = await page.evaluate(() => ({ page: document.documentElement.scrollWidth, viewport: innerWidth }));
@@ -526,7 +517,7 @@ try {
   await server.listen();
   const origin = `http://127.0.0.1:${server.httpServer.address().port}`;
   const url = origin + base;
-  browser = await launchBrowser();
+  browser = await launchHeadlessBrowser();
   await inspectHeroFallbacks(browser, url);
   if (screenshots) await mkdir(output, { recursive: true });
   for (const [width, height, name] of viewports) {

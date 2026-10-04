@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ClipboardSync, MAX_CLIPBOARD_BYTES, createDomClipboard, type ClipboardAdapter, type ClipboardUpdate } from './clipboard';
+import { MAX_CLIPBOARD_BYTES } from '@ghostpair/protocol';
+import { ClipboardSync, createDomClipboard, type ClipboardAdapter, type ClipboardUpdate } from './clipboard';
 
 function memoryClipboard(value = '') {
   return {

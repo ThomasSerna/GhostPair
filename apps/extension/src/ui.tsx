@@ -15,15 +15,13 @@ export function useSession() {
   const [state, setState] = useState<AppState>();
   const [error, setError] = useState('');
   useEffect(() => {
-    let alive = true;
-    const refresh = () => { void request('ui.status').then(s => { if (alive) setState(s); }).catch(e => { if (alive) setError(String(e.message)); }); };
-    refresh();
+    let alive = true, receivedState = false;
     const listener = (message: { type?: string; state?: AppState }) => {
-      if (message.type === 'state' && message.state) setState(message.state);
+      if (message.type === 'state' && message.state) { receivedState = true; setState(message.state); }
     };
     chrome.runtime.onMessage.addListener(listener);
-    const timer = window.setInterval(refresh, 1500);
-    return () => { alive = false; clearInterval(timer); chrome.runtime.onMessage.removeListener(listener); };
+    void request('ui.status').then(s => { if (alive && !receivedState) setState(s); }).catch(e => { if (alive) setError(String(e.message)); });
+    return () => { alive = false; chrome.runtime.onMessage.removeListener(listener); };
   }, []);
   return { state, setState, error, setError };
 }

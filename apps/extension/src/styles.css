@@ -64,8 +64,6 @@ footer>span:last-child{margin-left:auto}
 .text-button{font-size:11px;color:var(--mint);margin-top:10px;padding:5px 0}
 .shortcut{font-size:10px;text-align:center;color:var(--muted);margin-top:13px}
 kbd{font:10px inherit;border:1px solid #3d4941;padding:1px 4px;border-radius:3px}
-.saved-id{font-size:10px;color:var(--muted);margin:16px 0 0;line-height:1.6}
-.saved-id code{overflow-wrap:anywhere;font-size:10px}
 .viewer{height:100dvh;display:flex;flex-direction:column;overflow:hidden;background:#0d1512}
 .viewer-header{height:66px;display:flex;align-items:center;padding:0 24px;border-bottom:1px solid var(--line);gap:35px;flex-shrink:0}
 .viewer-session{display:flex;align-items:center;gap:19px;flex:1}
@@ -124,8 +122,6 @@ kbd{font:10px inherit;border:1px solid #3d4941;padding:1px 4px;border-radius:3px
 .shared-tabs>.secondary{margin-top:12px}
 select{font:inherit;width:100%;margin-top:7px;padding:10px;border:1px solid #3a4842;border-radius:9px;background:#14201b;color:var(--text)}
 select:focus-visible{outline:2px solid var(--mint);outline-offset:3px}
-.simulation-settings{border-top:1px solid var(--line);margin-top:20px;padding-top:2px}
-.simulation-settings label{font-size:12px}
 .control-mode{font-size:10px;color:var(--mint);white-space:nowrap}
 .simulation-colors{margin:18px 0 0;padding:0;border:0;min-width:0}
 .simulation-colors legend{font-size:12px;font-weight:550}
@@ -139,8 +135,6 @@ select:focus-visible{outline:2px solid var(--mint);outline-offset:3px}
 .custom-color{display:flex;align-items:center;gap:10px;font-size:12px}
 .custom-color input[type=color]{width:42px;height:32px;padding:2px;margin:0;border-radius:6px;cursor:pointer}
 .custom-color span{color:var(--muted);font:11px monospace}
-.simulation-settings h2{font-size:17px}
-.simulation-settings small.helper{display:block}
 
 .simulation-lifetime{border:0;padding:0;margin:18px 0 0;min-width:0}
 .simulation-lifetime legend{font-size:12px;font-weight:600;color:var(--mint);padding:0}

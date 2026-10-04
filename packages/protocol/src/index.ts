@@ -37,7 +37,7 @@ export type ServerSignalMessage = z.infer<typeof ServerSignalMessageSchema>;
 export type SignalPayload = z.infer<typeof SignalPayloadSchema>;
 
 export const SettingsSchema = z.object({
-  signalingUrl: z.string().url(),
+  signalingUrl: z.string().url().refine(validateSignalingUrl, 'Use HTTPS for signaling, or HTTP on localhost.'),
   stunUrls: z.array(z.string().regex(/^stuns?:[^\s]+$/i, 'Only STUN servers are supported.')).min(1).max(5),
 }).strict();
 export type Settings = z.infer<typeof SettingsSchema>;
@@ -101,7 +101,6 @@ export interface AppState {
   activeTabId?: number;
   generation: number;
   settings: Settings;
-  connection?: { direct: boolean; latencyMs?: number; framesPerSecond?: number };
 }
 
 const revision = { controlRevision: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER) };

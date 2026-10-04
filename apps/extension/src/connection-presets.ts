@@ -1,4 +1,4 @@
-import { SettingsSchema, validateSignalingUrl, type Settings } from '@ghostpair/protocol';
+import { SettingsSchema, type Settings } from '@ghostpair/protocol';
 
 export const GHOSTPAIR_SERVER_SETTINGS: Settings = {
   signalingUrl: 'https://ghostpair.onrender.com',
@@ -15,9 +15,9 @@ export function parseCustomConnectionSettings(url: string, stun: string): Settin
   const signalingUrl = url.trim().replace(/\/$/, '');
   const parsed = SettingsSchema.safeParse({ signalingUrl, stunUrls: stun.split(/[\n,]/).map(value => value.trim()).filter(Boolean) });
   if (!parsed.success) {
-    if (parsed.error.issues.some(issue => issue.path[0] === 'signalingUrl')) throw new Error('Enter a valid connection server URL.');
+    const urlIssue = parsed.error.issues.find(issue => issue.path[0] === 'signalingUrl');
+    if (urlIssue) throw new Error(urlIssue.code === 'custom' ? urlIssue.message : 'Enter a valid connection server URL.');
     throw new Error('Add one to five STUN servers, each starting with stun: or stuns:.');
   }
-  if (!validateSignalingUrl(parsed.data.signalingUrl)) throw new Error('Use HTTPS for the connection server, or HTTP on localhost. Remove credentials and query parameters from the URL.');
   return parsed.data;
 }

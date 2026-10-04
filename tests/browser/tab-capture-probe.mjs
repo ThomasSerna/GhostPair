@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { launchExtension, closeBrowser, poll, artifactRoot } from './helpers.mjs';
+import { launchExtension, closeBrowser, poll, artifactRoot, authorizeTab } from './helpers.mjs';
 
 const server = createServer((req, res) => { res.setHeader('Content-Type', 'text/html'); res.end('<h1>Authorized capture fixture</h1>'); });
 await new Promise(done => server.listen(0, done));
@@ -19,10 +19,7 @@ try {
       const denied = await browser.worker.evaluate(async tabId => { try { await chrome.tabCapture.getMediaStreamId({ targetTabId: tabId }); return false; } catch { return true; } }, first.id);
       assert.equal(denied, true, 'capture is rejected before extension invocation');
       for (const [page, tab] of [[one, first], [two, second]]) {
-        await page.bringToFront();
-        const { targetInfos } = await browser.cdp.send('Target.getTargets', { filter: [{ type: 'tab', exclude: false }] });
-        const targetId = targetInfos.find(t => t.url === page.url()).targetId;
-        await browser.cdp.send('Extensions.triggerAction', { id: browser.id, targetId });
+        await authorizeTab(browser, page);
         const result = await poll(() => browser.worker.evaluate(id => globalThis.results[id], tab.id), 'authorized capture consumed');
         assert.equal(result.error, undefined, JSON.stringify(result)); assert.equal(result.state, 'live'); assert.ok(result.width > 0);
       }

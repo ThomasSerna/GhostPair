@@ -3,20 +3,21 @@ WORKDIR /app
 COPY package.json package-lock.json tsconfig.base.json ./
 COPY packages/protocol/package.json packages/protocol/package.json
 COPY apps/signaling/package.json apps/signaling/package.json
-COPY apps/extension/package.json apps/extension/package.json
-RUN npm ci
+RUN npm ci --workspace=@ghostpair/signaling --workspace=@ghostpair/protocol --include-workspace-root
 COPY packages/protocol packages/protocol
 COPY apps/signaling apps/signaling
-RUN npm run build -w @ghostpair/protocol && npm run build -w @ghostpair/signaling
-RUN npm prune --omit=dev
+RUN npm run build -w @ghostpair/signaling
+RUN npm ci --omit=dev --workspace=@ghostpair/signaling --workspace=@ghostpair/protocol --include-workspace-root
 
 FROM node:24-bookworm-slim
 ENV NODE_ENV=production HOST=0.0.0.0 PORT=8787 DATABASE_PATH=/data/ghostpair.sqlite
 WORKDIR /app
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/package.json ./package.json
-COPY --from=build /app/packages/protocol ./packages/protocol
-COPY --from=build /app/apps/signaling ./apps/signaling
+COPY --from=build /app/packages/protocol/package.json ./packages/protocol/package.json
+COPY --from=build /app/packages/protocol/src/index.ts ./packages/protocol/src/index.ts
+COPY --from=build /app/apps/signaling/package.json ./apps/signaling/package.json
+COPY --from=build /app/apps/signaling/dist ./apps/signaling/dist
 COPY docs/privacy.html ./docs/privacy.html
 RUN mkdir /data && chown node:node /data
 USER node

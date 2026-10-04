@@ -70,6 +70,17 @@ describe('peer session lifetime', () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
+  it('keeps compatibility ping replies and the background keepalive without RTT telemetry', async () => {
+    const h = harness(), first = await h.start(); await first.greet(); first.pc.connect(); await settled();
+    first.control.receive({ type: 'ping', time: 42 }); first.control.receive({ type: 'pong', time: 42 }); await settled();
+    expect(first.control.send.mock.calls.map(([value]) => JSON.parse(value))).toContainEqual({ type: 'pong', time: 42 });
+    await vi.advanceTimersByTimeAsync(20000);
+    expect(first.control.send.mock.calls.map(([value]) => JSON.parse(value)).some(message => message.type === 'ping')).toBe(false);
+    expect(h.notify).toHaveBeenCalledWith('transport.pulse');
+    expect(h.notify.mock.calls.some(([type]) => type === 'transport.stats')).toBe(false);
+    h.session.stop(); expect(vi.getTimerCount()).toBe(0);
+  });
+
   it('cannot establish a replacement session using a stopped peer route check', async () => {
     const h = harness(), first = await h.start(), stats = Promise.withResolvers<Map<string, any>>();
     first.pc.getStats.mockReturnValueOnce(stats.promise); await first.greet(); first.pc.connect();
@@ -137,15 +148,25 @@ describe('peer session lifetime', () => {
     expect(h.dispatch).toHaveBeenCalledTimes(251); h.session.stop();
   });
 
-  it('ends a congested receive queue and never executes its pending actions', async () => {
+  it.each(['valid', 'invalid'])('bounds %s pending messages and never executes actions after overflow', async kind => {
     const h = harness(), first = await h.start(); await first.greet(); first.pc.connect(); await settled();
     const slow = Promise.withResolvers<any>(); h.dispatch.mockReturnValueOnce(slow.promise);
     const command = { type: 'command', command: { type: 'text', controlRevision: 0, ...target, text: 'x' } };
     first.control.receive(command); await settled();
-    for (let i = 0; i < 256; i++) first.control.receive(command);
+    const queued = kind === 'valid' ? command : { ...command, command: { ...command.command, text: 123 } };
+    for (let i = 0; i < 256; i++) first.control.receive(queued);
     expect(h.notify).toHaveBeenCalledWith('transport.ended', expect.objectContaining({ failed: true, reason: expect.stringContaining('pending commands') }));
     slow.resolve({ ok: true }); for (let i = 0; i < 30; i++) await settled();
     expect(h.dispatch).toHaveBeenCalledTimes(1);
+  });
+
+  it('ignores malformed resets immediately without occupying the command queue', async () => {
+    const h = harness(), first = await h.start(); await first.greet(); first.pc.connect(); await settled();
+    const slow = Promise.withResolvers<any>(); h.dispatch.mockReturnValueOnce(slow.promise);
+    first.control.receive({ type: 'command', command: { type: 'text', controlRevision: 0, ...target, text: 'in flight' } }); await settled();
+    for (let i = 0; i < 300; i++) first.control.receive({ type: 'media.reset', generation: 'invalid' });
+    expect(first.pc.close).not.toHaveBeenCalled();
+    slow.resolve({ ok: true }); await settled(); h.session.stop();
   });
 
   it('reports send exceptions once and closes the session', async () => {

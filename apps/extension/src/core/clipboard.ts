@@ -1,3 +1,5 @@
+import { MAX_CLIPBOARD_BYTES } from '@ghostpair/protocol';
+
 /** Clipboard replication is opt-in and restricted to text for the active session. */
 export interface ClipboardAdapter {
   read(): Promise<string>;
@@ -10,7 +12,6 @@ export interface ClipboardUpdate {
   text: string;
 }
 
-export const MAX_CLIPBOARD_BYTES = 256 * 1024;
 export const textBytes = (text: string): number => new TextEncoder().encode(text).byteLength;
 
 export function newerClipboard(a: ClipboardUpdate, b: Pick<ClipboardUpdate, 'counter' | 'origin'>): boolean {

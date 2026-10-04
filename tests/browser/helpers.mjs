@@ -1,5 +1,5 @@
 import { chromium } from 'playwright';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { isAbsolute, relative, resolve } from 'node:path';
 
@@ -8,6 +8,43 @@ export const browsers = {
   chrome: process.env.GHOSTPAIR_CHROME ?? 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
   edge: process.env.GHOSTPAIR_EDGE ?? 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
 };
+
+export async function copyTestExtension(prefix, source = 'dist/extension') {
+  await mkdir(artifactRoot, { recursive: true });
+  const path = await mkdtemp(resolve(artifactRoot, prefix));
+  try {
+    await cp(resolve(source), path, { recursive: true });
+    const manifest = JSON.parse(await readFile(resolve(path, 'manifest.json'), 'utf8'));
+    // Grants belong only to this disposable copy; tab capture still needs invocation.
+    manifest.host_permissions = ['http://*/*', 'https://*/*'];
+    await writeFile(resolve(path, 'manifest.json'), JSON.stringify(manifest));
+    return path;
+  } catch (error) { await removeTestArtifact(path); throw error; }
+}
+
+export async function callBackground(page, type, fields = {}) {
+  const reply = await page.evaluate(({ type, fields }) => chrome.runtime.sendMessage({ target: 'background', type, ...fields }), { type, fields });
+  if (!reply?.ok) throw new Error(`${type}: ${reply?.error ?? 'Missing background result'}`);
+  return reply.state;
+}
+
+export async function authorizeTab(browser, page) {
+  await page.bringToFront();
+  const { targetInfos } = await browser.cdp.send('Target.getTargets', { filter: [{ type: 'tab', exclude: false }] });
+  const target = targetInfos.find(target => target.url === page.url());
+  if (!target) throw new Error('Test page has no browser tab target');
+  await browser.cdp.send('Extensions.triggerAction', { id: browser.id, targetId: target.targetId });
+  return target;
+}
+
+export async function launchHeadlessBrowser() {
+  const failures = [];
+  for (const options of [{}, { channel: 'chrome' }, { channel: 'msedge' }]) {
+    try { return await chromium.launch({ ...options, headless: true }); }
+    catch (error) { failures.push(`${options.channel ?? 'Playwright Chromium'}: ${error.message.split('\n')[0]}`); }
+  }
+  throw new Error(`No browser available. Install Playwright Chromium, Chrome or Edge.\n${failures.join('\n')}`);
+}
 
 export async function removeTestArtifact(profile) {
   const target = resolve(profile);

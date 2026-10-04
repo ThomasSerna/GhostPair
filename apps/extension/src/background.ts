@@ -1,9 +1,8 @@
-import { ControlModeSchema, VisualPreferencesSchema, PasswordSchema, SettingsSchema, validateSignalingUrl, type AppState, type Settings } from '@ghostpair/protocol';
+import { ControlModeSchema, VisualPreferencesSchema, PasswordSchema, SettingsSchema, type AppState, type Settings } from '@ghostpair/protocol';
 import { TabCapture } from './core/tab-capture';
 import { dismissNotification, patchState } from './core/notifications';
 
 const defaults: Settings = SettingsSchema.parse({ signalingUrl: import.meta.env.VITE_SIGNALING_URL || 'http://127.0.0.1:8787', stunUrls: (import.meta.env.VITE_STUN_URLS || 'stun:stun.l.google.com:19302').split(',').map((s: string) => s.trim()).filter(Boolean) });
-if (!validateSignalingUrl(defaults.signalingUrl)) throw new Error('Invalid build signaling URL.');
 let visualPreferences = VisualPreferencesSchema.parse({});
 let state: AppState = idle(defaults);
 let authorizedWindowId: number | undefined;
@@ -84,7 +83,7 @@ const ready = (async () => {
   visualPreferences = preferences.success ? preferences.data : VisualPreferencesSchema.parse({});
   if (saved.visualPreferences && preferences.success) await chrome.storage.local.set({ visualPreferences });
   const parsed = SettingsSchema.safeParse(saved.settings);
-  const settings = parsed.success && validateSignalingUrl(parsed.data.signalingUrl) ? parsed.data : defaults;
+  const settings = parsed.success ? parsed.data : defaults;
   const identity = (saved.identities as Record<string, { deviceId: string }> | undefined)?.[settings.signalingUrl];
   const previous = (await chrome.storage.session.get('appState')).appState as AppState | undefined;
   state = idle(settings, identity?.deviceId);
@@ -137,7 +136,6 @@ async function action(message: Record<string, any>, sender: chrome.runtime.Messa
     case 'ui.settings.reset': case 'ui.settings.save': {
       if (!['idle', 'error'].includes(state.status)) throw new Error('End the session before changing settings.');
       const settings = message.type === 'ui.settings.reset' ? defaults : SettingsSchema.parse(message.settings);
-      if (!validateSignalingUrl(settings.signalingUrl)) throw new Error('Use HTTPS for signaling, or HTTP on localhost.');
       if (message.type === 'ui.settings.reset') await chrome.storage.local.remove('settings'); else await chrome.storage.local.set({ settings });
       const identities = (await chrome.storage.local.get('identities')).identities as Record<string, { deviceId: string }> | undefined;
       state = idle(settings, identities?.[settings.signalingUrl]?.deviceId); broadcast(); return state;
@@ -227,11 +225,10 @@ async function fromTransport(message: Record<string, any>) {
   if (message.type === 'transport.pulse' || !state.role || terminating) return;
   switch (message.type) {
     case 'transport.status': if (['waiting', 'connecting'].includes(message.status)) update({ status: message.status, sessionId: message.sessionId ?? state.sessionId }); break;
-    case 'transport.connected': update({ status: 'connected', sessionId: message.sessionId, connection: { direct: true } }); hostState(); break;
+    case 'transport.connected': update({ status: 'connected', sessionId: message.sessionId }); hostState(); break;
     case 'transport.ended': await stop(String(message.reason || 'Session ended.')); if (message.failed) update({ status: 'error', error: String(message.reason || 'Connection failed.') }); break;
     case 'transport.notice': update({ notice: String(message.message || '') }); break;
     case 'transport.clipboard': update({ remoteClipboardEnabled: message.remoteEnabled === true, ...(message.disabled ? { clipboardEnabled: false } : {}) }); break;
-    case 'transport.stats': if (state.connection) update({ connection: { ...state.connection, latencyMs: message.latencyMs } }); break;
     case 'transport.snapshot': if (state.role === 'guest') { const remote = message.snapshot; update({ tabs: remote.tabs, activeTabId: remote.activeTabId, generation: remote.generation, presentation: remote.presentation, paused: remote.paused, controlEnabled: remote.controlEnabled, controlMode: remote.controlMode, controlRevision: remote.controlRevision, remoteClipboardEnabled: remote.clipboardEnabled, status: remote.paused ? 'paused' : 'connected' }); } break;
     case 'transport.command': {
       if (state.role !== 'host' || state.status !== 'connected' || state.paused) return { ok: false, error: 'Remote control is unavailable.' };

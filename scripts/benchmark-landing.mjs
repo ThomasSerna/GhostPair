@@ -3,8 +3,8 @@ import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import { dirname, extname, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { gzipSync } from 'node:zlib';
-import { chromium } from 'playwright';
 import { createServer } from 'vite';
+import { launchHeadlessBrowser } from '../tests/browser/helpers.mjs';
 
 // Compare the existing docs build before and after a change:
 // node scripts/benchmark-landing.mjs --label baseline
@@ -75,15 +75,6 @@ const server = await createServer({ configFile: false, root: docs, base, plugins
     });
   },
 }], server: { host: '127.0.0.1', port: 0 } });
-
-async function launchBrowser() {
-  const failures = [];
-  for (const options of [{}, { channel: 'chrome' }, { channel: 'msedge' }]) {
-    try { return await chromium.launch({ ...options, headless: true }); }
-    catch (error) { failures.push(`${options.channel ?? 'Playwright Chromium'}: ${error.message.split('\n')[0]}`); }
-  }
-  throw new Error(`No browser available. Install Playwright Chromium, Chrome or Edge.\n${failures.join('\n')}`);
-}
 
 async function bundleDetails() {
   const directory = resolve(docs, 'assets/landing');
@@ -203,7 +194,7 @@ try {
   const bundle = await bundleDetails();
   await server.listen();
   const origin = `http://127.0.0.1:${server.httpServer.address().port}`;
-  browser = await launchBrowser();
+  browser = await launchHeadlessBrowser();
   const results = [];
   for (const viewport of viewports) {
     const samples = [];

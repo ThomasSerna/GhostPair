@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
 import { createServer as createHttpServer } from 'node:http';
-import { cp, mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { cp, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { chromium } from 'playwright';
 import { createServer } from '../apps/signaling/dist/server.js';
-import { launchExtension, closeBrowser, removeTestArtifact, poll, resizePage, artifactRoot, browsers } from '../tests/browser/helpers.mjs';
+import { launchExtension, closeBrowser, removeTestArtifact, poll, resizePage, artifactRoot, browsers, copyTestExtension, callBackground as call, authorizeTab } from '../tests/browser/helpers.mjs';
 import { startStun } from '../tests/browser/stun.mjs';
 
 // Run npm run build first. Export actual isolated extension UI, without its runtime.
@@ -79,14 +79,9 @@ const settings = { signalingUrl: `http://127.0.0.1:${signalAddress.port}`, stunU
 const paths = [];
 let host, guest, previewBrowser;
 const errors = [];
-const call = (page, type, fields = {}) => page.evaluate(async ({ type, fields }) => { const result = await chrome.runtime.sendMessage({ target: 'background', type, ...fields }); if (!result?.ok) throw new Error(result?.error ?? type); return result.state; }, { type, fields });
 try {
   for (const role of ['host', 'guest']) {
-    const path = await mkdtemp(resolve(artifactRoot, `landing-${role}-extension-`)); paths.push(path);
-    await cp(resolve('dist/extension'), path, { recursive: true });
-    const manifest = JSON.parse(await readFile(resolve(path, 'manifest.json'), 'utf8'));
-    manifest.host_permissions = ['http://*/*', 'https://*/*'];
-    await writeFile(resolve(path, 'manifest.json'), JSON.stringify(manifest));
+    paths.push(await copyTestExtension(`landing-${role}-extension-`));
   }
   host = await launchExtension('chrome', paths[0]);
   guest = await launchExtension('chrome', paths[1], { nativeVisibility: true });
@@ -117,8 +112,7 @@ try {
     const attach = Element.prototype.attachShadow;
     Element.prototype.attachShadow = function (options) { const shadow = attach.call(this, options); if (this.hasAttribute('data-ghostpair-panel')) globalThis.__previewPanel = shadow; return shadow; };
   } }), tabId);
-  const { targetInfos } = await host.cdp.send('Target.getTargets', { filter: [{ type: 'tab', exclude: false }] });
-  await host.cdp.send('Extensions.triggerAction', { id: host.id, targetId: targetInfos.find(target => target.url === demoUrl).targetId });
+  await authorizeTab(host, source);
   await call(popup, 'ui.host.start', { password: 'Example-42', clipboard: false });
   const waiting = await poll(async () => { const state = await call(popup, 'ui.status'); return state.status === 'waiting' && state.presentation && state; }, 'demo host sharing', 30000);
   await popup.close();

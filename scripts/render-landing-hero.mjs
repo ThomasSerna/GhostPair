@@ -5,8 +5,8 @@ import { copyFile, mkdir, mkdtemp, readdir, rmdir, unlink, writeFile } from 'nod
 import { tmpdir } from 'node:os';
 import { basename, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { chromium } from 'playwright';
 import { createServer } from 'vite';
+import { launchHeadlessBrowser } from '../tests/browser/helpers.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const assets = resolve(root, 'apps/landing/src/assets/hero');
@@ -47,12 +47,7 @@ function encoder(args) {
 
 try {
   await server.listen();
-  const failures = [];
-  for (const options of [{}, { channel: 'chrome' }, { channel: 'msedge' }]) {
-    try { browser = await chromium.launch({ ...options, headless: true }); break; }
-    catch (error) { failures.push(error.message.split('\n')[0]); }
-  }
-  if (!browser) throw new Error(`A Playwright browser, Chrome or Edge is required: ${failures.join('; ')}`);
+  browser = await launchHeadlessBrowser();
   const page = await browser.newPage();
   await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/__signal-render__`);
   for (const variant of variants) {

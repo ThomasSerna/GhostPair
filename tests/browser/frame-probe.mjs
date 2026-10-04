@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import { createServer as httpServer } from 'node:http';
-import { cp, mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { createServer } from '../../apps/signaling/dist/server.js';
-import { launchExtension, closeBrowser, removeTestArtifact, poll, artifactRoot } from './helpers.mjs';
+import { launchExtension, closeBrowser, removeTestArtifact, poll, artifactRoot, copyTestExtension, callBackground as call, authorizeTab as authorize } from './helpers.mjs';
 import { startStun } from './stun.mjs';
 
 const fixture = httpServer((request, response) => {
@@ -26,25 +26,10 @@ const fixture = httpServer((request, response) => {
 });
 await new Promise(done => fixture.listen(0, done));
 const base = `http://127.0.0.1:${fixture.address().port}`;
-await mkdir(artifactRoot, { recursive: true });
-const extensionPath = await mkdtemp(resolve(artifactRoot, 'frame-extension-'));
-await cp(resolve('dist/extension'), extensionPath, { recursive: true });
+const extensionPath = await copyTestExtension('frame-extension-');
 const manifest = JSON.parse(await readFile(resolve(extensionPath, 'manifest.json'), 'utf8'));
 assert.ok(manifest.permissions.includes('webNavigation')); assert.ok(!manifest.permissions.includes('debugger'));
-// Disposable profile grants; production host permissions remain optional.
-manifest.host_permissions = ['http://*/*', 'https://*/*'];
-await writeFile(resolve(extensionPath, 'manifest.json'), JSON.stringify(manifest));
 const stun = await startStun(), results = [];
-async function call(page, type, fields = {}) {
-  const reply = await page.evaluate(({ type, fields }) => chrome.runtime.sendMessage({ target: 'background', type, ...fields }), { type, fields });
-  if (!reply?.ok) throw new Error(reply?.error ?? type);
-  return reply.state;
-}
-async function authorize(browser, page) {
-  await page.bringToFront();
-  const { targetInfos } = await browser.cdp.send('Target.getTargets', { filter: [{ type: 'tab', exclude: false }] });
-  await browser.cdp.send('Extensions.triggerAction', { id: browser.id, targetId: targetInfos.find(target => target.url === page.url()).targetId });
-}
 try {
   for (const name of process.argv.slice(2).length ? process.argv.slice(2) : ['chrome', 'edge']) {
     let host, guest, signal;

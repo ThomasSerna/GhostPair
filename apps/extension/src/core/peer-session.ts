@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { ControlModeSchema, ControlCommandSchema, PresentationSchema, MediaSignalSchema, SettingsSchema, ServerSignalMessageSchema, isRelaySignal, validateSignalingUrl, PROTOCOL_VERSION, MAX_CLIPBOARD_BYTES, type ControlCommand, type Settings, type SignalPayload, type Presentation, type MediaSignal } from '@ghostpair/protocol';
+import { ControlModeSchema, ControlCommandSchema, PresentationSchema, MediaSignalSchema, SettingsSchema, ServerSignalMessageSchema, isRelaySignal, PROTOCOL_VERSION, MAX_CLIPBOARD_BYTES, type ControlCommand, type Settings, type SignalPayload, type Presentation, type MediaSignal } from '@ghostpair/protocol';
 import { MediaSession } from './media-session';
 import { ClipboardSync, type ClipboardAdapter, type ClipboardUpdate } from './clipboard';
 
@@ -93,7 +93,6 @@ let greeted = false;
 let ending = false;
 let epoch = 0;
 let timer: ReturnType<typeof setTimeout> | undefined;
-let health: ReturnType<typeof setInterval> | undefined;
 let pulse: ReturnType<typeof setInterval> | undefined;
 let negotiation: Promise<void> = Promise.resolve();
 let pendingIce: (RTCIceCandidateInit | null)[] = [];
@@ -131,7 +130,7 @@ function cleanup(reason = 'Session ended.', inform = false, failed = false) {
   clipboardSync?.stop(); clipboardSync = undefined;
   if (connected) sendPeer({ type: 'stop', reason: reason.slice(0, 512) });
   if (role === 'host' && sessionId && socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: 'host.close', sessionId }));
-  clearTimeout(timer); clearInterval(health); clearInterval(pulse); timer = undefined; health = undefined; pulse = undefined;
+  clearTimeout(timer); clearInterval(pulse); timer = undefined; pulse = undefined;
   controlPipe?.clear(); clipboardPipe?.clear(); controlPipe = undefined; clipboardPipe = undefined;
   const previous = peer; peer = undefined;
   previous?.close(); socket?.close(); socket = undefined;
@@ -179,14 +178,9 @@ async function establish() {
   if (latestSnapshot && role === 'guest') notify('transport.snapshot', { snapshot: latestSnapshot });
   const queued = pendingMedia; pendingMedia = [];
   for (const message of queued) { if (epoch !== current) return; await media?.receive(message); }
-  if (epoch !== current) return;
-  health = setInterval(() => { if (connected) sendPeer({ type: 'ping', time: Date.now() }); }, 3000);
 }
 
-async function receiveControl(value: unknown) {
-  const result = PeerMessageSchema.safeParse(value);
-  if (!result.success) return;
-  const message = result.data;
+async function receiveControl(message: z.infer<typeof PeerMessageSchema>) {
   if (message.type === 'hello') {
     if (message.protocol !== PROTOCOL_VERSION) { fail('Incompatible GhostPair versions. Update both extensions.'); return; }
     if (message.sessionId !== sessionId || message.role === role) { fail('The session identity does not match.'); return; }
@@ -242,7 +236,6 @@ async function receiveControl(value: unknown) {
     case 'notice': notify('transport.notice', { message: message.message }); break;
     case 'stop': cleanup(message.reason, true); break;
     case 'ping': sendPeer({ type: 'pong', time: message.time }); break;
-    case 'pong': notify('transport.stats', { latencyMs: Math.max(0, Math.min(60000, Date.now() - message.time)) }); break;
   }
 }
 
@@ -254,10 +247,11 @@ function attachChannel(channel: RTCDataChannel, current: number) {
     let pendingControls = 0;
     controlPipe = new JsonChannel(channel, value => {
       if (epoch !== current) return;
-      if (connected && greeted && (value as any)?.type === 'media.reset') { void receiveControl(value); return; }
-      if (++pendingControls > 256) { fail('The participant sent too many pending commands.'); return; }
+      const reset = connected && greeted && typeof value === 'object' && value !== null && 'type' in value && value.type === 'media.reset';
+      if (!reset && ++pendingControls > 256) { fail('The participant sent too many pending commands.'); return; }
       const parsed = PeerMessageSchema.safeParse(value);
       const message = parsed.success ? parsed.data : undefined;
+      if (reset) { if (message) void receiveControl(message); return; }
       const command = message?.type === 'command' ? message.command : undefined;
       if (command && connected && greeted && role === 'host' && (paused || latestSnapshot?.controlEnabled === false) && command.type !== 'input.release') {
         --pendingControls;
@@ -267,10 +261,10 @@ function attachChannel(channel: RTCDataChannel, current: number) {
       const p = latestSnapshot?.presentation;
       const cancels = connected && greeted && role === 'host' && command?.type === 'input.release' && p &&
         command.tabId === p.tabId && command.captureId === p.captureId && command.documentId === p.documentId && command.generation === p.generation && command.controlRevision === latestSnapshot?.controlRevision;
-      if ((connected && greeted && message?.type === 'stop') || cancels) {
+      if (message && ((connected && greeted && message.type === 'stop') || cancels)) {
         ++inputRevision;
         // Cancel in-flight host input immediately, without waiting behind a slow route.
-        const cancellation = receiveControl(value).finally(() => { --pendingControls; });
+        const cancellation = receiveControl(message).finally(() => { --pendingControls; });
         controls = Promise.allSettled([controls, cancellation]).then(() => undefined);
         return;
       }
@@ -281,7 +275,7 @@ function attachChannel(channel: RTCDataChannel, current: number) {
           if (message?.type === 'command' && message.requestId) sendPeer({ type: 'command.result', requestId: message.requestId, ok: false, error: 'The input was canceled.' });
           return;
         }
-        await receiveControl(value);
+        if (message) await receiveControl(message);
       }).catch(() => undefined).finally(() => { --pendingControls; });
     }, () => { if (epoch === current && !ending) fail('The control connection could not send input. Start a new session.'); });
     channel.onopen = () => { if (epoch !== current) return; sendPeer({ type: 'hello', protocol: PROTOCOL_VERSION, sessionId, role }); };
@@ -350,7 +344,7 @@ async function signal(payload: SignalPayload, current: number) {
 async function start(message: Record<string, any>) {
   cleanup();
   const settings = SettingsSchema.parse(message.settings);
-  if (!validateSignalingUrl(settings.signalingUrl) || !['host', 'guest'].includes(message.role)) throw new Error('Invalid settings.');
+  if (!['host', 'guest'].includes(message.role)) throw new Error('Invalid settings.');
   const current = ++epoch;
   role = message.role; clipboardEnabled = message.clipboard === true; paused = false;
   pulse = setInterval(() => notify('transport.pulse'), 20000);
@@ -400,7 +394,6 @@ async function onMessage(message: Record<string, any>) {
   switch (message.type) {
     case 'identity.register': {
       const settings = SettingsSchema.parse(message.settings);
-      if (!validateSignalingUrl(settings.signalingUrl)) throw new Error('Enter a valid connection server address.');
       const response = await fetch(new URL('/v1/devices', settings.signalingUrl), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}', credentials: 'omit', redirect: 'error', signal: AbortSignal.timeout(10000) });
       if (!response.ok) throw new Error(`The connection server could not set up GhostPair (${response.status}). Check the connection settings and try again.`);
       return { ok: true, identity: await response.json() };

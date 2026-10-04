@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { VisualPreferencesSchema, PasswordSchema, ClientSignalMessageSchema, ControlCommandSchema, isRelaySignal, isSupportedUrl, validateSignalingUrl } from './index';
+import { VisualPreferencesSchema, PasswordSchema, ClientSignalMessageSchema, ControlCommandSchema, SettingsSchema, isRelaySignal, isSupportedUrl, validateSignalingUrl } from './index';
 describe('network boundaries', () => {
   it('migrates click animations on by default and preserves an explicit opt-out', () => {
     for (const saved of [{}, { notices: true, duration: 'temporary', seconds: 4 }, { text: { seconds: 10 }, other: { seconds: 3 } }]) {
@@ -56,9 +56,15 @@ describe('network boundaries', () => {
   it('allows only web targets and encrypted production signaling', () => {
     for (const url of ['chrome://settings', 'edge://extensions', 'file:///c:/x', 'javascript:alert(1)', 'https://chromewebstore.google.com/detail/a', 'https://u:p@example.com']) expect(isSupportedUrl(url)).toBe(false);
     expect(isSupportedUrl('https://example.com')).toBe(true);
-    expect(validateSignalingUrl('http://192.168.1.2:8787')).toBe(false);
-    expect(validateSignalingUrl('http://localhost:8787')).toBe(true);
-    expect(validateSignalingUrl('https://example.com?token=secret')).toBe(false);
-    expect(validateSignalingUrl('https://example.com')).toBe(true);
+    const settings = { stunUrls: ['stun:example.com:3478'] };
+    for (const signalingUrl of ['http://192.168.1.2:8787', 'https://example.com?token=secret', 'https://example.com#fragment', 'https://u:p@example.com', 'ftp://localhost']) {
+      expect(validateSignalingUrl(signalingUrl)).toBe(false);
+      expect(SettingsSchema.safeParse({ ...settings, signalingUrl }).success).toBe(false);
+    }
+    for (const signalingUrl of ['http://localhost:8787', 'http://127.0.0.1:8787', 'http://[::1]:8787', 'https://example.com']) {
+      expect(validateSignalingUrl(signalingUrl)).toBe(true);
+      expect(SettingsSchema.parse({ ...settings, signalingUrl }).signalingUrl).toBe(signalingUrl);
+    }
+    expect(() => SettingsSchema.parse({ ...settings, signalingUrl: 'http://example.com' })).toThrow('Use HTTPS for signaling, or HTTP on localhost.');
   });
 });

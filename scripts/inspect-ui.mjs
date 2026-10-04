@@ -32,7 +32,6 @@ function mockChrome({ manifest, official, code }) {
     if (scenario === 'five') { state.tabs = [...Array.from({ length: 5 }, (_, i) => tab(i + 1, true, false)), tab(6, false, true)]; state.activeTabId = 6; }
     if (scenario === 'capture') { state.tabs = [{ ...tab(1, true, false), captureState: 'pending' }, { ...tab(2, true, false), captureState: 'unavailable' }, tab(3, false, true)]; state.activeTabId = 3; }
     if (scenario === 'unsupported') state.tabs = [{ ...tab(1, false), supported: false, title: 'Browser settings', url: 'chrome://settings' }];
-    if (scenario === 'guest') state.connection = { direct: true, latencyMs: 39 };
   }
   if (scenario === 'dev') state.settings = { signalingUrl: 'http://127.0.0.1:8787', stunUrls: ['stun:127.0.0.1:3478'] };
   const event = () => { const listeners = new Set(); return { addListener: listener => listeners.add(listener), removeListener: listener => listeners.delete(listener), emit: message => { for (const listener of listeners) listener(message); } }; };
@@ -40,9 +39,12 @@ function mockChrome({ manifest, official, code }) {
   const broadcast = () => { const message = { type: 'state', state: structuredClone(state) }; runtimeMessages.emit(message); for (const port of ports) port.onMessage.emit(message); };
   const mock = {
     calls: [], permissionRequests: [], permissions: 'allow', pendingPermission: null, viewerOpens: 0, copiedText: '', clearCount: 0,
+    pendingStatuses: [],
     update: patch => { Object.assign(state, structuredClone(patch)); broadcast(); },
+    resolveStatus: () => { const finish = mock.pendingStatuses.shift(); if (!finish) throw new Error('No status response is pending.'); finish(); },
     resolvePermission: granted => { const finish = mock.pendingPermission; mock.pendingPermission = null; if (!finish) throw new Error('No permission request is pending.'); finish(granted); },
     portMessage: message => { for (const port of ports) port.onMessage.emit(message); },
+    disconnectPort: () => { const port = ports.at(-1); port.disconnect(); port.onDisconnect.emit(); },
   };
   globalThis.uiState = state; globalThis.uiMock = mock;
   Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async text => { mock.copiedText = text; }, readText: async () => mock.copiedText } });
@@ -53,6 +55,12 @@ function mockChrome({ manifest, official, code }) {
       sendMessage: async message => {
         mock.calls.push(structuredClone(message));
         switch (message.type) {
+          case 'ui.status':
+            if (scenario === 'status-race') {
+              const response = { ok: true, state: structuredClone(state), text: '' };
+              return new Promise(finish => mock.pendingStatuses.push(() => finish(response)));
+            }
+            break;
           case 'ui.settings.save':
             if (!['idle', 'error'].includes(state.status)) return { ok: false, error: 'End the session before changing connection settings.' };
             state.settings = structuredClone(message.settings); state.deviceId = state.settings.signalingUrl === official.signalingUrl ? code : 'fedcba9876543210fedcba9876543210'; break;
@@ -130,6 +138,36 @@ async function keyboardFeedback(page, verify = false) {
 try {
   await server.listen(); browser = await chromium.launch({ executablePath: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe', headless: true });
   const context = await browser.newContext(); context.setDefaultTimeout(5000); await context.addInitScript(mockChrome, { manifest, official, code });
+
+  for (const path of ['popup', 'viewer']) {
+    const delayed = await open(context, path, 'status-race', path === 'viewer' ? { width: 1365, height: 850 } : undefined);
+    equal(await delayed.evaluate(() => uiMock.pendingStatuses.length), 1, `${path} holds its initial status response`);
+    await set(delayed, { role: path === 'popup' ? 'host' : 'guest', status: 'paused', paused: true, controlEnabled: false, controlMode: 'live', controlRevision: 1, generation: 17, sessionId: 'newer-session' });
+    await delayed.getByText('Session paused', { exact: true }).waitFor();
+    await delayed.evaluate(async () => { uiMock.resolveStatus(); await new Promise(finish => requestAnimationFrame(() => requestAnimationFrame(finish))); });
+    equal(await delayed.getByText('Session paused', { exact: true }).count(), 1, `${path} keeps newer paused state after its delayed initial snapshot`);
+    if (path === 'popup') {
+      equal(await delayed.getByLabel('Let them control the page', { exact: true }).isChecked(), false, 'Popup keeps newer control withdrawal');
+      equal(await delayed.getByLabel('Interaction mode', { exact: false }).inputValue(), 'live', 'Popup keeps newer interaction mode');
+    } else {
+      equal(await delayed.getByRole('heading', { name: 'The session is paused.', exact: true }).count(), 1, 'Viewer keeps its paused view');
+      equal(await delayed.getByText('Control mode', { exact: true }).count(), 1, 'Viewer keeps newer interaction mode');
+      equal(await delayed.getByRole('button', { name: 'Open tab', exact: true }).isDisabled(), true, 'Viewer keeps newer control withdrawal');
+    }
+    await delayed.close();
+  }
+
+  const replacedPort = await open(context, 'viewer', 'status-race', { width: 1365, height: 850 });
+  await replacedPort.evaluate(() => uiMock.disconnectPort());
+  await set(replacedPort, { role: 'guest', status: 'paused', paused: true, controlEnabled: false, controlMode: 'live', controlRevision: 1, generation: 17, sessionId: 'replacement-session' });
+  await replacedPort.waitForFunction(() => uiMock.pendingStatuses.length === 2);
+  await replacedPort.evaluate(async () => { uiMock.resolveStatus(); await new Promise(finish => requestAnimationFrame(() => requestAnimationFrame(finish))); });
+  equal(await replacedPort.getByText('Loading GhostPair…', { exact: true }).count(), 1, 'A replaced viewer port cannot apply its delayed snapshot');
+  equal(await replacedPort.getByRole('button', { name: 'Join session', exact: true }).count(), 0, 'An old port cannot restore a stale idle form');
+  await replacedPort.evaluate(() => uiMock.resolveStatus());
+  await replacedPort.getByText('Session paused', { exact: true }).waitFor();
+  equal(await replacedPort.getByText('Control mode', { exact: true }).count(), 1, 'The current viewer port can still use its initial snapshot');
+  await replacedPort.close();
 
   const home = await open(context);
   await home.getByRole('button', { name: 'Share my tab', exact: true }).waitFor();
@@ -282,7 +320,7 @@ try {
   await viewer.getByLabel('Password', { exact: true }).waitFor(); equal(await viewer.getByLabel('Password', { exact: true }).inputValue(), ''); equal((await calls(viewer, 'ui.guest.start')).length, 0, 'Cancel prevents a delayed join');
   await permission(viewer, 'allow'); await viewer.getByLabel('Password', { exact: true }).fill('Example-42'); await viewer.getByRole('button', { name: 'Join session', exact: true }).click();
   await viewer.getByRole('button', { name: 'Cancel connection', exact: true }).waitFor(); equal((await calls(viewer, 'ui.guest.start'))[0].deviceId, code);
-  await set(viewer, { role: 'guest', status: 'connected', tabs: [{ id: 1, title: 'Weekend plans', url: 'https://example.com/plans', active: true, supported: true, authorized: true }], activeTabId: 1, connection: { direct: true, latencyMs: 39 } });
+  await set(viewer, { role: 'guest', status: 'connected', tabs: [{ id: 1, title: 'Weekend plans', url: 'https://example.com/plans', active: true, supported: true, authorized: true }], activeTabId: 1 });
   await viewer.getByText('Preview mode', { exact: true }).waitFor(); equal(await viewer.getByText('Clipboard sharing off', { exact: true }).count(), 1);
   equal(await viewer.getByText('Waiting for the shared view to load.', { exact: true }).count(), 1, 'An approved tab waiting for video does not request permission again');
   await set(viewer, { tabs: [{ id: 1, title: 'Weekend plans', url: 'https://example.com/plans', active: true, supported: true, authorized: false }] });

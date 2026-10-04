@@ -1,7 +1,8 @@
-import { randomBytes, scrypt, timingSafeEqual } from 'node:crypto';
+import { randomBytes, scrypt, timingSafeEqual, type ScryptOptions } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { createServer as createHttpServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { isIP, type AddressInfo } from 'node:net';
+import { promisify } from 'node:util';
 import { WebSocket, WebSocketServer, type RawData } from 'ws';
 import { ClientSignalMessageSchema, isRelaySignal, type ClientSignalMessage, type ServerSignalMessage } from '@ghostpair/protocol';
 import { defaultConfig, type ServerConfig } from './config.js';
@@ -10,6 +11,7 @@ import { PostgresDevices } from './postgres-devices.js';
 import { RateLimit } from './rate-limit.js';
 
 type Phase = 'idle' | 'authenticating' | 'hosting' | 'paired' | 'detached';
+const scryptAsync = promisify<string, Buffer, number, ScryptOptions, Buffer>(scrypt);
 interface Client {
   socket: WebSocket;
   ip: string;
@@ -217,11 +219,7 @@ export function createServer(overrides: Partial<ServerConfig> = {}, store?: Devi
   }
 
   function hashPassword(password: string, salt: Buffer): Promise<Buffer> {
-    return new Promise<Buffer>((resolve, reject) => {
-      scrypt(password, salt, 32, { N: config.scryptN, r: config.scryptR, p: config.scryptP, maxmem: 256 * 1024 * 1024 }, (failure, hash) => {
-        if (failure) reject(failure); else resolve(hash);
-      });
-    });
+    return scryptAsync(password, salt, 32, { N: config.scryptN, r: config.scryptR, p: config.scryptP, maxmem: 256 * 1024 * 1024 });
   }
 
   function beginAuth(client: Client, deviceId: string): symbol | undefined {
