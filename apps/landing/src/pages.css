@@ -1,0 +1,14 @@
+@layer reset, base, components, responsive;
+
+@layer components {
+  .main-nav a[aria-current="page"] { color: var(--mint); }
+  .page-loading { min-height: 70vh; padding-block: 80px; color: var(--muted); }
+}
+@layer responsive {
+  @media (min-width: 801px) and (max-width: 1100px) {
+    .site-header { gap: 18px; }
+    .main-nav { gap: 16px; font-size: 12px; }
+    .header-actions { gap: 12px; }
+    .header-download { gap: 10px; padding-inline: 12px; }
+  }
+}

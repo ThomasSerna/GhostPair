@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { gzipSync } from 'node:zlib';
 import { createServer } from 'vite';
 import { launchHeadlessBrowser } from '../tests/browser/helpers.mjs';
+import { inspectWebsitePages } from './inspect-website-pages.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const docs = resolve(root, 'docs');
@@ -71,10 +72,13 @@ async function inspectNavigation(page, width) {
   await page.keyboard.press('Enter');
   await page.waitForFunction(() => document.activeElement?.id === 'main');
   const navigation = page.getByRole('navigation', { name: 'Main navigation', includeHidden: true });
-  for (const anchor of ['how-it-works', 'preview', 'install']) {
+  for (const anchor of ['how-it-works', 'preview']) {
     assert.equal(await navigation.locator(`a[href="#${anchor}"]`).count(), 1);
     assert.equal(await page.locator(`#${anchor}`).count(), 1, `Navigation target ${anchor} exists`);
   }
+  assert.equal(await navigation.getByRole('link', { name: 'Installation', exact: true, includeHidden: true }).getAttribute('href'), '?view=installation');
+  assert.equal(await navigation.getByRole('link', { name: 'Explore', exact: true, includeHidden: true }).getAttribute('href'), '?view=explore');
+  assert.equal(await page.locator('#install').count(), 1, 'The original installation section is preserved');
   if (width <= 800) {
     const toggle = page.locator('.menu-toggle');
     assert.equal(await navigation.isVisible(), false, 'Mobile navigation starts closed');
@@ -547,6 +551,7 @@ try {
       if (screenshots && name) await captureReview(page, width, name);
     } finally { await context.close(); }
   }
+  await inspectWebsitePages({ browser, url, origin, docs, output, screenshots });
   const fonts = [...requests].filter(url => /\.woff2(?:\?|$)/.test(url));
   assert.ok(fonts.length, 'The self-hosted display font was requested');
   assert.ok(fonts.every(url => url.startsWith(`${origin}${base}assets/landing/`)), 'All display fonts load from this site');
@@ -558,7 +563,7 @@ try {
   assert.equal(privacy.status, 200, 'Existing privacy document is preserved');
   assert.equal(await privacy.text(), await readFile(resolve(docs, 'privacy.html'), 'utf8'));
   assert.deepEqual(errors, [], 'No browser or resource errors');
-  process.stdout.write(`Site QA passed: 5 viewports, navigation and focus, keyboard/click previews, original product assets, interaction modes and save feedback, video playback/suspension/fallbacks, reduced motion, project-relative assets, and self-hosted fonts. JavaScript: ${(gzipBytes / 1024).toFixed(1)} KiB gzip.${screenshots ? ` Review captures: ${output}` : ''}\n`);
+  process.stdout.write(`Site QA passed: 5 viewports, installation walkthroughs, local product explorer, query navigation and focus, keyboard/click previews, original product assets, interaction modes and save feedback, video playback/suspension/fallbacks, reduced motion, project-relative assets, and self-hosted fonts. JavaScript: ${(gzipBytes / 1024).toFixed(1)} KiB gzip.${screenshots ? ` Review captures: ${output}` : ''}\n`);
 } finally {
   await browser?.close();
   await server.close();

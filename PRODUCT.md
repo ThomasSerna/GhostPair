@@ -35,6 +35,9 @@ The implementation combines host-approved tab sharing, a default Visual only mod
 - Current website copy and installation instructions are in English. A language change has not been requested.
 - The visitor can inspect three static examples: sharing a tab, connecting to a host, and the connected guest viewer. These are demonstrations with example data.
 - The page explains the connection, local host approval, product examples, interaction modes, and installation in that order. A separate, labeled interaction-mode illustration lets visitors compare preview edits with live edits using example data; it does not start a session.
+- The existing home page is preserved. The header also opens an English Installation guide at `?view=installation` and an English Explore laboratory at `?view=explore`. Both share the established website identity and run entirely on GitHub Pages.
+- Installation teaches loading the release ZIP, configuring the installed extension, the first session, Docker/VPS self-hosting, updates, and troubleshooting through local interactive scenes. The self-hosting guide uses the existing persistent SQLite/Caddy/STUN Compose configuration; it does not deploy infrastructure or require rebuilding the extension.
+- Explore presents synchronized example host and guest views, guided chapters, and free exploration. Its local model separates original sample-page values from previews and models consent, approved tabs, navigation, feedback, clipboard buffers, and host control. It never starts WebRTC/signaling, reads the visitor's clipboard, or requests real capture permissions. Copy buttons in the guide write only after a visitor's explicit action.
 - GSAP sequences page transitions and the connection diagram. The lazy-loaded hero plays a prerendered desktop/mobile video of the original sculpture, with matching static posters and visibility/reduced-motion handling. Its procedural renderer runs only in the offline asset generator.
 
 ## Capabilities and Constraints
@@ -56,7 +59,7 @@ GhostPair is the established product name. The website uses a linked-loop logo a
 
 ## Evidence on Hand
 
-- `apps/landing/src/App.tsx` and `apps/landing/src/styles.css`: public copy, installation instructions, release links, and the built website's visual rules. `apps/landing/src/components/` contains the authentic preview wrappers, mode illustration, and hero renderer.
+- `apps/landing/src/App.tsx` contains the shared shell and static query navigation; `apps/landing/src/pages/HomePage.tsx` preserves the public home content. `apps/landing/src/styles.css` defines the existing website's visual rules. New pages contain their scoped styles and local scenes; `apps/landing/src/components/` contains the authentic preview wrappers, mode illustration, and hero renderer.
 - `apps/landing/vite.config.ts` and `apps/landing/README.md`: relative-base build, preserved product assets, offline hero generation, and development workflow. The generated public entry is `docs/index.html`, with generated assets and the Manrope license under `docs/assets/landing/`.
 - `docs/assets/icon.png`: website icon; the page also contains an inline logo.
 - `docs/assets/previews/`: static examples exported from the extension. `scripts/export-previews.mjs` produces them and verifies matching geometry and styles; preserve their fidelity to the unchanged extension.

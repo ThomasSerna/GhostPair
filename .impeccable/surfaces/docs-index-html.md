@@ -2,7 +2,7 @@
 version: 1
 slug: "docs-index-html"
 primary_target: "docs/index.html"
-related_targets: ["apps/landing/src/App.tsx","apps/landing/src/styles.css","apps/landing/src/components/hero/HeroScene.tsx"]
+related_targets: ["apps/landing/src/pages/HomePage.tsx","apps/landing/src/styles.css","apps/landing/src/components/hero/HeroScene.tsx"]
 ---
 
 # GhostPair connection experience

@@ -2,6 +2,21 @@
 
 The public website is a React + Vite workspace. Its production build is committed to `docs/` for the existing GitHub Pages deployment.
 
+## Installation and Explore
+
+The header opens two additional English screens without replacing the home page:
+
+- `?view=installation` is a chapter-based guide to loading Chrome/Edge release ZIPs, connection settings, a first session, Docker/VPS self-hosting, updates and troubleshooting. Each chapter contains a local interactive scene with manual controls and reset. `?view=installation#self-hosting` opens the hosting chapter directly.
+- `?view=explore` is a local host/guest laboratory. It opens connected in **Preview changes**, offers reproducible chapters and free exploration, and keeps host and guest perspectives synchronized. Mobile users switch perspectives without losing the session state.
+
+These are ordinary links on the same static entry, so refreshing, Back/Forward, opening another tab and the GitHub Pages `/GhostPair/` base work without a server rewrite. Unknown `view` values show the home page. The original `#main`, `#how-it-works`, `#preview` and `#install` destinations remain available. Each screen is lazy-loaded; home motion and hero media only mount on the home page.
+
+The laboratory separates sample-page values from presentation previews. Text and other previews have independent lifetimes, defaulting to 0.5 seconds; the host can choose **Until cleared**. **Full control** edits the example page, while navigation, scroll and tab management act in both modes. New tabs require host approval, and only the active approved tab is visible. Clipboard examples use two synthetic text buffers; both participants must enable sharing, only new copies synchronize, and pause suspends synchronization. Demonstration state stays in the page and resets on reload or **Reset demo**.
+
+No demonstration starts signaling/WebRTC, loads visitor-entered websites, reads the real clipboard, or requests capture permissions. Guide **Copy** buttons write only after an explicit click and offer selectable text when clipboard writing is unavailable. Permission prompts and server checks are labeled examples. The self-hosting guide prepares commands for the existing SQLite/Caddy/STUN Compose configuration; it does not execute them. Custom server settings work in the release ZIPs without rebuilding the extension. There is no TURN relay.
+
+`scripts/inspect-website-pages.mjs` extends the existing landing browser inspection with query navigation, accessibility, local-capability/network guards, installation tasks and simulator behavior. It captures both new screens at desktop/mobile sizes. The existing aggregate **150 KiB gzip** budget includes every generated JavaScript chunk, including lazy screens.
+
 ## Work locally
 
 From the repository root:
