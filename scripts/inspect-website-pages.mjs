@@ -435,6 +435,10 @@ async function inspectExplore(page, width, url) {
 
   await page.getByTestId('guest-new-tab').click();
   assert.ok(await page.getByTestId('guest-withheld').isVisible(), 'Each new tab requires host approval');
+  // The tab strip renders the new active tab before each BrowserFrame's effect
+  // updates its controlled address. Await that actual transition before using
+  // the DOM as the baseline for strict tour/session preservation checks.
+  await page.waitForFunction(address => ['host', 'guest'].every(side => document.querySelector(`[data-testid="${side}-address"]`)?.value === address), 'https://example.ghostpair.test/checklist');
   const awaitingApproval = await sessionSnapshot(page);
   await page.getByTestId('open-tour').click();
   await page.getByTestId('tour-show-host').click();
