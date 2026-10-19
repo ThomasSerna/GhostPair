@@ -266,19 +266,25 @@ async function perspective(page, side) {
 }
 
 async function setSharedScroll(page, side, value) {
-  await page.getByTestId(`${side}-page-scroll`).evaluate((scroller, position) => {
+  const position = await page.getByTestId(`${side}-page-scroll`).evaluate((scroller, position) => {
     if (scroller.scrollHeight <= scroller.clientHeight) throw new Error('The shared page must support natural scrolling');
     scroller.scrollTop = (scroller.scrollHeight - scroller.clientHeight) * position / 100;
     scroller.dispatchEvent(new Event('scroll', { bubbles: true }));
+    // The browser rounds scrollTop; the other view follows the position actually reached.
+    return scroller.scrollTop / (scroller.scrollHeight - scroller.clientHeight) * 100;
   }, value);
   await assertSharedScroll(page, side, value);
+  return position;
 }
 
 async function assertSharedScroll(page, side, value) {
   await page.waitForFunction(({ side, value }) => {
     const scroller = document.querySelector(`[data-testid="${side}-page-scroll"]`);
     return scroller?.clientHeight > 0 && Math.abs(scroller.scrollTop - (scroller.scrollHeight - scroller.clientHeight) * value / 100) <= 2;
-  }, { side, value });
+  }, { side, value }).catch(async error => {
+    const state = await page.evaluate(() => ({ width: innerWidth, scrollers: [...document.querySelectorAll('.ex-example-scroll')].map(element => ({ side: element.dataset.testid, top: element.scrollTop, height: element.clientHeight, content: element.scrollHeight })) }));
+    throw new Error(`Shared ${side} scroll did not reach ${value}%: ${JSON.stringify(state)}`, { cause: error });
+  });
 }
 
 async function assertVisibleInViewport(page, selector, label) {
@@ -465,21 +471,21 @@ async function inspectExplore(page, width, url) {
     assert.equal(await page.getByTestId('guest-withheld').count(), 0, 'Releasing a tab makes room for another');
   }
   await perspective(page, 'guest');
-  await setSharedScroll(page, 'guest', 75);
+  const guestScroll = await setSharedScroll(page, 'guest', 75);
   await perspective(page, 'host');
-  await assertSharedScroll(page, 'host', 75);
-  await setSharedScroll(page, 'host', 30);
+  await assertSharedScroll(page, 'host', guestScroll);
+  const hostScroll = await setSharedScroll(page, 'host', 30);
   await perspective(page, 'guest');
-  await assertSharedScroll(page, 'guest', 30);
+  await assertSharedScroll(page, 'guest', hostScroll);
   await perspective(page, 'host');
   await page.getByTestId('pause-session').click();
   assert.match(await page.getByTestId('guest-withheld').textContent(), /A moment to pause/);
   assert.ok(await page.getByTestId('guest-new-tab').isDisabled(), 'Guest tab actions stop during a pause');
-  await setSharedScroll(page, 'host', 85);
+  const pausedScroll = await setSharedScroll(page, 'host', 85);
   await page.getByTestId('pause-session').click();
   assert.equal(await page.getByTestId('guest-withheld').count(), 0, 'Resume restores the approved view');
   await perspective(page, 'guest');
-  await assertSharedScroll(page, 'guest', 85);
+  await assertSharedScroll(page, 'guest', pausedScroll);
   await perspective(page, 'host');
   await page.getByTestId('allow-control').uncheck();
   assert.ok(await guestNotes.isDisabled(), 'Withdrawing interaction disables guest input');
@@ -488,10 +494,10 @@ async function inspectExplore(page, width, url) {
   assert.equal(await guestNotes.isDisabled(), false);
   await host.getByRole('button', { name: 'Stop sharing tab', exact: true }).click();
   assert.equal(await page.getByTestId('guest-withheld').count(), 1);
-  await setSharedScroll(page, 'host', 35);
+  const withheldScroll = await setSharedScroll(page, 'host', 35);
   await page.getByTestId('share-active-tab').click();
   await perspective(page, 'guest');
-  await assertSharedScroll(page, 'guest', 35);
+  await assertSharedScroll(page, 'guest', withheldScroll);
   await perspective(page, 'host');
   await host.getByRole('button', { name: 'End session', exact: true }).click();
   assert.match(await page.getByTestId('guest-withheld').textContent(), /session has ended/);
