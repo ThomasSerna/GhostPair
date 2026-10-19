@@ -64,7 +64,9 @@ function mockChrome({ manifest, official, code }) {
           case 'ui.settings.save':
             if (!['idle', 'error'].includes(state.status)) return { ok: false, error: 'End the session before changing connection settings.' };
             state.settings = structuredClone(message.settings); state.deviceId = state.settings.signalingUrl === official.signalingUrl ? code : 'fedcba9876543210fedcba9876543210'; break;
-          case 'ui.host.start': Object.assign(state, { role: 'host', status: 'waiting', sessionId: 'mock-session', paused: false, clipboardEnabled: message.clipboard, tabs: [tab(1)], activeTabId: 1 }); break;
+          case 'ui.host.start':
+            if (message.requestPermissions && !await chrome.permissions.request({ origins: ['http://*/*', 'https://*/*'], ...(message.clipboard ? { permissions: ['clipboardRead', 'clipboardWrite'] } : {}) })) return { ok: false, error: 'The selected permissions are required to start this session.' };
+            Object.assign(state, { role: 'host', status: 'waiting', sessionId: 'mock-session', paused: false, clipboardEnabled: message.clipboard, tabs: [tab(1)], activeTabId: 1 }); break;
           case 'ui.host.authorize': state.tabs = state.tabs.map(item => item.id === state.activeTabId ? { ...item, authorized: true, captureState: 'ready' } : item); break;
           case 'ui.host.release': state.tabs = state.tabs.map(item => item.id === message.tabId ? { ...item, authorized: false, captureState: undefined } : item); break;
           case 'ui.guest.start': Object.assign(state, { role: 'guest', status: 'connecting', sessionId: 'mock-session', deviceId: message.deviceId, clipboardEnabled: message.clipboard }); break;
@@ -199,9 +201,13 @@ try {
   equal((await calls(home, 'ui.host.start')).length, 0, 'Consent blocks session creation');
   await home.getByLabel('I allow the person', { exact: false }).check(); await permission(home, 'deny');
   await home.getByRole('button', { name: 'Share this tab', exact: true }).click(); await home.getByRole('alert').waitFor();
-  equal(await home.getByLabel('Password', { exact: true }).inputValue(), ''); equal((await calls(home, 'ui.host.start')).length, 0, 'Denied permissions do not start a session');
-  await home.getByRole('button', { name: 'Dismiss error' }).click(); await permission(home, 'allow');
+  equal(await home.getByLabel('Password', { exact: true }).inputValue(), ''); equal(await home.evaluate(() => uiState.role), null, 'Denied permissions do not start a session');
+  await home.getByRole('button', { name: 'Dismiss error' }).click(); await permission(home, 'delay');
   await home.getByLabel('Password', { exact: true }).fill('Example-42'); await home.getByRole('button', { name: 'Share this tab', exact: true }).click();
+  await waitPermission(home);
+  deepEqual((await calls(home, 'ui.host.start')).at(-1), { target: 'background', type: 'ui.host.start', password: 'Example-42', clipboard: false, requestPermissions: true });
+  equal(await home.getByLabel('Password', { exact: true }).inputValue(), '');
+  await resolvePermission(home, true);
   await home.getByText('Waiting for someone to join', { exact: true }).waitFor();
   equal((await calls(home, 'ui.host.start'))[0].clipboard, false); equal(await home.getByRole('button', { name: 'Pause session', exact: true }).count(), 0);
   deepEqual(await home.evaluate(() => uiMock.permissionRequests.at(-1)), { origins: ['http://*/*', 'https://*/*'] });

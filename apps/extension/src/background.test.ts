@@ -31,7 +31,7 @@ async function harness(stored: Record<string, unknown> = {}) {
       session: { get: vi.fn(async () => ({})), set: vi.fn(async () => {}) },
     },
     action: { setBadgeText: vi.fn(), setBadgeBackgroundColor: vi.fn(), setTitle: vi.fn() },
-    permissions: { contains: vi.fn(async () => true), onRemoved: event() },
+    permissions: { contains: vi.fn(async () => true), request: vi.fn(async () => true), onRemoved: event() },
     windows: { get: vi.fn(async () => ({ id: 7, type: 'normal', incognito: false })), update: vi.fn(), onRemoved: event() },
     tabs: {
       create: vi.fn(async () => ({ id: 9 })), query: vi.fn(async (query: Record<string, unknown>): Promise<any[]> => query.active ? [{ id: 12, windowId: 7, active: true, url: 'https://example.com' }] : []), update: vi.fn(),
@@ -225,8 +225,55 @@ describe('background connection ownership and settings', () => {
     await h.send('transport.connected', { sessionId: 'session' }, 'offscreen');
     expect(capture.start).toHaveBeenCalledTimes(1); expect(capture.authorize).toHaveBeenCalledTimes(1); await h.send('ui.stop');
   });
+  it('requests permissions synchronously and starts once with the original tab and credentials after approval', async () => {
+    const h = await harness(); const permission = Promise.withResolvers<boolean>();
+    h.browser.permissions.request.mockReturnValueOnce(permission.promise);
+    const starting = h.send('ui.host.start', { password: 'Eight-42', clipboard: true, requestPermissions: true });
+    expect(h.browser.permissions.request).toHaveBeenCalledExactlyOnceWith({ origins: ['http://*/*', 'https://*/*'], permissions: ['clipboardRead', 'clipboardWrite'] });
+    expect(h.browser.tabs.query).toHaveBeenCalledWith({ active: true, lastFocusedWindow: true });
+    expect(h.browser.tabs.query.mock.invocationCallOrder[0]).toBeLessThan(h.browser.permissions.request.mock.invocationCallOrder[0]);
+    await settled(); expect(capture.start).not.toHaveBeenCalled(); expect(h.hasOffscreenMessage('session.start')).toBe(false);
+    h.browser.tabs.query.mockResolvedValue([{ id: 99, windowId: 8, active: true, url: 'https://other.example.com' }]);
+    permission.resolve(true);
+    expect((await starting).ok).toBe(true);
+    expect(capture.start).toHaveBeenCalledExactlyOnceWith(7); expect(capture.authorize).toHaveBeenCalledExactlyOnceWith(12);
+    expect(h.runtime.sendMessage.mock.calls.filter(([message]) => message.type === 'session.start')).toEqual([
+      [expect.objectContaining({ password: 'Eight-42', clipboard: true, role: 'host' })],
+    ]);
+    expect(JSON.stringify(h.stored)).not.toContain('Eight-42'); await h.send('ui.stop');
+  });
+  it.each(['denied', 'failed'])('does not start sharing when the permission request is %s', async outcome => {
+    const h = await harness();
+    if (outcome === 'denied') h.browser.permissions.request.mockResolvedValueOnce(false);
+    else h.browser.permissions.request.mockRejectedValueOnce(new Error('Permission request failed.'));
+    const result = await h.send('ui.host.start', { password: 'Eight-42', requestPermissions: true });
+    expect(result).toEqual({ ok: false, error: outcome === 'denied' ? 'The selected permissions are required to start this session.' : 'Permission request failed.' });
+    expect(capture.start).not.toHaveBeenCalled(); expect(h.hasOffscreenMessage('session.start')).toBe(false);
+    expect((await h.send('ui.status')).state.role).toBeNull();
+  });
+  it('does not request permissions for invalid passwords or messages from a web page', async () => {
+    const h = await harness();
+    expect((await h.send('ui.host.start', { password: 'short', requestPermissions: true })).ok).toBe(false);
+    const respond = vi.fn();
+    h.runtime.onMessage.emit({ target: 'background', type: 'ui.host.start', password: 'Eight-42', requestPermissions: true }, { id: h.runtime.id, url: 'https://example.com', tab: { id: 12, windowId: 7 } }, respond);
+    await settled(); expect(respond).not.toHaveBeenCalled(); expect(h.browser.permissions.request).not.toHaveBeenCalled();
+  });
+  it('does not fall back to another tab if the original tab was unavailable when sharing was requested', async () => {
+    const h = await harness(); h.browser.tabs.query.mockResolvedValueOnce([]);
+    const result = await h.send('ui.host.start', { password: 'Eight-42', requestPermissions: true });
+    expect(result.state).toMatchObject({ role: null, status: 'error', notification: { message: 'Select the page to share.' } });
+    expect(capture.start).not.toHaveBeenCalled(); expect(h.hasOffscreenMessage('session.start')).toBe(false);
+  });
 });
 describe('background cancellation', () => {
+  it.each([false, true])('does not start sharing if Stop arrives while permissions are pending (queued: %s)', async queued => {
+    const h = await harness(); const permission = Promise.withResolvers<boolean>();
+    h.browser.permissions.request.mockReturnValueOnce(permission.promise);
+    const starting = h.send('ui.host.start', { password: 'Eight-42', requestPermissions: true }); if (!queued) await settled();
+    await h.send('ui.stop'); permission.resolve(true); await starting;
+    expect(capture.start).not.toHaveBeenCalled(); expect(h.hasOffscreenMessage('session.start')).toBe(false);
+    expect((await h.send('ui.status')).state.role).toBeNull();
+  });
   it('stops captures, peers and clipboard when required site permission is revoked', async () => {
     const h = await harness(); await h.send('ui.host.start', { password: 'Eight-42', clipboard: true });
     await h.send('transport.connected', { sessionId: 'session' }, 'offscreen');

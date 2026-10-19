@@ -118,7 +118,7 @@ async function stop(reason?: string): Promise<void> {
   return terminating;
 }
 async function permissions(host: boolean, clipboard: boolean) { return chrome.permissions.contains({ origins: host ? ['http://*/*', 'https://*/*'] : [`${new URL(state.settings.signalingUrl).origin}/*`], ...(clipboard ? { permissions: ['clipboardRead', 'clipboardWrite'] } : {}) }); }
-async function action(message: Record<string, any>, sender: chrome.runtime.MessageSender): Promise<AppState> {
+async function action(message: Record<string, any>, sender: chrome.runtime.MessageSender, authorization?: Promise<{ granted: boolean; tab?: chrome.tabs.Tab } | { error: unknown }>): Promise<AppState> {
   switch (message.type) {
     case 'dom.preferences': {
       if (state.role !== 'host') throw new Error('Only the host can change interaction visibility.');
@@ -147,16 +147,22 @@ async function action(message: Record<string, any>, sender: chrome.runtime.Messa
       const host = message.type === 'ui.host.start';
       if (!host && (!isViewer(sender) || sender.tab?.id !== viewerTabId || !ownerPort)) throw new Error('Join from the connection page.');
       const password = PasswordSchema.parse(message.password), clipboard = message.clipboard === true;
+      const authorized = await authorization;
+      if (!current()) return state;
+      if (authorized && 'error' in authorized) throw authorized.error;
+      if (authorized && !authorized.granted) throw new Error('The selected permissions are required to start this session.');
       if (!await permissions(host, clipboard)) throw new Error('Grant the selected permissions before starting.');
       if (!current()) return state;
       update({ role: host ? 'host' : 'guest', status: 'starting', notification: undefined, error: undefined, notice: undefined, clipboardEnabled: clipboard, paused: false, controlEnabled: true, tabs: [], presentation: undefined });
       try {
         await offscreen(); if (!current()) return state;
         if (host) {
-          const window = sender.tab ? await chrome.windows.get(sender.tab.windowId) : await chrome.windows.getLastFocused({ windowTypes: ['normal'] });
+          if (authorized && !authorized.tab) throw new Error('Select the page to share.');
+          const tab = authorized?.tab ?? sender.tab;
+          const window = tab ? await chrome.windows.get(tab.windowId) : await chrome.windows.getLastFocused({ windowTypes: ['normal'] });
           if (window.incognito || window.type !== 'normal' || window.id === undefined) throw new Error('Select a normal browser window.');
           authorizedWindowId = window.id;
-          const active = (await chrome.tabs.query({ windowId: window.id, active: true }))[0];
+          const active = authorized?.tab ?? (await chrome.tabs.query({ windowId: window.id, active: true }))[0];
           if (active?.id === undefined) throw new Error('Select the page to share.');
           if (!current()) return state;
           await capture.start(window.id); if (!current()) return state;
@@ -241,6 +247,14 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
   const fromOffscreen = pageUrl(sender.url) === chrome.runtime.getURL('offscreen.html'), fromViewer = isViewer(sender), fromPopup = pageUrl(sender.url) === chrome.runtime.getURL('popup.html');
   if (!fromOffscreen && !fromViewer && !fromPopup && !['dom.geometry', 'dom.visual', 'dom.preferences', 'dom.control.mode'].includes(message.type)) return;
   void (async () => {
+    const requestedEpoch = sessionEpoch;
+    // Keep the gesture and continuation in the worker: the permission prompt can close the popup.
+    const authorization = fromPopup && message.type === 'ui.host.start' && message.requestPermissions === true && PasswordSchema.safeParse(message.password).success
+      ? Promise.all([
+        chrome.tabs.query({ active: true, lastFocusedWindow: true }),
+        chrome.permissions.request({ origins: ['http://*/*', 'https://*/*'], ...(message.clipboard === true ? { permissions: ['clipboardRead', 'clipboardWrite'] } : {}) }),
+      ]).then(([tabs, granted]) => ({ granted, tab: tabs[0] }), error => ({ error }))
+      : undefined;
     await ready;
     if (message.type === 'dom.visual') {
       if (state.role !== 'host' || state.status !== 'connected' || state.paused || !state.controlEnabled) throw new Error('Simulation is unavailable.');
@@ -254,7 +268,7 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
       if (!fromViewer || sender.tab?.id !== viewerTabId || state.role !== 'guest' || !state.clipboardEnabled || !state.remoteClipboardEnabled || state.paused || state.status !== 'connected') throw new Error('Clipboard sharing is disabled.');
       return await toOffscreen(message.type === 'ui.clipboard.read' ? 'clipboard.read' : 'clipboard.write', { text: message.text });
     }
-    const work = mutation.then(() => action(message, sender)); mutation = work.catch(() => undefined);
+    const work = mutation.then(() => authorization && requestedEpoch !== sessionEpoch ? state : action(message, sender, authorization)); mutation = work.catch(() => undefined);
     const result = await work;
     return ['dom.preferences', 'dom.control.mode'].includes(message.type) ? { ok: true } : { ok: true, state: result };
   })().then(respond).catch(error => respond({ ok: false, error: error instanceof Error ? error.message : 'Could not complete the operation.' }));

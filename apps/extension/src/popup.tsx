@@ -35,13 +35,10 @@ function Popup() {
     if (!consent) { setError('Confirm what you want to share before continuing.'); return; }
     const parsed = PasswordSchema.safeParse(password);
     if (!parsed.success) { setError(parsed.error.issues[0]!.message); return; }
-    // Request optional permissions in the original user gesture.
-    const permissions = requestSessionPermissions(state.settings.signalingUrl, clipboard, true);
     const sessionPassword = parsed.data;
     setPassword('');
     await run(async () => {
-      await permissions;
-      setState(await request('ui.host.start', { password: sessionPassword, clipboard }));
+      setState(await request('ui.host.start', { password: sessionPassword, clipboard, requestPermissions: true }));
     });
   }
 

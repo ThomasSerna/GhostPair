@@ -1,5 +1,13 @@
 # GhostPair validation
 
+## First-use sharing and 0.6.4: October 19, 2026
+
+Release **0.6.4** moves the initial host permission request and its continuation into the background worker. Approval preserves the original tab, password and clipboard choice even when the toolbar popup closes. Denial, API failure and cancellation before or during the permission request do not start capture or transport. Passwords remain outside stored application state.
+
+Workspace type checks, **172 Vitest tests in 17 files**, **8 Node release tests**, production builds, **140 UI assertions** and store package validation passed. Both browser ZIPs use **0.6.4**, the official signaling endpoint and the existing permission set; peer protocol **4** is unchanged.
+
+Native toolbar checks passed on Chrome **155.0.8059.84** and Edge **155.0.4283.62**. The regression calls the real permission API from the original toolbar gesture, delays its result, destroys the actual popup, then verifies a real waiting sharing session with the original authorized tab and password. Existing popup size and focus checks also pass. The test copy has site access already granted, so approval timing is simulated; clicking the native permission dialog on a clean installation remains a manual check. No push or deployment was performed.
+
 ## Repository simplification and 0.6.3: October 3, 2026
 
 Release **0.6.3** implements the repository audit: shared browser helpers and connection validation, derived landing-demo state, simpler media bookkeeping, standard-library password hashing and test waits, and removal of unused telemetry, polling, metadata, styles and protocol build output. Saved connection codes, settings, preview durations, permissions and peer protocol **4** remain compatible. The direct-route checks and extension keepalive are retained.

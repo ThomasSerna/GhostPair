@@ -73,6 +73,7 @@ async function attachPopup(browser) {
     },
     async screenshot({ path }) { const { data } = await send('Page.captureScreenshot'); await writeFile(path, Buffer.from(data, 'base64')); },
     async close() { browser.cdp.off('Target.receivedMessageFromTarget', listener); await browser.cdp.send('Target.detachFromTarget', { sessionId }).catch(() => undefined); },
+    async dismiss() { await browser.cdp.send('Target.closeTarget', { targetId: target.targetId }); await popup.close(); },
     async scroll(selector) {
       await popup.evaluate(selector => {
         const element = document.querySelector(selector);
@@ -169,8 +170,46 @@ try {
       await popup.click('.session-choices .primary');
       await popup.fill('input[type="password"]', 'Eight-42');
       await popup.click('.consent input');
+      const sharedTabId = await browser.worker.evaluate(async () => (await chrome.tabs.query({ active: true, lastFocusedWindow: true }))[0].id);
+      await browser.worker.evaluate(expectedPassword => {
+        const requestPermissions = chrome.permissions.request, sendMessage = chrome.runtime.sendMessage;
+        const pending = globalThis.__ghostpairSharePermission = { release: null, granted: false, error: '', passwordPreserved: false };
+        // Validate the real permission API's user gesture, then model its delayed
+        // browser prompt while the native toolbar popup is destroyed.
+        chrome.permissions.request = details => requestPermissions.call(chrome.permissions, details).then(granted => {
+          pending.granted = granted;
+          return new Promise(resolve => { pending.release = () => resolve(granted); });
+        }, error => { pending.error = error.message; throw error; });
+        chrome.runtime.sendMessage = (...args) => {
+          const message = args[0];
+          if (message?.target === 'offscreen' && message.type === 'session.start') pending.passwordPreserved = message.password === expectedPassword;
+          return sendMessage.apply(chrome.runtime, args);
+        };
+        pending.restore = () => { chrome.permissions.request = requestPermissions; chrome.runtime.sendMessage = sendMessage; };
+      }, 'Eight-42');
       await popup.click('.share-setup button[type="submit"]');
-      await poll(async () => (await call(popup, 'ui.status')).status === 'waiting', 'real sharing session', 30000);
+      const permission = await poll(() => browser.worker.evaluate(() => {
+        const pending = globalThis.__ghostpairSharePermission;
+        return pending.error ? { error: pending.error } : pending.release ? { granted: pending.granted } : false;
+      }), 'permission request retains the toolbar user gesture');
+      assert.equal(permission.error, undefined, 'background permission request runs in the original user gesture');
+      assert.equal(permission.granted, true, 'real browser grants the requested permissions');
+      assert.deepEqual(await browser.worker.evaluate(() => chrome.tabCapture.getCapturedTabs()), [], 'capture waits for the permission result');
+      await popup.dismiss(); popup = undefined;
+      await poll(async () => !(await browser.cdp.send('Target.getTargets')).targetInfos.some(target => target.url === `chrome-extension://${browser.id}/popup.html`), 'toolbar popup is destroyed before permission acceptance');
+      await browser.worker.evaluate(() => { globalThis.__ghostpairSharePermission.release(); });
+      const started = await poll(() => browser.worker.evaluate(async () => {
+        const { appState } = await chrome.storage.session.get('appState');
+        return appState?.status === 'waiting' ? appState : false;
+      }), 'sharing starts after permission acceptance with the popup closed', 30000);
+      assert.equal(started.role, 'host');
+      assert.ok(started.tabs.some(tab => tab.id === sharedTabId && tab.authorized), 'the originally selected tab starts sharing');
+      assert.equal(await browser.worker.evaluate(() => {
+        const pending = globalThis.__ghostpairSharePermission;
+        pending.restore(); return pending.passwordPreserved;
+      }), true, 'session starts with the original password after popup destruction');
+      await authorizeTab(browser, tab); popup = await attachPopup(browser);
+      await poll(() => popup.evaluate(() => Boolean(document.querySelector('.session-panel'))), 'reopened toolbar shows the active sharing session');
       layouts.push(await checkSize(popup, name, 'host'));
       await popup.click('.session-panel .advanced-options>summary');
       await popup.scroll('.interaction-feedback .check');
@@ -184,7 +223,8 @@ try {
       });
       assert.ok(footerVisible, 'End session stays visible and focusable with expanded feedback');
       await popup.click('.session-actions .danger');
-      await poll(() => popup.evaluate(() => Boolean(document.querySelector('.share-setup .back-button'))), 'sharing setup after session ends');
+      await poll(() => popup.evaluate(() => Boolean(document.querySelector('.session-choices .primary'))), 'home after session ends');
+      await popup.click('.session-choices .primary');
       await poll(() => popup.evaluate(() => document.querySelector('.share-setup #share-code')?.textContent.includes('Your connection code: ') && !document.querySelector('#share-code').textContent.includes('Generated when you share')), 'saved connection code in sharing setup');
       const shareCode = await popup.evaluate(() => document.querySelector('.share-setup #share-code span').textContent.replaceAll(' ', '').toLowerCase());
       assert.equal(shareCode, (await call(popup, 'ui.status')).deviceId, 'sharing setup displays the actual saved connection code');
