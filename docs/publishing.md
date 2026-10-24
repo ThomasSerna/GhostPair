@@ -1,10 +1,12 @@
-# Publishing to Chrome and Edge
+# Publishing to Chrome Web Store
 
 ## Delivery status
 
-Release 0.6.4 fixes first-use sharing so accepting the browser's permission request continues the session without repeating password entry and setup. Saved settings, preview behavior, peer protocol 4 and existing permissions are preserved. Both Chrome and Edge are targeted.
+Release 0.6.4 fixes first-use sharing so accepting the browser's permission request continues the session without repeating password entry and setup. Saved settings, preview behavior, peer protocol 4 and existing permissions are preserved.
 
-The repository generates separate Chrome Web Store and Edge Add-ons packages. GitHub Releases distributes downloadable ZIPs automatically; store submission and approval remain separate. Complete the real-browser checks in [Validation](validation.md) and publisher information before submitting to stores.
+The repository generates Chrome and Edge ZIPs; this publication effort targets Chrome Web Store only. GitHub Releases distributes downloadable ZIPs automatically; store submission and approval remain separate. Prepare the listing now, but submit it for review only after the Heroku migration is activated and verified. Render remains the official service at `https://ghostpair.onrender.com` until then. Do not announce a Heroku address or a Chrome Web Store listing that does not exist.
+
+The publisher/operator is **Thomas Serna**, **Colombia**, with support and privacy contact **xthoms321@gmail.com**. GhostPair is a free personal project. Its public privacy URL is [GhostPair privacy](https://thomasserna.github.io/GhostPair/privacy.html); the signaling service also serves the same source document at `/privacy`. Verify the deployed copies before submission.
 
 ## Automatic GitHub releases
 
@@ -34,17 +36,32 @@ Publication is serialized by version. It creates a draft, uploads both verified 
 
 ## Preparation
 
-1. Obtain Google and Microsoft developer accounts, an HTTPS domain, and a monitored support email address.
-2. Confirm production health and the PostgreSQL configuration using [Deployment](deployment.md). Public production build defaults are committed in `.env.production`: `https://ghostpair.onrender.com` and external STUN. Override `VITE_SIGNALING_URL` and `VITE_STUN_URLS` through `.env.production.local` or process variables for another deployment. Existing manually saved settings survive builds; update **Custom server** explicitly for another deployment, or choose **GhostPair server** and **Save** to restore the official preset.
-3. Complete publisher fields in `docs/privacy.html`. Node (and the optional Caddy proxy) serves that page at `https://DOMAIN/privacy`.
-4. Run `npm ci`, `npm run typecheck`, `npm test`, browser checks, PostgreSQL/container checks, and `npm run package:store`. The store command validates the effective Vite production configuration, builds fresh assets, checks the recorded build defaults and produces both ZIPs. It rejects loopback/private-address literals, reserved/placeholder domains, credentialed URLs and non-HTTPS signaling. It checks configuration shape, not whether a domain actually hosts a working service; the public service must be verified separately. `npm run package` remains available for development endpoints.
-5. Register store listings and test both packages before final submission. Every valid Chrome/Edge extension ID is accepted by the server; no server ID configuration is required.
-6. Upload `dist/packages/ghostpair-chrome-0.6.4.zip` and `ghostpair-edge-0.6.4.zip` to the appropriate accounts. Include real screenshots, privacy policy, and contact details. Peer protocol 4 is unchanged; saved connection codes and settings survive the update, with temporary preview durations capped at 10 seconds.
-7. Give reviewers instructions for connecting two installations. Do not provide a permanent password or an unattended production session.
+1. Register a new [Chrome Web Store developer account](https://developer.chrome.com/docs/webstore/register), accept its agreement, and pay the one-time registration fee. The current fee is USD 5, also documented in [Google's publisher-account announcement](https://developer.chrome.com/blog/cws-role-expansion-developer-dashboard). Complete payment directly in Google's dashboard; keep payment and identity documents out of this repository.
+2. Enable [Google 2-Step Verification](https://developer.chrome.com/docs/webstore/program-policies/two-step-verification), set the publisher name and verify the contact email in [account setup](https://developer.chrome.com/docs/webstore/set-up-account). Personally confirm the required [Trader or Non-Trader declaration](https://developer.chrome.com/docs/webstore/program-policies/trader-verification-faq); a free personal project is not an automatic legal classification. A Trader verification can require legal identity, address and an SMS-capable phone, with those trader details displayed publicly. A verified-publisher website badge is separate from these requirements.
+3. Complete the migration and production verification in [Deployment](deployment.md) before submitting for review. Until activation, keep `.env.production` on `https://ghostpair.onrender.com` and external STUN. At cutover, set the actual HTTPS signaling origin and build a fresh release. Both participants must use the same service. Saved **Custom server** settings survive builds and require an explicit change; choose **GhostPair server** and **Save** to restore the new official preset.
+4. Verify the live privacy page, deployed provider's actual log/backup retention, deletion procedure and backup restoration. The policy already names the real operator and describes current Render versus planned Heroku. Confirm the Heroku settings on activation and update the document to describe the active service; do not submit with unverified current-provider retention or planned infrastructure presented as active.
+5. Run `npm ci`, `npm run typecheck`, `npm test`, browser checks, PostgreSQL/container checks, and `npm run package:store`. The store command validates effective Vite production configuration, builds fresh assets, checks recorded defaults and produces both ZIPs. It rejects loopback/private-address literals, reserved/placeholder domains, credentialed URLs and non-HTTPS signaling. It checks configuration shape, not public-service health. `npm run package` remains available for development endpoints.
+6. Upload the freshly verified `dist/packages/ghostpair-chrome-<version>.zip` to a draft Chrome listing. Fill Store listing, Privacy practices, Distribution and Test instructions using the text below, [store assets](store/README.md), real contact information and privacy URL. Every valid Chrome extension ID is accepted by the server; no server ID allowlist change is needed. Do not claim the ZIP's version or endpoint matches production without inspecting that exact build.
+7. Run the real-browser and two-computer checks in [Validation](validation.md), using the official endpoint after migration. Give reviewers instructions for connecting two installations with synthetic data and fresh short-lived credentials. Never provide a permanent password or an unattended production session.
+8. Submit for review only after the preceding requirements are satisfied. Prefer [deferred publication](https://developer.chrome.com/docs/webstore/publish#deferred_publishing_option), then manually publish once approved and the service is healthy. Approved staged submissions expire after 30 days. Store acceptance and timing remain Google's decision; there is no automatic store-publishing workflow in this repository.
+
+Moving from an unpacked installation to Chrome Web Store can change the extension ID and creates separate local storage; existing local settings and connection codes are not automatically transferred. Identities are also keyed by the exact signaling URL, so changing from Render to a Heroku origin creates a new local identity even if server registrations are migrated. Preserve database records, but do not promise old connection codes for a different origin. No identity export/import feature is included in this preparation.
 
 ## Proposed listing
 
 **Name:** GhostPair
+
+**Category:** Productivity.
+
+**Language:** English, matching the current extension interface.
+
+**Price:** Free.
+
+**Support:** xthoms321@gmail.com; [GitHub issues](https://github.com/ThomasSerna/GhostPair/issues).
+
+**Website:** [GhostPair](https://thomasserna.github.io/GhostPair/).
+
+**Privacy policy:** [GhostPair privacy](https://thomasserna.github.io/GhostPair/privacy.html).
 
 **Short description:** Share and control tabs with another person through an authorized P2P connection.
 
@@ -52,15 +69,14 @@ Publication is serialized by version. It creates a draft, uploads both verified 
 
 Video and interactions travel directly over WebRTC. Signaling and STUN help establish the connection. There is no TURN relay, so some networks are incompatible. Optional clipboard synchronization shares new Windows clipboard text when both participants enable it. Audio, files, and desktop control are not included. Some complex pages cannot be controlled through DOM interactions.
 
-## Release prerequisites still to supply
+## Submission gates
 
-- Final Chrome and Edge store listings.
-- Verified public STUN/network connectivity and PostgreSQL backup restoration.
-- Publisher/operator name, country, monitored support email and privacy URL.
-- Actual identity, log and backup retention periods and a deletion process.
-- Final store screenshots and the manual browser/network checks in [Validation](validation.md).
+- New Chrome publisher account registration/payment, contact verification, 2FA and the publisher's own Trader/Non-Trader declaration completed.
+- Heroku activated, actual HTTPS endpoint and PostgreSQL confirmed, public STUN/network connectivity and backup restoration verified; live privacy document updated to the deployed configuration and actual retention.
+- A Chrome ZIP rebuilt for that active endpoint, successful CI and the real-browser/network checks in [Validation](validation.md).
+- Final listing and accurate Privacy practices declarations, screenshots reviewed for that release, and temporary reviewer instructions.
 
-The repository does not invent these facts or create publisher accounts. Production ZIPs use the real Render URL, but the remaining store publication checks must still be completed. A successful GitHub release is not store submission or approval.
+The prepared listing and screenshots do not remove these gates. No Chrome Web Store submission, Heroku account verification or deployment is performed by the package/release scripts. Edge Add-ons submission is outside this work; existing Edge ZIP generation remains available.
 
 ## Reviewer walkthrough
 
@@ -86,17 +102,24 @@ Questionnaire compatibility covers tested DOM activation and keyboard defaults. 
 
 ## Data disclosures
 
-Disclose processing of shared page content, browsing information needed to show tabs, authentication data, and installation identifiers. P2P transmission is still data processing. Describe clipboard synchronization and IP addresses visible to peers and connection infrastructure. Do not claim that the product processes no data.
+**Single purpose:** Let two consenting participants view and interact with locally authorized browser tabs in a direct collaboration session, with optional text clipboard synchronization.
+
+In the dashboard, disclose **Website content** (captured tab video and optional clipboard text), **Web history** (titles and URLs of tabs in the shared window, including tabs awaiting capture approval), **Authentication information** (temporary session passwords and installation ownership credentials), **User activity** (page interaction commands), and **Personally identifiable information** (installation identifiers and IP addresses). Explain the specific scope above rather than claiming general browsing-history collection. Page content and clipboard text can include personal or sensitive information chosen by the participants. P2P transmission and local-only processing are still data handling; do not select a claim that the product processes no data.
+
+Select **No remotely hosted code**: all executable extension logic ships in the package. HTTPS/WSS signaling, STUN and WebRTC exchange data and connection information; they do not fetch executable code. Complete all Limited Use certifications only after checking they match the implementation and operator's actual practice. No data sale, advertising, creditworthiness use or use outside the collaboration features is planned or implemented.
 
 All scripts ship in the package; there is no remotely hosted JavaScript, advertising, or content telemetry. The privacy policy and store declarations must match the operator's actual configuration, including infrastructure log retention and identity storage.
 
-## Required screenshots
+### Operational deletion checklist
 
-- Host sharing controls and consent, using synthetic data.
-- An authorized tab and a tab awaiting host approval.
-- The full-page guest connection form and an active remote view.
-- Pause, termination, and clipboard controls.
+Use the support process in the privacy policy to verify control through a temporary host session for the requested code. Never ask for owner tokens, password hashes, session passwords or browser-storage exports by email. Within 30 days after ownership verification, manually delete only that registration from the active database and confirm the result without copying credentials into tickets or logs. There is no new public deletion API. Explain that the browser still has its old identity: before using the service again, the user must end the session and clear GhostPair's extension data or reinstall, losing local settings and receiving a new code. Resetting connection settings alone does not clear the stored identity.
 
-Headless screenshots do not verify native Windows capture indicators. Capture final listing images after manual validation.
+Record only the deleted identifier and date in a private deletion register while relevant older backups exist. Reapply those deletions before serving any restored database. For every manual backup or migration export, record its creation date and deletion deadline: delete it after successful validation and no later than 30 days after creation. Provider backup-count limits do not enforce this time limit. Scheduled copies age out under the provider's configured retention; track this instead of promising immediate removal from all backups. Remove the minimal deletion register entries when all corresponding older backups are gone. These are operator checklists, not automated retention or evidence that cleanup has already occurred.
 
-Official references: [Chrome Web Store publishing](https://developer.chrome.com/docs/webstore/publish), [data disclosure requirements](https://developer.chrome.com/docs/webstore/program-policies/disclosure-requirements), and [Edge publishing](https://learn.microsoft.com/en-us/microsoft-edge/extensions/publish/publish-extension).
+## Store images
+
+Use the three 1280×800 PNGs described in [store assets](store/README.md). They show the packaged extension's real interface with synthetic data, not the landing-page demo. Review them against the release submitted after Heroku activation and regenerate any that no longer match.
+
+Chrome requires the 128×128 PNG extension icon and at least one screenshot (up to five); screenshots must be 1280×800 or 640×400. The existing package supplies the icon. Optional 440×280 promotional and 1400×560 marquee images are not included in this first-publication preparation. Local screenshots do not establish native Windows permission/capture indicators, real clipboard behavior or connectivity between networks.
+
+Official references: [publishing and deferred publication](https://developer.chrome.com/docs/webstore/publish), [privacy fields and permission justification](https://developer.chrome.com/docs/webstore/cws-dashboard-privacy), [user-data handling, including local processing](https://developer.chrome.com/docs/webstore/program-policies/user-data-faq), and [image requirements](https://developer.chrome.com/docs/webstore/images).

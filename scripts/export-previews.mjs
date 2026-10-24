@@ -14,6 +14,7 @@ await mkdir(comparisons, { recursive: true });
 await cp(resolve('apps/extension/src/styles.css'), resolve(output, 'extension.css'));
 const policy = `default-src 'none'; style-src 'self' 'unsafe-inline'; frame-src 'self'; base-uri 'none'; form-action 'none'`;
 const previews = [], geometry = [];
+const storeCaptures = process.argv.includes('--store') ? [] : undefined;
 function documentHtml(name, markup, bodyFont) {
   const labels = { 'share-tab': 'GhostPair sharing example with a password, tab sharing consent, and Share this tab button.', 'connect-host': 'GhostPair connection example with a connection code, password, and Join session button.', 'remote-viewer': 'Connected GhostPair viewer example with an approved shared page, browser tab, and navigation controls.' };
   // Chrome gives extension documents a platform body font. Preserve that computed baseline on the web.
@@ -94,6 +95,7 @@ try {
   await popup.getByLabel('Password', { exact: true }).fill('Example-42');
   await popup.getByLabel('I allow the person', { exact: false }).check();
   await exportPreview(popup, 'share-tab', 398, 600);
+  if (storeCaptures) storeCaptures.push({ name: 'consent', title: 'Share only what<br>you choose.', description: 'Choose a session password.<br>Approve each additional tab.<br>Clipboard sharing stays optional.', png: await popup.screenshot() });
 
   const viewer = await guest.context.newPage(); await viewer.goto(`chrome-extension://${guest.id}/viewer.html`);
   await resizePage(guest, viewer, 512, 660);
@@ -143,6 +145,24 @@ try {
   const frame = await viewer.locator('video').evaluate(video => { const rect = video.getBoundingClientRect(), style = getComputedStyle(video); return { x: rect.x, y: rect.y, width: rect.width, height: rect.height, borderRadius: style.borderRadius, boxShadow: style.boxShadow }; });
   frame.sourceWidth = 1200; frame.sourceHeight = 760;
   await exportPreview(viewer, 'remote-viewer', 1365, 900, frame);
+  if (storeCaptures) {
+    await resizePage(guest, viewer, 1280, 800);
+    await viewer.getByText('Connected', { exact: true }).waitFor();
+    storeCaptures.push({ name: 'collaboration', png: await viewer.screenshot() });
+    const controls = await host.context.newPage();
+    await controls.goto(`chrome-extension://${host.id}/popup.html`);
+    await controls.setViewportSize({ width: 398, height: 600 });
+    await controls.getByText('Advanced options', { exact: true }).click();
+    await source.bringToFront();
+    await poll(async () => (await call(controls, 'ui.status')).activeTabId === tabId, 'shared tab restored for store capture');
+    await controls.locator('.session-panel').evaluate(panel => {
+      panel.scrollTop += panel.querySelector('.session-controls').getBoundingClientRect().top - panel.getBoundingClientRect().top;
+    });
+    for (const label of ['Let them control the page', 'Share clipboard']) assert.equal(await controls.getByLabel(label, { exact: false }).isVisible(), true);
+    for (const name of ['Pause session', 'End session']) assert.equal(await controls.getByRole('button', { name, exact: true }).isVisible(), true);
+    storeCaptures.push({ name: 'controls', title: 'Stay in control.<br>At every step.', description: 'Pause or end the session.<br>Withdraw page control.<br>Choose whether to share clipboard text.', png: await controls.screenshot() });
+    await controls.close();
+  }
   for (const preview of previews) {
     const path = resolve(output, `${preview.name}.html`), html = await readFile(path, 'utf8');
     assert.ok(!html.includes(waiting.deviceId) && !html.includes(waiting.sessionId), 'session credentials are excluded');
@@ -152,6 +172,34 @@ try {
   previewBrowser = await chromium.launch({ executablePath: browsers.chrome, headless: true });
   const context = await previewBrowser.newContext();
   const page = await context.newPage(), unexpectedRequests = [];
+  if (storeCaptures) {
+    const storeOutput = resolve('docs/store');
+    await mkdir(storeOutput, { recursive: true });
+    const canvas = await context.newPage();
+    await canvas.setViewportSize({ width: 1280, height: 800 });
+    for (const capture of storeCaptures) {
+      if (capture.title) {
+        // Frame an unmodified 398x600 product capture; only the surrounding caption is composed.
+        await canvas.setContent(`<!doctype html><meta charset="utf-8"><style>*{box-sizing:border-box}body{margin:0;width:1280px;height:800px;background:#f4f5ee;color:#193d30;font:22px/1.65 'Segoe UI',sans-serif;display:flex;align-items:center;justify-content:space-between;padding:70px 110px}section{max-width:540px}small{font-size:15px;letter-spacing:3px;font-weight:600}h1{font-size:54px;line-height:1.08;letter-spacing:-2px;font-weight:600;margin:32px 0}p{color:#526b5b;margin:0}img{display:block;width:398px;height:600px;box-shadow:0 16px 50px #193d3026}</style><section><small>GHOSTPAIR</small><h1>${capture.title}</h1><p>${capture.description}</p></section><img alt="Actual GhostPair interface" src="data:image/png;base64,${capture.png.toString('base64')}">`);
+        await canvas.locator('img').evaluate(image => image.decode());
+        assert.deepEqual(await canvas.locator('img').evaluate(image => [image.naturalWidth, image.naturalHeight]), [398, 600]);
+        capture.png = await canvas.screenshot();
+      }
+      assert.deepEqual([capture.png.readUInt32BE(16), capture.png.readUInt32BE(20)], [1280, 800], 'store PNG dimensions');
+      await writeFile(resolve(storeOutput, `${capture.name}.png`), capture.png);
+    }
+    const manifest = JSON.parse(await readFile('dist/extension/manifest.json', 'utf8'));
+    await writeFile(resolve(storeOutput, 'metadata.json'), JSON.stringify({
+      version: manifest.version, generatedAt: new Date().toISOString(), browser: host.version,
+      source: 'Production dist/extension; temporary test copies pregrant host access. No mocked UI or session state.',
+      buildDefaults: JSON.parse(await readFile('dist/extension/build-defaults.json', 'utf8')),
+      session: 'Two isolated local Chrome profiles with loopback signaling/STUN and synthetic weekend plans.',
+      composition: 'Consent and controls include an unmodified 398x600 UI capture at native scale beside a caption. Collaboration is a full 1280x800 live viewer capture.',
+      nativePermissionPromptVerified: false, separateComputersOrNetworksVerified: false,
+      screenshots: storeCaptures.map(({ name }) => ({ file: `${name}.png`, width: 1280, height: 800 })),
+    }, null, 2) + '\n');
+    await canvas.close();
+  }
   page.on('pageerror', error => errors.push(error.message));
   page.on('request', request => { if (!request.url().startsWith(`http://127.0.0.1:${fixture.address().port}/`)) unexpectedRequests.push(request.url()); });
   for (const preview of previews) {

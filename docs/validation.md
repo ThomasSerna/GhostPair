@@ -1,5 +1,19 @@
 # GhostPair validation
 
+## Heroku and Chrome Web Store preparation: October 24, 2026
+
+Prepared the official Node buildpack entrypoint, Node 24 bounds, PostgreSQL-only Heroku startup guard, safe runtime environment example, and migration/rollback runbook. Render remains the official endpoint; the extension version stays **0.6.4** until the actual endpoint change. CI now includes the isolated Heroku build/runtime smoke before the existing production build.
+
+Workspace type checks, **174 Vitest tests in 17 files**, **8 Node release tests**, the full production build, and Chrome/Edge store packaging passed. The built public defaults remain `https://ghostpair.onrender.com` and the existing external STUN service. No extension permissions, peer protocol or deployment settings changed.
+
+`npm run test:heroku` passed on Node **24.15.0** with an existing native PostgreSQL installation: fresh source compilation through `heroku-postbuild` generated only signaling, development dependencies were pruned, a missing Heroku database rejected startup without creating SQLite, and the production entrypoint passed injected-port, health/readiness, privacy, registration and authentication checks. The same credentials authenticated after restarting both the server and PostgreSQL. Windows exercised the shutdown handler using a test-only IPC signal bridge; real POSIX `SIGTERM` and the Docker path remain for Linux CI. The full `test:postgres` contract, restart persistence, SQLite import, dry run and conflict rollback suite also passed with isolated native PostgreSQL. Docker was unavailable locally; no container result is claimed.
+
+The Chrome-to-Chrome browser smoke passed on **Chrome 155.0.8059.86** with independent extension IDs, real tab video, root/embedded questionnaires, cancellation, tab authorization, pause/control withdrawal and termination. The native product-preview exporter passed exact geometry/styles, inert export safety and responsive scaling checks. Its `--store` mode produced three visually reviewed **1280×800** PNGs in `docs/store/`, using a real local WebRTC session and synthetic content. Consent and controls use unmodified native-scale UI captures beside captions; collaboration captures the live viewer. Metadata records the production build defaults and the isolated runtime setup; site access was pregranted only in disposable test copies.
+
+Production landing QA passed five viewports, navigation/focus, installation guide, guided demo, embedded previews, video lifecycle/fallbacks, reduced motion and project-relative assets. Privacy rendered without overflow or page errors at 360 and 1280 pixels. Publisher data and verified-deletion instructions are filled in; current Render provider retention remains explicitly unverified and is a store-submission gate.
+
+No Heroku resources, account verification, credit activation, production migration, Git push or store submission were performed. Native clean-install permission prompts/revocation, Windows clipboard content, two-computer/two-network sessions, live Heroku TLS and production backup restoration still require the pre-publication checks. These local captures and tests do not establish those results.
+
 ## First-use sharing and 0.6.4: October 19, 2026
 
 Release **0.6.4** moves the initial host permission request and its continuation into the background worker. Approval preserves the original tab, password and clipboard choice even when the toolbar popup closes. Denial, API failure and cancellation before or during the permission request do not start capture or transport. Passwords remain outside stored application state.

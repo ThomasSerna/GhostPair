@@ -1,0 +1,33 @@
+{
+  "version": "0.6.4",
+  "generatedAt": "2026-10-24T23:43:06.511Z",
+  "browser": "Chrome/155.0.8059.86",
+  "source": "Production dist/extension; temporary test copies pregrant host access. No mocked UI or session state.",
+  "buildDefaults": {
+    "signalingUrl": "https://ghostpair.onrender.com",
+    "stunUrls": [
+      "stun:stun.l.google.com:19302"
+    ]
+  },
+  "session": "Two isolated local Chrome profiles with loopback signaling/STUN and synthetic weekend plans.",
+  "composition": "Consent and controls include an unmodified 398x600 UI capture at native scale beside a caption. Collaboration is a full 1280x800 live viewer capture.",
+  "nativePermissionPromptVerified": false,
+  "separateComputersOrNetworksVerified": false,
+  "screenshots": [
+    {
+      "file": "consent.png",
+      "width": 1280,
+      "height": 800
+    },
+    {
+      "file": "collaboration.png",
+      "width": 1280,
+      "height": 800
+    },
+    {
+      "file": "controls.png",
+      "width": 1280,
+      "height": 800
+    }
+  ]
+}
