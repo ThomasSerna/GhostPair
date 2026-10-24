@@ -8,7 +8,7 @@ Choose **Share my tab** to start a session, set a password, and authorize each s
 
 ## Development
 
-Requirements: Node.js 24.13 or later and npm. In PowerShell, use `npm.cmd` if execution policy blocks `npm.ps1`.
+Requirements: Node.js 24.13 or later within the 24.x release line and npm. In PowerShell, use `npm.cmd` if execution policy blocks `npm.ps1`.
 
 The public landing is a React + Vite workspace in `apps/landing/`. Run `npm.cmd run dev:landing` to work on it, `npm.cmd run build:landing` to update the GitHub Pages files in `docs/`, and `npm.cmd run test:landing` to check the built site. Commit the source and generated website together. See [the landing guide](apps/landing/README.md) for the hero renderer, product examples, and publishing details.
 
@@ -46,7 +46,7 @@ After building, run `node scripts/export-previews.mjs` to refresh the GitHub Pag
 
 ### Continuous integration and releases
 
-Every branch push and pull request runs `npm ci`, workspace type checks, unit tests, a production build and package validation in GitHub Actions. **CI required** succeeds only when all verification completes successfully. Browser and PostgreSQL integration checks remain separate commands.
+Every branch push and pull request runs `npm ci`, workspace type checks, unit tests, an isolated Heroku build/PostgreSQL runtime check, a production build and package validation in GitHub Actions. **CI required** succeeds only when all verification completes successfully. Browser and the full PostgreSQL migration suite remain separate commands.
 
 After successful CI on `main`, a new extension version creates a `v<version>` release with the two tested ZIPs. Commits that keep the same version do not change its published release. The first automated release is `v0.5.0`. See [version updates and release recovery](docs/publishing.md#automatic-github-releases).
 
@@ -82,6 +82,10 @@ Version 0.6.4 fixes first-use sharing: accepting the browser's permission reques
 ## Deployment
 
 Production is hosted on Render at **https://ghostpair.onrender.com**, using the repository Dockerfile, PostgreSQL and branch `main`. Auto-deploy is **After CI Checks Pass**, and the health-check path is `/ready`. Each verified push can deploy the server independently of whether the extension version changed. See [Deployment](docs/deployment.md) and `deploy/render.env.example` for configuration and recovery. Keep the database and public URL stable to retain installation identities. [Publishing](docs/publishing.md) covers packages and publisher requirements.
+
+The [Heroku migration runbook](docs/heroku.md) prepares a future US deployment with one Basic web dyno and Essential-0 PostgreSQL ($12/month at current prices). The root `Procfile` and `npm run heroku-postbuild` build and start only signaling; Heroku requires `DATABASE_URL` and assigns its own port. Render remains the current endpoint until account/student-credit verification, database transfer and real-session checks pass. Changing to a Heroku URL creates new connection codes. Chrome Web Store publication follows activation; [listing assets](docs/store/README.md) and publisher steps are prepared without submitting to a store.
+
+Run `npm run test:heroku` to compile fresh sources in a disposable directory, prune development dependencies and check the production entrypoint against isolated PostgreSQL, including a database restart and orderly shutdown. It uses Docker by default, or an existing PostgreSQL bin directory through `GHOSTPAIR_TEST_POSTGRES_BIN`. On Windows, a test-only IPC bridge emits the POSIX signal to exercise the shutdown handler; Linux CI sends real `SIGTERM`.
 
 Docker Compose includes Node.js signaling, persistent SQLite, Caddy for HTTPS/WSS, and coturn in STUN-only mode. Use a domain pointing to the server and allow TCP 80/443 and UDP/TCP 3478.
 

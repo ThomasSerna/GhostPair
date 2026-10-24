@@ -1,5 +1,7 @@
 # Render and portable PostgreSQL deployment
 
+For the prepared, inactive Heroku target and future cutover procedure, see [Heroku migration](heroku.md). Render remains the current production service until that procedure is explicitly activated.
+
 The same Node 24 Docker image runs on Render, Koyeb or another container host. PostgreSQL is selected by `DATABASE_URL`; without it the server uses `DATABASE_PATH` and SQLite for local development or a persistent host. A failed PostgreSQL connection never falls back to SQLite. Rooms and pairing state remain in memory: run **exactly one signaling instance** even with PostgreSQL.
 
 ## Current Render service

@@ -84,6 +84,7 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): ServerConfi
     maxRegisteredDevices: positiveInt(env.MAX_REGISTERED_DEVICES, defaultConfig.maxRegisteredDevices, 'MAX_REGISTERED_DEVICES'),
   };
   if (config.databaseUrl !== undefined) validatePostgresConfig({ ...config, databaseUrl: config.databaseUrl });
+  else if (env.DYNO !== undefined) throw new Error('Heroku requires DATABASE_URL; SQLite storage is ephemeral.');
   else if (env.DATABASE_SSL_MODE || env.DATABASE_SSL_CA_FILE) throw new Error('Database TLS configuration requires DATABASE_URL.');
   // Legacy ALLOWED_ORIGINS values are intentionally ignored: every valid
   // Chrome/Edge extension origin is accepted without installation registration.

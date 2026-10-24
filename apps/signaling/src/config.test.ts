@@ -26,6 +26,25 @@ describe('production configuration', () => {
     expect(configFromEnv({}).trustProxy).toBe(false);
     expect(configFromEnv({ TRUST_PROXY: 'true' }).trustProxy).toBe(true);
   });
+
+  it('requires PostgreSQL on Heroku and uses the injected runtime settings', () => {
+    const env = { DYNO: 'web.1', HOST: '0.0.0.0', PORT: '32145', TRUST_PROXY: 'true' };
+    expect(() => configFromEnv(env)).toThrow('Heroku requires DATABASE_URL');
+    for (const DATABASE_URL of ['', 'https://localhost/db']) {
+      expect(() => configFromEnv({ ...env, DATABASE_URL })).toThrow('Invalid DATABASE_URL');
+    }
+    const DATABASE_URL = 'postgresql://user:password@localhost/db';
+    expect(configFromEnv({ ...env, DATABASE_URL })).toMatchObject({
+      host: '0.0.0.0', port: 32145, trustProxy: true,
+      databaseUrl: DATABASE_URL, databaseSslMode: 'verify-full',
+    });
+  });
+
+  it('preserves local SQLite without a Heroku dyno or database URL', () => {
+    expect(configFromEnv({ DATABASE_PATH: './data/local.sqlite' })).toMatchObject({
+      databasePath: './data/local.sqlite', databaseUrl: undefined,
+    });
+  });
 });
 
 describe('bounded rate-limit state', () => {

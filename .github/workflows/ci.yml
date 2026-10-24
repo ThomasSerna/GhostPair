@@ -29,6 +29,8 @@ jobs:
         run: npm run typecheck
       - name: Unit tests
         run: npm test
+      - name: Verify Heroku build and PostgreSQL runtime
+        run: npm run test:heroku
       - name: Build production
         run: npm run build
         env:
