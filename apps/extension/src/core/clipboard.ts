@@ -100,7 +100,7 @@ export class ClipboardSync {
       } catch {
         if (!this.current(epoch)) return;
         this.stop();
-        this.onError('Se detuvo el portapapeles porque no pudo leerse.');
+        this.onError('Clipboard sharing stopped because the clipboard could not be read.');
       }
     });
   }
@@ -119,7 +119,7 @@ export class ClipboardSync {
       } catch {
         if (!this.current(epoch)) return;
         this.stop();
-        this.onError('Se detuvo el portapapeles porque no pudo escribirse.');
+        this.onError('Clipboard sharing stopped because the clipboard could not be written.');
       }
     });
   }
@@ -128,7 +128,7 @@ export class ClipboardSync {
 /** execCommand is isolated here because the offscreen document cannot receive focus. */
 export function createDomClipboard(doc: Document): ClipboardAdapter {
   const field = doc.createElement('textarea');
-  field.setAttribute('aria-label', 'Portapapeles temporal de GhostPair');
+  field.setAttribute('aria-label', 'GhostPair temporary clipboard');
   doc.body.append(field);
   return {
     async read() {

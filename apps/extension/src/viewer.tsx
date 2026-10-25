@@ -43,6 +43,7 @@ function Viewer() {
   const [area, setArea] = useState({ width: 800, height: 600 });
   const keyboard = useRef<HTMLTextAreaElement>(null);
   const frame = useRef<Presentation | undefined>(undefined);
+  const renderedStream = useRef<MediaStream | null>(null);
   const composing = useRef(false);
   const compositionRevision = useRef<number | undefined>(undefined);
   const heldPointer = useRef<Extract<ControlCommand, { type: 'pointer' }> | undefined>(undefined);
@@ -77,9 +78,9 @@ function Viewer() {
     if (original) send({ type: 'input.release', tabId: original.tabId, captureId: original.captureId, documentId: original.documentId, generation: original.generation, controlRevision: original.controlRevision });
   }
   function applyState(next: AppState) {
-    if (stateRef.current?.controlRevision !== next.controlRevision) { releaseInput(); composing.current = false; if (keyboard.current) keyboard.current.value = ''; }
+    if (stateRef.current?.controlRevision !== next.controlRevision) releaseInput();
     if (stateRef.current?.sessionId !== next.sessionId || stateRef.current?.generation !== next.generation || stateRef.current?.activeTabId !== next.activeTabId || next.status !== 'connected') {
-      releaseInput(); frame.current = undefined; setHasFrame(false);
+      releaseInput(); renderedStream.current = null; frame.current = undefined; setHasFrame(false);
     }
     if (stateRef.current?.controlEnabled && !next.controlEnabled) releaseInput();
     stateRef.current = next; setState(next);
@@ -92,7 +93,7 @@ function Viewer() {
       write: async (text: string) => { const reply = await dispatch({ type: 'ui.clipboard.write', text }); if (!reply?.ok) throw new Error(reply?.error); },
     };
     peer.current = createPeerSession((type, payload = {}) => { void dispatch({ type, ...payload }).catch(() => undefined); }, dispatch, clipboard, {
-      stream: (stream, meta) => { releaseInput(); frame.current = undefined; setHasFrame(false); setIncoming(stream && meta ? { stream, meta } : undefined); },
+      stream: (stream, meta) => { renderedStream.current = null; releaseInput(); frame.current = undefined; setHasFrame(false); setIncoming(stream && meta ? { stream, meta } : undefined); },
     });
     let retry: ReturnType<typeof setTimeout> | undefined;
     function connectPort() {
@@ -124,22 +125,29 @@ function Viewer() {
     document.addEventListener('visibilitychange', visibility);
     return () => { disposed.current = true; clearTimeout(retry); leave(); window.removeEventListener('blur', releaseInput); window.removeEventListener('pagehide', leave); document.removeEventListener('visibilitychange', visibility); port.current?.disconnect(); port.current = null; };
   }, []);
+  const selected = state?.tabs.find(t => t.id === state.activeTabId);
   useEffect(() => {
     const element = video.current;
     if (!element) return;
-    element.srcObject = incoming?.stream ?? null;
+    if (element.srcObject !== (incoming?.stream ?? null)) element.srcObject = incoming?.stream ?? null;
     if (!incoming || state?.status !== 'connected') return;
     const { stream, meta } = incoming;
     let canceled = false;
-    const callback = element.requestVideoFrameCallback(() => {
+    const activate = () => {
       const current = stateRef.current;
-      if (canceled || element.srcObject !== stream || !current?.presentation || current.status !== 'connected' || current.generation !== meta.generation || current.presentation.captureId !== meta.captureId || current.presentation.documentId !== meta.documentId) return;
+      if (canceled || element.srcObject !== stream || renderedStream.current !== stream || !current?.presentation || current.status !== 'connected' || current.generation !== meta.generation || current.presentation.captureId !== meta.captureId || current.presentation.documentId !== meta.documentId) return false;
       frame.current = meta; setHasFrame(true);
+      return true;
+    };
+    if (activate()) return;
+    const callback = element.requestVideoFrameCallback(() => {
+      renderedStream.current = stream;
+      activate();
     });
     void element.play().catch(error => { if (!canceled) setError(`Could not play the shared video: ${error.message}`); });
     return () => { canceled = true; element.cancelVideoFrameCallback(callback); };
-  }, [incoming, state?.status, state?.generation, state?.controlEnabled]);
-  useEffect(() => { setAddress(state?.tabs.find(t => t.id === state.activeTabId)?.url ?? ''); }, [state?.activeTabId, state?.tabs.find(t => t.id === state.activeTabId)?.url]);
+  }, [incoming, state?.status, state?.generation, state?.presentation]);
+  useEffect(() => { setAddress(selected?.url ?? ''); }, [state?.activeTabId, selected?.url]);
   useEffect(() => {
     if (!stage.current) return;
     const observer = new ResizeObserver(entries => { const box = entries[0]?.contentRect; if (box) setArea({ width: box.width, height: box.height }); });
@@ -188,18 +196,17 @@ function Viewer() {
     // Text and IME are committed once through the textarea input/composition events.
     if (event.key.length > 1 || (event.ctrlKey && !['v', 'c', 'x'].includes(event.key.toLowerCase())) || event.metaKey || event.altKey) event.preventDefault();
   }
-  const selected = state?.tabs.find(t => t.id === state.activeTabId);
   if (duplicate) return <main className="connection-page"><header className="viewer-header"><Brand compact/></header><section className="connection-panel"><h1>Your session page is already open.</h1><button className="primary" onClick={() => void request('ui.viewer.open')}>Open session page</button></section></main>;
 
   if (!state || state.role !== 'guest' || !['connected', 'paused'].includes(state.status)) return <main className="connection-page"><header className="viewer-header"><Brand compact/></header>{state ? <ConnectionPanel state={state} onState={applyState} onError={setError}/> : <p>Loading GhostPair…</p>}<Notifications state={state} error={error} onError={setError} floating/></main>;
 
-  return <main className="viewer"><header className="viewer-header"><Brand compact/><div className="viewer-session">{state && <Status state={state}/>}<span className="control-mode" title={state.controlMode === 'visual' ? 'Clicks and typing are previews. Scrolling, navigation and tab management still change the shared page.' : 'Your actions change the shared page.'}>{state.controlMode === 'visual' ? 'Preview mode' : 'Control mode'}</span></div><button className="danger small" onClick={() => { void request('ui.stop').catch(e => setError(e.message)); }}>Leave session</button></header>
-    <div className="remote-tabs" role="tablist" aria-label="Shared tabs">{state?.tabs.map(tab => <div className={`remote-tab ${tab.active ? 'active' : ''}`} key={tab.id}><button role="tab" aria-selected={tab.active} title={tab.url} disabled={!state.controlEnabled || state.paused} onClick={() => send({ type: 'tab.activate', tabId: tab.id, controlRevision: state.controlRevision })}><span><ViewerIcon name={tab.supported ? 'tab' : 'unavailable'}/></span>{tab.title || 'Untitled tab'}{!tab.authorized && <small> · {tab.supported ? 'Waiting for permission' : "This tab can't be shared"}</small>}</button><button aria-label={`Close ${tab.title || 'untitled tab'}`} disabled={!state.controlEnabled || state.paused} onClick={() => send({ type: 'tab.close', tabId: tab.id, controlRevision: state.controlRevision })}><ViewerIcon name="close"/></button></div>)}<button ref={newTabButton} className="new-tab" title="Open tab" aria-label="Open tab" disabled={!state?.controlEnabled || state.paused || state.status !== 'connected'} onClick={() => setNewTabOpen(true)}><ViewerIcon name="add"/></button></div>{newTabOpen && <NewTabDialog onClose={closeNewTab} controlRevision={state.controlRevision}/>}
+  return <main className="viewer"><header className="viewer-header"><Brand compact/><div className="viewer-session"><Status state={state}/><span className="control-mode" title={state.controlMode === 'visual' ? 'Clicks and typing are previews. Scrolling, navigation and tab management still change the shared page.' : 'Your actions change the shared page.'}>{state.controlMode === 'visual' ? 'Preview mode' : 'Control mode'}</span></div><button className="danger small" onClick={() => { void request('ui.stop').catch(e => setError(e.message)); }}>Leave session</button></header>
+    <div className="remote-tabs" role="tablist" aria-label="Shared tabs">{state.tabs.map(tab => <div className={`remote-tab ${tab.active ? 'active' : ''}`} key={tab.id}><button role="tab" aria-selected={tab.active} title={tab.url} disabled={!state.controlEnabled || state.paused} onClick={() => send({ type: 'tab.activate', tabId: tab.id, controlRevision: state.controlRevision })}><span><ViewerIcon name={tab.supported ? 'tab' : 'unavailable'}/></span>{tab.title || 'Untitled tab'}{!tab.authorized && <small> · {tab.supported ? 'Waiting for permission' : "This tab can't be shared"}</small>}</button><button aria-label={`Close ${tab.title || 'untitled tab'}`} disabled={!state.controlEnabled || state.paused} onClick={() => send({ type: 'tab.close', tabId: tab.id, controlRevision: state.controlRevision })}><ViewerIcon name="close"/></button></div>)}<button ref={newTabButton} className="new-tab" title="Open tab" aria-label="Open tab" disabled={!state.controlEnabled || state.paused || state.status !== 'connected'} onClick={() => setNewTabOpen(true)}><ViewerIcon name="add"/></button></div>{newTabOpen && <NewTabDialog onClose={closeNewTab} controlRevision={state.controlRevision}/>}
     <form className="navigation" onSubmit={e => { e.preventDefault(); const t = target(); if (t) send({ type: 'navigate', ...t, url: address.includes('://') ? address : `https://${address}` }); }}><button type="button" aria-label="Back" disabled={!interactive} onClick={() => { const t = target(); if (t) send({ type: 'history', ...t, direction: 'back' }); }}><ViewerIcon name="back"/></button><button type="button" aria-label="Forward" disabled={!interactive} onClick={() => { const t = target(); if (t) send({ type: 'history', ...t, direction: 'forward' }); }}><ViewerIcon name="forward"/></button><button type="button" aria-label="Reload" disabled={!interactive} onClick={() => { const t = target(); if (t) send({ type: 'reload', ...t }); }}><ViewerIcon name="reload"/></button><input aria-label="Remote page address" value={address} onChange={e => setAddress(e.target.value)} placeholder="Shared page address" disabled={!interactive}/><button type="submit" disabled={!interactive}>Go <ViewerIcon name="go"/></button></form>
     <section ref={stage} className="remote-stage" aria-label="Remote page"><video ref={video} style={{ width: videoWidth, height: videoWidth / aspect, objectFit: 'cover' }} autoPlay muted playsInline data-generation={hasFrame ? frame.current?.generation : undefined} className={!hasFrame ? 'invisible' : ''} aria-label="Shared page video" onPointerDown={e => pointer(e, 'down')} onPointerMove={e => pointer(e, 'move')} onPointerUp={e => pointer(e, 'up')} onPointerCancel={releaseInput} onLostPointerCapture={() => { if (heldPointer.current) releaseInput(); }} onContextMenu={e => e.preventDefault()} onWheel={e => { const point = coordinates(e); if (point) send({ type: 'wheel', ...point, deltaX: Math.max(-10000, Math.min(10000, e.deltaX)), deltaY: Math.max(-10000, Math.min(10000, e.deltaY)), modifiers: modifiers(e) }); }}/>
       <textarea ref={keyboard} className="keyboard-input" aria-label="Remote keyboard input" autoCapitalize="off" autoComplete="off" spellCheck={false} disabled={!interactive} onFocus={() => setFocused(true)} onBlur={() => { releaseInput(); setFocused(false); }} onKeyDown={e => key(e, 'down')} onKeyUp={e => key(e, 'up')} onCompositionStart={() => { composing.current = true; compositionRevision.current = stateRef.current?.controlRevision; }} onCompositionEnd={e => { const valid = composing.current && compositionRevision.current === stateRef.current?.controlRevision; composing.current = false; compositionRevision.current = undefined; if (valid) text(e.data); e.currentTarget.value = ''; }} onInput={e => { if (!composing.current && !(e.nativeEvent as InputEvent).isComposing && !(e.nativeEvent as InputEvent).inputType?.includes('Composition')) { text(e.currentTarget.value); e.currentTarget.value = ''; } }} onPaste={e => { e.preventDefault(); text(e.clipboardData.getData('text/plain')); }}/>
-      {(!hasFrame || state?.paused || state?.status !== 'connected') && <div className="stage-overlay"><div className="empty-symbol"><ViewerIcon className="stage-icon" name={state?.paused ? 'pause' : selected && !selected.supported ? 'unavailable' : 'waiting'}/></div><h1>{state?.paused ? 'The session is paused.' : selected && !selected.supported ? "This tab can't be shared."  : 'Preparing your shared view.'}</h1><p>{state?.paused ? 'The person sharing can resume the session from GhostPair.' : selected && !selected.supported ? 'Ask the person sharing to choose another web page.'  : selected && !selected.authorized ? 'The person sharing needs to allow this tab before you can see it.' : 'Waiting for the shared view to load.'}</p></div>}
-    </section><footer className="viewer-footer"><span><i className={`connection-dot ${focused ? 'live' : ''}`}/>{focused ? 'Typing on the shared page · Esc to stop' : state?.controlEnabled ? 'Click the page to interact' : 'View only'}</span><span>{state?.clipboardEnabled && state.remoteClipboardEnabled ? 'Clipboard sharing on' : 'Clipboard sharing off'}</span></footer>
+      {(!hasFrame || state.paused || state.status !== 'connected') && <div className="stage-overlay"><div className="empty-symbol"><ViewerIcon className="stage-icon" name={state.paused ? 'pause' : selected && !selected.supported ? 'unavailable' : 'waiting'}/></div><h1>{state.paused ? 'The session is paused.' : selected && !selected.supported ? "This tab can't be shared."  : 'Preparing your shared view.'}</h1><p>{state.paused ? 'The person sharing can resume the session from GhostPair.' : selected && !selected.supported ? 'Ask the person sharing to choose another web page.'  : selected && !selected.authorized ? 'The person sharing needs to allow this tab before you can see it.' : 'Waiting for the shared view to load.'}</p></div>}
+    </section><footer className="viewer-footer"><span><i className={`connection-dot ${focused ? 'live' : ''}`}/>{focused ? 'Typing on the shared page · Esc to stop' : state.controlEnabled ? 'Click the page to interact' : 'View only'}</span><span>{state.clipboardEnabled && state.remoteClipboardEnabled ? 'Clipboard sharing on' : 'Clipboard sharing off'}</span></footer>
     <Notifications state={state} error={error} onError={setError} floating/>
   </main>;
 }

@@ -247,6 +247,26 @@ describe('peer session lifetime', () => {
     expect(Peer.instances).toHaveLength(peers);
     expect(first.pc.close).not.toHaveBeenCalled(); h.session.stop();
   });
+
+  it('publishes pre-connection remote clipboard state before starting initial clipboard read', async () => {
+    const events: string[] = [];
+    const notify = vi.fn((type: string) => events.push(type));
+    const read = vi.fn(async () => { events.push('clipboard.read'); return 'initial'; });
+    const session = createPeerSession(notify, vi.fn(async () => ({ ok: true })), { read, write: async () => {} });
+    await session.handle({ type: 'session.start', role: 'host', deviceId: id, ownerToken: 'b'.repeat(64), password: 'Eight-42', clipboard: true, settings: { signalingUrl: 'http://127.0.0.1:8787', stunUrls: ['stun:example.com:3478'] } });
+    const socket = Socket.instances.at(-1)!; socket.onopen?.();
+    socket.receive({ type: 'paired', sessionId: id, role: 'host' }); await settled();
+    const pc = Peer.instances.at(-1)!, control = pc.channels[0]!, clipboard = pc.channels[1]!;
+    control.onopen?.(); clipboard.onopen?.();
+    control.receive({ type: 'hello', protocol: PROTOCOL_VERSION, sessionId: id, role: 'guest' });
+    control.receive({ type: 'clipboard.enabled', enabled: true }); await settled();
+    expect(read).not.toHaveBeenCalled();
+    pc.connect(); await settled();
+    expect(notify).toHaveBeenCalledWith('transport.clipboard', { remoteEnabled: true });
+    expect(events.indexOf('transport.clipboard')).toBeGreaterThan(-1);
+    expect(events.indexOf('transport.clipboard')).toBeLessThan(events.indexOf('clipboard.read'));
+    session.stop();
+  });
 });
 
 it('reports immediate and delayed channel send failures without claiming success', () => {

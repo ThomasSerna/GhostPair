@@ -24,10 +24,11 @@ async function openViewer() {
   else viewerTabId = (await chrome.tabs.create({ url })).id;
 }
 async function hasOffscreen() { return (await chrome.runtime.getContexts({ contextTypes: [chrome.runtime.ContextType.OFFSCREEN_DOCUMENT], documentUrls: [chrome.runtime.getURL('offscreen.html')] })).length > 0; }
-async function offscreen() {
-  if (await hasOffscreen()) return;
+async function offscreen(): Promise<boolean> {
+  if (await hasOffscreen()) return false;
   creatingOffscreen ??= chrome.offscreen.createDocument({ url: 'offscreen.html', reasons: [chrome.offscreen.Reason.USER_MEDIA, chrome.offscreen.Reason.WEB_RTC, chrome.offscreen.Reason.CLIPBOARD], justification: 'Authorized tab capture, peer connection and optional clipboard synchronization.' }).finally(() => { creatingOffscreen = undefined; });
   await creatingOffscreen;
+  return true;
 }
 const toOffscreen = (type: string, payload: object = {}) => chrome.runtime.sendMessage({ target: 'offscreen', type, ...payload });
 function toViewer(type: string, payload: object = {}): Promise<any> {
@@ -221,7 +222,7 @@ async function action(message: Record<string, any>, sender: chrome.runtime.Messa
       const enabled = message.enabled === true;
       if (enabled && !await chrome.permissions.contains({ permissions: ['clipboardRead', 'clipboardWrite'] })) throw new Error('Grant clipboard access on this device.');
       update({ clipboardEnabled: enabled });
-      if (state.role === 'guest') await toOffscreen('clipboard.configure', { enabled });
+      if (state.role === 'guest') { await offscreen(); await toOffscreen('clipboard.configure', { enabled }); }
       if (state.role) await transport('session.clipboard', { enabled, paused: state.paused }); hostState(); return state;
     }
     default: throw new Error('Unknown operation.');
@@ -234,7 +235,14 @@ async function fromTransport(message: Record<string, any>) {
     case 'transport.connected': update({ status: 'connected', sessionId: message.sessionId }); hostState(); break;
     case 'transport.ended': await stop(String(message.reason || 'Session ended.')); if (message.failed) update({ status: 'error', error: String(message.reason || 'Connection failed.') }); break;
     case 'transport.notice': update({ notice: String(message.message || '') }); break;
-    case 'transport.clipboard': update({ remoteClipboardEnabled: message.remoteEnabled === true, ...(message.disabled ? { clipboardEnabled: false } : {}) }); break;
+    case 'transport.clipboard': {
+      update({ remoteClipboardEnabled: message.remoteEnabled === true, ...(message.disabled ? { clipboardEnabled: false } : {}) });
+      if (message.disabled) {
+        if (state.role === 'guest' && await hasOffscreen()) await toOffscreen('clipboard.configure', { enabled: false });
+        hostState();
+      }
+      break;
+    }
     case 'transport.snapshot': if (state.role === 'guest') { const remote = message.snapshot; update({ tabs: remote.tabs, activeTabId: remote.activeTabId, generation: remote.generation, presentation: remote.presentation, paused: remote.paused, controlEnabled: remote.controlEnabled, controlMode: remote.controlMode, controlRevision: remote.controlRevision, remoteClipboardEnabled: remote.clipboardEnabled, status: remote.paused ? 'paused' : 'connected' }); } break;
     case 'transport.command': {
       if (state.role !== 'host' || state.status !== 'connected' || state.paused) return { ok: false, error: 'Remote control is unavailable.' };
@@ -266,6 +274,7 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
     if (message.type === 'ui.stop') { await stop(); return { ok: true, state }; }
     if (message.type === 'ui.clipboard.read' || message.type === 'ui.clipboard.write') {
       if (!fromViewer || sender.tab?.id !== viewerTabId || state.role !== 'guest' || !state.clipboardEnabled || !state.remoteClipboardEnabled || state.paused || state.status !== 'connected') throw new Error('Clipboard sharing is disabled.');
+      if (await offscreen()) await toOffscreen('clipboard.configure', { enabled: true });
       return await toOffscreen(message.type === 'ui.clipboard.read' ? 'clipboard.read' : 'clipboard.write', { text: message.text });
     }
     const work = mutation.then(() => authorization && requestedEpoch !== sessionEpoch ? state : action(message, sender, authorization)); mutation = work.catch(() => undefined);
@@ -278,6 +287,12 @@ chrome.runtime.onConnect.addListener(port => {
   if (port.name !== 'viewer' || port.sender?.id !== chrome.runtime.id || !isViewer(port.sender) || port.sender.tab?.id === undefined) return;
   const tabId = port.sender.tab.id;
   if (ownerPort && viewerTabId !== tabId) { port.postMessage({ type: 'viewer.duplicate' }); void openViewer(); return; }
+  if (ownerPort && ownerPort !== port) {
+    ownerPort = undefined;
+    for (const entry of pending.values()) { clearTimeout(entry.timer); entry.resolve({ ok: false, error: 'The viewer closed.' }); }
+    pending.clear();
+    if (state.role === 'guest') void stop('The connection page closed. Start a new session.');
+  }
   ownerPort = port; viewerTabId = tabId; viewers.add(port);
   void ready.then(() => port.postMessage({ type: 'state', state })).catch(() => undefined);
   port.onDisconnect.addListener(() => {

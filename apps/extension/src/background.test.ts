@@ -344,4 +344,25 @@ describe('background cancellation', () => {
     port.onDisconnect.emit(); await settled(); const result = await h.send('ui.status');
     expect(result.state.role).toBeNull(); expect(result.state.status).toBe('idle'); expect(result.state.notification.message).toContain('connection page closed');
   });
+  it('propagates automatic clipboard disablement and cleans up replaced viewer ports', async () => {
+    const h = await harness();
+    await h.send('ui.host.start', { password: 'Eight-42', clipboard: true });
+    await h.send('transport.connected', { sessionId: 'session' }, 'offscreen');
+    await h.send('transport.clipboard', { remoteEnabled: true, disabled: true }, 'offscreen');
+    expect((await h.send('ui.status')).state).toMatchObject({ clipboardEnabled: false, remoteClipboardEnabled: true });
+    expect(h.runtime.sendMessage).toHaveBeenLastCalledWith(expect.objectContaining({ type: 'session.state', snapshot: expect.objectContaining({ clipboardEnabled: false }) }));
+    await h.send('ui.stop');
+    const firstPort = h.connectViewer();
+    await h.send('ui.guest.start', { deviceId: 'a'.repeat(32), password: 'Eight-42', clipboard: true }, 'viewer');
+    await h.send('transport.connected', { sessionId: 'session' }, 'viewer');
+    await h.send('transport.clipboard', { remoteEnabled: true, disabled: true }, 'viewer');
+    expect(h.runtime.sendMessage).toHaveBeenCalledWith({ target: 'offscreen', type: 'clipboard.configure', enabled: false });
+    firstPort.postMessage.mockImplementation(() => {});
+    const pendingCommand = h.send('ui.command', { command: { type: 'tab.create', controlRevision: 0, url: 'https://example.com' } }, 'viewer');
+    await settled();
+    h.connectViewer();
+    expect(await pendingCommand).toEqual({ ok: false, error: 'The viewer closed.' });
+    await settled();
+    expect((await h.send('ui.status')).state.role).toBeNull();
+  });
 });

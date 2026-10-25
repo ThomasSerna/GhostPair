@@ -174,8 +174,9 @@ async function establish() {
   });
   sendPeer({ type: 'clipboard.enabled', enabled: clipboardEnabled });
   notify('transport.connected', { sessionId });
-  syncClipboard();
+  if (remoteClipboardEnabled) notify('transport.clipboard', { remoteEnabled: true });
   if (latestSnapshot && role === 'guest') notify('transport.snapshot', { snapshot: latestSnapshot });
+  syncClipboard();
   const queued = pendingMedia; pendingMedia = [];
   for (const message of queued) { if (epoch !== current) return; await media?.receive(message); }
 }
@@ -286,7 +287,7 @@ function attachChannel(channel: RTCDataChannel, current: number) {
     clipboardPipe = new JsonChannel(channel, value => {
       if (epoch !== current || !connected || !clipboardEnabled || !remoteClipboardEnabled || paused || !value || typeof value !== 'object') return;
       const update = value as ClipboardUpdate;
-      if (update.origin !== (role === 'host' ? 'guest' : 'host') || typeof update.text !== 'string' || update.text.length > MAX_CLIPBOARD_BYTES) return;
+      if (update.origin !== (role === 'host' ? 'guest' : 'host') || typeof update.text !== 'string') return;
       void clipboardSync?.receive(update);
     }, () => { if (epoch === current && !ending) fail('The clipboard connection failed. Start a new session.'); });
     channel.onopen = syncClipboard;

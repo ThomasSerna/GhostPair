@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { MIN_PASSWORD_LENGTH, PasswordSchema, type VisualPreferences } from '@ghostpair/protocol';
 import { ConnectionSettings } from './connection-settings';
@@ -15,7 +15,10 @@ function Popup() {
   const [busy, setBusy] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [copied, setCopied] = useState(false);
+  const copiedTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const shareButton = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => () => clearTimeout(copiedTimer.current), []);
 
   const active = state && !['idle', 'error'].includes(state.status);
   const connected = state && ['connected', 'paused'].includes(state.status);
@@ -104,8 +107,9 @@ function Popup() {
             <code>{state.deviceId ? formatDeviceId(state.deviceId) : 'Preparing your code…'}</code>
             <button className="copy-button" disabled={!state.deviceId} aria-live="polite" onClick={() => {
               void navigator.clipboard.writeText(state.deviceId ?? '').then(() => {
+                clearTimeout(copiedTimer.current);
                 setCopied(true);
-                setTimeout(() => setCopied(false), 1800);
+                copiedTimer.current = setTimeout(() => setCopied(false), 1800);
               }).catch(() => setError('Select and copy the connection code manually.'));
             }}>
               <svg viewBox="0 0 20 20" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.6"><rect x="7" y="7" width="10" height="10" rx="2"/><path d="M12 7V4a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v7a1 1 0 0 0 1 1h3"/></svg>
