@@ -30,6 +30,36 @@ Heroku can rotate database credentials: use the managed URL, not a copied perman
 
 `TRUST_PROXY=true` is appropriate only behind the controlled Heroku router. GhostPair uses the rightmost forwarded address when it is a valid IP, matching the IP Heroku appends; do not change this to trust a caller-supplied first IP. The existing 30-second WebSocket heartbeat is below Heroku's 55-second idle limit. `SIGTERM` closes signaling and database connections; Heroku allows 30 seconds before forced shutdown. See [routing](https://devcenter.heroku.com/articles/http-routing) and [dyno shutdown](https://devcenter.heroku.com/articles/dyno-shutdown-behavior).
 
+## GitHub push and later Heroku deployment
+
+The root `Procfile` is already tracked in Git, with the exact case Heroku requires. Keep it at the repository root; do not create a second lowercase `procfile` or push a workspace subdirectory. `origin` points to `https://github.com/ThomasSerna/GhostPair.git`.
+
+Push committed changes from the repository root, then wait for the matching commit's **CI required** check to succeed:
+
+```powershell
+git status --short --branch
+git push origin main
+```
+
+The first command should show no uncommitted changes. GitHub Actions validates the server, extension and packages. The existing Render service still waits for passing checks; this push does not change the official endpoint to Heroku.
+
+For the later Heroku activation, first complete the account, database and cutover prerequisites below. The recommended deployment path is Heroku Dashboard → **Deploy** → **GitHub** → `ThomasSerna/GhostPair` → branch `main` → **Deploy Branch**. Keep automatic deployment Off during setup and confirm the selected commit passed GitHub CI before deploying. After acceptance, enable **Wait for CI to pass before deploy**.
+
+If you prefer to perform the initial Heroku push yourself with Git, install the [Heroku CLI](https://devcenter.heroku.com/articles/heroku-cli), sign in and use an app that has already been created and configured according to this runbook. No Heroku remote is added during preparation because the real app does not exist yet:
+
+```powershell
+heroku login
+$appName = Read-Host 'Existing, configured Heroku app name'
+heroku git:remote --app $appName
+if ($LASTEXITCODE -ne 0) { throw 'Could not configure the Heroku remote.' }
+git remote get-url heroku
+# Only after GitHub CI passes for this exact main commit and the database is ready:
+git push heroku main
+if ($LASTEXITCODE -ne 0) { throw 'Heroku push failed; check the build output before continuing.' }
+```
+
+Confirm the displayed Heroku remote belongs to the intended app before pushing. A direct Git push starts a build/release and does not enforce GitHub checks itself. Keep GitHub automatic deployment Off while using this manual path, and do not also use Deploy Branch for the same release. Prefer the GitHub integration for subsequent CI-gated deployments. See [Heroku Git deployment](https://devcenter.heroku.com/articles/git) and [GitHub integration](https://devcenter.heroku.com/articles/github-integration).
+
 ## Activation and data transfer — future operations
 
 Perform these steps only after account/credit verification and an explicit request to activate the migration. Keep Heroku automatic deployment **Off** while configuring and testing. Preserve Render's **After CI Checks Pass** setting; preparation does not change Render or its PostgreSQL database.

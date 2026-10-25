@@ -12,7 +12,7 @@ The Chrome-to-Chrome browser smoke passed on **Chrome 155.0.8059.86** with indep
 
 Production landing QA passed five viewports, navigation/focus, installation guide, guided demo, embedded previews, video lifecycle/fallbacks, reduced motion and project-relative assets. Privacy rendered without overflow or page errors at 360 and 1280 pixels. Publisher data and verified-deletion instructions are filled in; current Render provider retention remains explicitly unverified and is a store-submission gate.
 
-No Heroku resources, account verification, credit activation, production migration, Git push or store submission were performed. Native clean-install permission prompts/revocation, Windows clipboard content, two-computer/two-network sessions, live Heroku TLS and production backup restoration still require the pre-publication checks. These local captures and tests do not establish those results.
+No Heroku resources, account verification, credit activation, production migration or store submission were performed. Native clean-install permission prompts/revocation, Windows clipboard content, two-computer/two-network sessions, live Heroku TLS and production backup restoration still require the pre-publication checks. These local captures and tests do not establish those results.
 
 ## First-use sharing and 0.6.4: October 19, 2026
 
