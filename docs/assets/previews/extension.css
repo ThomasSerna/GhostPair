@@ -15,7 +15,6 @@ label{font-weight:550;display:block;line-height:1.5;margin:18px 0 0}
 label>input:not([type=checkbox]),label>textarea{margin-top:7px}
 h1{font-size:28px;font-weight:570;letter-spacing:-.03em;margin:13px 0 10px;line-height:1.18}
 .muted{color:var(--muted);font-size:13px;line-height:1.6;margin:0}
-.eyebrow{color:#a7c5b6;letter-spacing:1.5px;font-size:9px;font-weight:650;margin:0}
 .popup{width:398px;padding:20px 22px 0;min-height:420px;max-height:600px;overflow-y:auto}
 .popup-header{display:flex;align-items:center;justify-content:space-between;padding-bottom:16px;border-bottom:1px solid var(--line)}
 .brand{display:grid;grid-template-columns:38px 1fr;column-gap:10px;align-items:center}
@@ -67,7 +66,6 @@ kbd{font:10px inherit;border:1px solid #3d4941;padding:1px 4px;border-radius:3px
 .viewer{height:100dvh;display:flex;flex-direction:column;overflow:hidden;background:#0d1512}
 .viewer-header{height:66px;display:flex;align-items:center;padding:0 24px;border-bottom:1px solid var(--line);gap:35px;flex-shrink:0}
 .viewer-session{display:flex;align-items:center;gap:19px;flex:1}
-.viewer-session>.muted{font-size:11px;border-left:1px solid var(--line);padding-left:19px}
 .danger.small{width:auto;margin:0;font-size:11px;padding:8px 13px}
 .remote-tabs{display:flex;align-items:end;gap:5px;padding:12px 16px 0;background:#15221b;overflow-x:auto;flex-shrink:0;min-height:48px}
 .remote-tab{display:flex;min-width:100px;max-width:220px;border-radius:8px 8px 0 0;background:#1a2b21;border:1px solid transparent;border-bottom:none;flex-shrink:0;color:#a1b1a5}
@@ -97,7 +95,6 @@ kbd{font:10px inherit;border:1px solid #3d4941;padding:1px 4px;border-radius:3px
 @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}
 }
 @media(max-width:700px){.viewer-header{padding:0 14px;gap:15px}
-.viewer-session>.muted{display:none}
 .remote-stage{padding:8px}
 .viewer-footer{padding:10px 14px;font-size:10px}
 .navigation{padding:8px}
@@ -114,12 +111,12 @@ kbd{font:10px inherit;border:1px solid #3d4941;padding:1px 4px;border-radius:3px
 .new-tab-dialog::backdrop{background:#0009}
 .shared-tabs{margin-top:18px}
 .shared-tabs ul{list-style:none;margin:8px 0 0;padding:0;max-height:152px;overflow-y:auto}
-.shared-tabs li{display:flex;align-items:center;gap:12px;border-bottom:1px solid var(--line);padding:9px 0}
+.shared-tabs li{display:flex;align-items:center;gap:12px;border-bottom:1px solid var(--line);padding:8px 0}
 .shared-tabs li>div{min-width:0;flex:1}
 .shared-tabs strong{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px}
 .shared-tabs .helper{display:block;margin-top:3px}
 .shared-tabs li button{flex-shrink:0;margin:0}
-.shared-tabs>.secondary{margin-top:12px}
+.shared-tabs>.secondary{margin-top:10px}
 select{font:inherit;width:100%;margin-top:7px;padding:10px;border:1px solid #3a4842;border-radius:9px;background:#14201b;color:var(--text)}
 select:focus-visible{outline:2px solid var(--mint);outline-offset:3px}
 .control-mode{font-size:10px;color:var(--mint);white-space:nowrap}
@@ -134,10 +131,9 @@ select:focus-visible{outline:2px solid var(--mint);outline-offset:3px}
 .simulation-colors:disabled{opacity:.5}
 .custom-color{display:flex;align-items:center;gap:10px;font-size:12px}
 .custom-color input[type=color]{width:42px;height:32px;padding:2px;margin:0;border-radius:6px;cursor:pointer}
-.custom-color span{color:var(--muted);font:11px monospace}
 
 .simulation-lifetime{border:0;padding:0;margin:18px 0 0;min-width:0}
-.simulation-lifetime legend{font-size:12px;font-weight:600;color:var(--mint);padding:0}
+.simulation-lifetime legend{font-size:12px;font-weight:600;color:var(--text);padding:0}
 .simulation-lifetime label{margin-top:9px}
 
 /* Task-focused extension surfaces retain the established forest and mint palette. */
@@ -172,9 +168,7 @@ input,textarea{caret-color:var(--mint)}
 .copy-button svg{width:15px;height:15px}
 .shared-tabs h2{display:flex;align-items:center;justify-content:space-between}
 .tab-count{font-size:11px;font-weight:400;font-variant-numeric:tabular-nums;color:var(--muted)}
-.shared-tabs li{padding:8px 0}
 .shared-tabs .text-button{font-size:11px;padding:7px 3px}
-.shared-tabs>.secondary{margin-top:10px}
 .session-controls{border-top:1px solid var(--line);margin-top:16px;padding-top:2px}
 .session-controls .check{font-size:13px}
 .session-controls>label:not(.check){font-size:12px}
@@ -202,7 +196,6 @@ input,textarea{caret-color:var(--mint)}
 .connection-panel .advanced-options{margin-top:20px}
 .feedback-options{margin-top:22px}
 .feedback-options label,.interaction-feedback label{font-size:12px}
-.simulation-lifetime legend{color:var(--text)}
 .viewer-session{min-width:0;flex-wrap:wrap;gap:5px 14px}
 .viewer-header>.danger{flex-shrink:0}
 .viewer-icon{display:inline-block;width:18px;height:18px;vertical-align:middle}

@@ -1,6 +1,6 @@
 {
-  "version": "0.6.5",
-  "generatedAt": "2026-10-25T00:32:47.082Z",
+  "version": "0.6.6",
+  "generatedAt": "2026-10-25T18:05:08.626Z",
   "browser": "Chrome/155.0.8059.86",
   "source": "Production dist/extension; temporary test copies pregrant host access. No mocked UI or session state.",
   "buildDefaults": {

@@ -1,6 +1,6 @@
 # Production and portable PostgreSQL deployment
 
-Production signaling is **https://ghostpair-3c9f3903aad3.herokuapp.com**. See [Heroku operations](heroku.md) for its runtime configuration, deployment and recovery procedures. The extension's 0.6.5 production defaults use this origin, without the `/ready` health-check path. The Render instructions below describe the previous provider and remain available for recovery or a separate deployment.
+Production signaling is **https://ghostpair-3c9f3903aad3.herokuapp.com**. See [Heroku operations](heroku.md) for its runtime configuration, deployment and recovery procedures. The extension's 0.6.6 production defaults use this origin, without the `/ready` health-check path. The Render instructions below describe the previous provider and remain available for recovery or a separate deployment.
 
 The same Node 24 Docker image runs on Render, Koyeb or another container host. PostgreSQL is selected by `DATABASE_URL`; without it the server uses `DATABASE_PATH` and SQLite for local development or a persistent host. A failed PostgreSQL connection never falls back to SQLite. Rooms and pairing state remain in memory: run **exactly one signaling instance** even with PostgreSQL.
 

@@ -1,6 +1,6 @@
 # Heroku production operations
 
-The official signaling service is **https://ghostpair-3c9f3903aad3.herokuapp.com**. Its `/health` and `/ready` endpoints returned HTTP 200 on October 24, 2026. Extension 0.6.5 uses this origin by default; the health-check path is not part of the configured signaling URL. The landing stays on GitHub Pages.
+The official signaling service is **https://ghostpair-3c9f3903aad3.herokuapp.com**. Its `/health` and `/ready` endpoints returned HTTP 200 on October 24, 2026. Extension 0.6.6 uses this origin by default; the health-check path is not part of the configured signaling URL. The landing stays on GitHub Pages.
 
 Read-only Heroku CLI checks on October 24, 2026 confirmed app `ghostpair`, Cedar generation, stack `heroku-26`, US region, maintenance disabled and no log drains. PGBackups listed no schedules, backups, restores or copies. A backup schedule and restoration exercise therefore remain pending; the extension release does not configure them. Account credits, a completed Render data transfer and real cross-network sessions are not established by these checks. Render at `https://ghostpair.onrender.com` is the previous service; preserve its **After CI Checks Pass** auto-deploy setting and retained data unless a separate retirement is requested. No account resources or store submissions are created by changing this repository.
 

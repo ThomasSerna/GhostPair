@@ -1,5 +1,11 @@
 # GhostPair validation
 
+## Extension audit, SPA navigation and 0.6.6 packages: October 25, 2026
+
+Release **0.6.6** includes the SPA navigation fix (`history.pushState` / `history.replaceState` keeping the shared view and remote control active without resetting document capture), resolves clipboard and viewer race conditions (publishing pre-connection remote clipboard state before starting the initial clipboard poll, propagating automatic clipboard error disablement across host snapshots and the guest offscreen adapter, recreating an idle offscreen document on demand for guest clipboard reads/writes, cleaning up pending viewer requests when the connection page reconnects on the same tab, and preserving the active `<video>` stream when toggling remote control or receiving presentation metadata after the first decoded frame), and removes dead markup, redundant state checks, duplicate/unused CSS selectors and leftover untranslated clipboard messages. Root/workspace/lockfile/manifest versions match **0.6.6**; permissions, Heroku signaling defaults and peer protocol **4** are unchanged.
+
+Workspace type checks, **181 Vitest tests in 17 files**, **8 Node release tests**, **140 UI assertions**, preview/store export (`export-previews.mjs --store`) and `npm run package:store` passed, producing `ghostpair-chrome-0.6.6.zip` and `ghostpair-edge-0.6.6.zip`.
+
 ## Heroku endpoint and 0.6.5 store packages: October 24, 2026
 
 Release **0.6.5** switches the public production defaults, official server preset, installation guide and release instructions to `https://ghostpair-3c9f3903aad3.herokuapp.com`. The origin has no `/ready` suffix. Root/workspace/lockfile/manifest versions match; permissions and peer protocol **4** are unchanged. A regression confirms saved Render settings and credentials remain intact and switching to Heroku registers an independent identity.
