@@ -59,6 +59,18 @@ async function harness(stored: Record<string, unknown> = {}) {
 afterEach(() => vi.unstubAllGlobals());
 
 describe('background connection ownership and settings', () => {
+  it('preserves saved Render settings and registers a separate identity when switching to Heroku', async () => {
+    const settings = { ...GHOSTPAIR_SERVER_SETTINGS, signalingUrl: 'https://ghostpair.onrender.com' };
+    const oldIdentity = { deviceId: 'c'.repeat(32), ownerToken: 'd'.repeat(64) };
+    const h = await harness({ settings, identities: { [settings.signalingUrl]: oldIdentity } });
+    expect((await h.send('ui.status')).state).toMatchObject({ settings, deviceId: oldIdentity.deviceId });
+    const saved = await h.send('ui.settings.save', { settings: GHOSTPAIR_SERVER_SETTINGS });
+    expect(saved.state.settings).toEqual(GHOSTPAIR_SERVER_SETTINGS);
+    expect(saved.state.deviceId).toBeUndefined();
+    await h.send('ui.host.start', { password: 'Eight-42' });
+    expect(h.runtime.sendMessage).toHaveBeenCalledWith({ target: 'offscreen', type: 'identity.register', settings: GHOSTPAIR_SERVER_SETTINGS });
+    expect(h.stored.identities).toEqual({ [settings.signalingUrl]: oldIdentity, [GHOSTPAIR_SERVER_SETTINGS.signalingUrl]: h.registered });
+  });
   it('saves only allowed visibility preferences from the authorized host panel in either mode', async () => {
     const h = await harness();
     const send = (fields: object) => h.sendPage('dom.preferences', fields);

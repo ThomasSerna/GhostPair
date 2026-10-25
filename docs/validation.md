@@ -1,5 +1,19 @@
 # GhostPair validation
 
+## Heroku endpoint and 0.6.5 store packages: October 24, 2026
+
+Release **0.6.5** switches the public production defaults, official server preset, installation guide and release instructions to `https://ghostpair-3c9f3903aad3.herokuapp.com`. The origin has no `/ready` suffix. Root/workspace/lockfile/manifest versions match; permissions and peer protocol **4** are unchanged. A regression confirms saved Render settings and credentials remain intact and switching to Heroku registers an independent identity.
+
+`npm ci`, workspace type checks, **175 Vitest tests in 17 files**, **8 Node release tests**, **140 UI assertions**, environment/build-precedence checks and `npm run package:store` passed. Both ZIPs contain **18 files**, Manifest V3, the existing permissions and Heroku defaults, without environment files, source maps, tests, required test host grants or the old Render origin in runtime JavaScript.
+
+`npm run test:heroku` passed on Node **24.15.0** using isolated Docker PostgreSQL: fresh signaling-only build, development dependency pruning, missing-database rejection, injected port, health/readiness/privacy, authenticated registration, persistence through database/server restart and the Windows shutdown-handler bridge. The Chrome-to-Chrome smoke passed on **Chrome 155.0.8059.86** with separate extension IDs, real tab video, root/embedded questionnaires, cancellation, tab authorization, control withdrawal and session termination. Temporary test copies pregrant site access; the shipped manifest does not.
+
+The real-session preview exporter regenerated and verified the website examples and all three visually reviewed **1280×800** store PNGs for 0.6.5. Metadata records the Heroku build defaults and local signaling/STUN test session. Production landing checks covered five viewports; installation/explore checks passed after updating their expected production URL. The updated privacy source rendered without overflow or page errors at 360 and 1280 pixels.
+
+Read-only production checks returned **200** from Heroku `/health` and `/ready`, **204** with the expected Chrome origin from registration preflight, and a successful WSS upgrade to `/v1/connect` with normal TLS certificate verification. No production registration or session was created. These checks do not establish long-term uptime, database backup restoration or cross-network WebRTC behavior.
+
+Read-only Heroku CLI checks confirmed Cedar, stack **heroku-26**, US region, maintenance off and no external log drains. PGBackups listed no schedules, backups, restores or copies. The privacy source records the verified Logplex configuration and the absence of configured PGBackups; scheduling and testing recovery remain outstanding. The live Heroku and GitHub Pages privacy copies still described Render at inspection time and require deployment before store review. Publisher declarations, native clean-install permission/clipboard checks and separate-computer/network sessions remain unverified. No store submission, production database operation or deployment-setting change was performed.
+
 ## Heroku and Chrome Web Store preparation: October 24, 2026
 
 Prepared the official Node buildpack entrypoint, Node 24 bounds, PostgreSQL-only Heroku startup guard, safe runtime environment example, and migration/rollback runbook. Render remains the official endpoint; the extension version stays **0.6.4** until the actual endpoint change. CI now includes the isolated Heroku build/runtime smoke before the existing production build.

@@ -3,7 +3,7 @@ import { Icon } from "../components/Icons";
 import "./installation.css";
 
 const releases = "https://github.com/ThomasSerna/GhostPair/releases/latest";
-const officialServer = "https://ghostpair.onrender.com";
+const officialServer = "https://ghostpair-3c9f3903aad3.herokuapp.com";
 const officialStun = "stun:stun.l.google.com:19302";
 const chapters = [
   ["install-extension", "Install the extension"],

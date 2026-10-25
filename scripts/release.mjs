@@ -32,7 +32,7 @@ export async function publishRelease({ github, repo, version, sha, directory = '
     release = (await github.rest.repos.createRelease({
       ...repo, tag_name: tag, target_commitish: sha, name: `GhostPair ${version}`,
       draft: true, generate_release_notes: true,
-      body: (notes ? `${notes}\n\n` : '') + '## Install\n\nDownload the ZIP for Chrome or Edge below (not the source code archives), extract it into a permanent folder, open `chrome://extensions` or `edge://extensions`, enable **Developer mode**, choose **Load unpacked**, and select the folder containing `manifest.json`.\n\nFor updates, replace the files in that same folder and click **Reload**; do not uninstall if you want to retain saved settings and identity. Update both participants together.\n\nThese packages use https://ghostpair.onrender.com. Store submission remains a separate process.\n',
+      body: (notes ? `${notes}\n\n` : '') + '## Install\n\nDownload the ZIP for Chrome or Edge below (not the source code archives), extract it into a permanent folder, open `chrome://extensions` or `edge://extensions`, enable **Developer mode**, choose **Load unpacked**, and select the folder containing `manifest.json`.\n\nFor updates, replace the files in that same folder and click **Reload**; do not uninstall if you want to retain saved settings and identity. Update both participants together.\n\nThese packages use https://ghostpair-3c9f3903aad3.herokuapp.com. Store submission remains a separate process.\n',
     })).data;
   }
   for (const file of files) {

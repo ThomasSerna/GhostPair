@@ -1,12 +1,12 @@
-# Render and portable PostgreSQL deployment
+# Production and portable PostgreSQL deployment
 
-For the prepared, inactive Heroku target and future cutover procedure, see [Heroku migration](heroku.md). Render remains the current production service until that procedure is explicitly activated.
+Production signaling is **https://ghostpair-3c9f3903aad3.herokuapp.com**. See [Heroku operations](heroku.md) for its runtime configuration, deployment and recovery procedures. The extension's 0.6.5 production defaults use this origin, without the `/ready` health-check path. The Render instructions below describe the previous provider and remain available for recovery or a separate deployment.
 
 The same Node 24 Docker image runs on Render, Koyeb or another container host. PostgreSQL is selected by `DATABASE_URL`; without it the server uses `DATABASE_PATH` and SQLite for local development or a persistent host. A failed PostgreSQL connection never falls back to SQLite. Rooms and pairing state remain in memory: run **exactly one signaling instance** even with PostgreSQL.
 
-## Current Render service
+## Previous Render service
 
-Production URL: **https://ghostpair.onrender.com**. The existing [GhostPair service](https://dashboard.render.com/web/srv-damu2lp42hec73cgnlg0) builds `ThomasSerna/GhostPair`, branch `main`, using `./Dockerfile` and repository-root build context. PostgreSQL runtime variables are configured; `/health` and `/ready` were confirmed healthy on September 27, 2026. The health-check path is `/ready`.
+Previous production URL: **https://ghostpair.onrender.com**. The [GhostPair Render service](https://dashboard.render.com/web/srv-damu2lp42hec73cgnlg0) builds `ThomasSerna/GhostPair`, branch `main`, using `./Dockerfile` and repository-root build context. PostgreSQL runtime variables were configured; `/health` and `/ready` were confirmed healthy on September 27, 2026. Its current status is separate from the Heroku release. The health-check path is `/ready`.
 
 Set **Auto-Deploy → After CI Checks Pass**. Every branch push and pull request runs the CI workflow; only `main` deploys this service. The workflow's **CI required** job rejects failed, cancelled or skipped verification. Render waits for GitHub checks, including release publication when applicable, before deploying. No deploy hook or Render API token is needed in GitHub. Keep this setting instead of On Commit. See [Render CI integration](https://render.com/docs/deploys#integrating-with-ci).
 
@@ -24,7 +24,7 @@ Render Free still discards local files on redeploy, restart or idle spin-down; i
 
 Any valid `chrome-extension://` origin with a 32-character Chrome/Edge ID is accepted without registration of that ID. HTTP web origins, missing origins and malformed IDs remain rejected; localhost HTTP origins require the explicit development flag. Legacy `ALLOWED_ORIGINS` values are ignored and may remain during the transition. Authentication, session passwords and rate limits still apply.
 
-The committed `.env.production` contains only public extension defaults for `https://ghostpair.onrender.com` and external STUN. No database configuration enters the extension. Existing manually saved endpoints require **Use build defaults**. There is still no TURN relay, and cross-network P2P remains a separate browser check.
+The committed `.env.production` contains only public extension defaults for `https://ghostpair-3c9f3903aad3.herokuapp.com` and external STUN. No database configuration enters the extension. Existing manually saved endpoints require choosing **GhostPair server** and **Save**. There is still no TURN relay, and cross-network P2P remains a separate browser check.
 
 ### Other hosts
 

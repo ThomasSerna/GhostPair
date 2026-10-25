@@ -71,6 +71,7 @@ test('release publication is versioned, bound to its commit and safe to retry', 
     assert.equal(github.releases[0].generate_release_notes, true);
     assert.match(github.releases[0].body, /^## Install\n\n/);
     assert.match(github.releases[0].body, /Load unpacked/);
+    assert.match(github.releases[0].body, /https:\/\/ghostpair-3c9f3903aad3\.herokuapp\.com/);
     const before = JSON.stringify(github.releases);
     await publishRelease({ github, repo, version, sha: 'b'.repeat(40), directory });
     assert.equal(github.calls.length, 4);

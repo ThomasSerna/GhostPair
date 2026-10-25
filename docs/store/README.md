@@ -1,6 +1,6 @@
 # Chrome Web Store assets
 
-Prepared for GhostPair's first Chrome listing. Submit only after the Heroku migration and the account, privacy and real-browser gates in [Publishing](../publishing.md) are complete. Edge submission is outside this preparation.
+Prepared for GhostPair's first Chrome listing. Version 0.6.5 uses the active Heroku signaling origin. Submit only after the account, privacy and real-browser gates in [Publishing](../publishing.md) are complete. Edge submission is outside this preparation.
 
 ## Screenshots
 
@@ -18,7 +18,7 @@ To regenerate on Windows with Chrome installed, run `npm run build`, then `node 
 
 Inspect every image before upload: no real browsing data, credentials, actual connection codes or personal clipboard contents. Any shown code must belong to a disposable synthetic test installation. These local captures do not verify native browser permission prompts, capture indicators, Windows clipboard behavior or sessions between separate computers/networks. Follow [Validation](../validation.md) for those checks.
 
-The current captures prepare the listing while Render remains production. After Heroku activation, rebuild the release and confirm the images still match the submitted package; recapture any changed screens. They must not imply that the listing is published, that Heroku is already live or that unsupported networks/features work.
+Confirm the images and `metadata.json` match the submitted 0.6.5 package; regenerate captures after any visible interface change. The active signaling origin is `https://ghostpair-3c9f3903aad3.herokuapp.com`. Local screenshot generation does not establish production WebRTC connectivity, store publication or support for every network.
 
 ## Upload details
 

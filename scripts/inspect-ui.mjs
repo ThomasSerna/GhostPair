@@ -7,7 +7,7 @@ import { resolve } from 'node:path';
 // UI behavior and visual QA use mocked Chrome APIs. Native browser suites verify capture/WebRTC.
 const output = resolve('tests/browser/.artifacts/ui');
 const checkOnly = process.argv.includes('--check-only');
-const official = { signalingUrl: 'https://ghostpair.onrender.com', stunUrls: ['stun:stun.l.google.com:19302'] };
+const official = { signalingUrl: 'https://ghostpair-3c9f3903aad3.herokuapp.com', stunUrls: ['stun:stun.l.google.com:19302'] };
 const code = '0123456789abcdef0123456789abcdef';
 const manifest = JSON.parse(readFileSync('apps/extension/public/manifest.json', 'utf8'));
 const server = await createServer({ root: resolve('apps/extension'), optimizeDeps: { entries: ['popup.html', 'viewer.html'] }, server: { host: '127.0.0.1', port: 5193, strictPort: true } });

@@ -51,7 +51,7 @@ Product facts are grounded in `README.md`, `docs/architecture.md`, and the exten
 - Chrome and Edge on Windows are the documented environment. Audio, desktop sharing, browser chrome, internal browser pages, and native dialogs are unsupported.
 - There is no TURN relay, so some networks cannot connect. Live control uses synthetic events and does not guarantee compatibility with every site.
 - Browser permissions and native capture indicators remain enabled. Avoid claims of invisible control or bypassing site restrictions.
-- Preserve the documented production signaling endpoint, `https://ghostpair.onrender.com`, and keep credentials out of Git and public build variables. Website work does not require a signaling deployment.
+- Preserve the documented production signaling endpoint, `https://ghostpair-3c9f3903aad3.herokuapp.com`, and keep credentials out of Git and public build variables. Website work does not require a signaling deployment.
 
 ## Brand Commitments
 

@@ -1,7 +1,7 @@
 import { SettingsSchema, type Settings } from '@ghostpair/protocol';
 
 export const GHOSTPAIR_SERVER_SETTINGS: Settings = {
-  signalingUrl: 'https://ghostpair.onrender.com',
+  signalingUrl: 'https://ghostpair-3c9f3903aad3.herokuapp.com',
   stunUrls: ['stun:stun.l.google.com:19302'],
 };
 

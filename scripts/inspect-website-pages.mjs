@@ -186,7 +186,7 @@ async function inspectInstallation(page, width) {
   assert.equal(await steps.count(), 5, 'The installation process is numbered');
   for (const step of await steps.all()) assert.ok(await step.isVisible(), 'All installation steps are readable without completing an exercise');
   for (const pattern of [/permanent/i, /Developer mode/, /Load unpacked/, /manifest\.json/]) assert.match(await install.textContent(), pattern);
-  assert.match(await page.locator('#connection-settings').textContent(), /ghostpair\.onrender\.com/, 'The download uses the production server');
+  assert.match(await page.locator('#connection-settings').textContent(), /ghostpair-3c9f3903aad3\.herokuapp\.com/, 'The download uses the production server');
 
   const chrome = install.getByRole('radio', { name: 'Chrome', exact: true });
   const edge = install.getByRole('radio', { name: 'Edge', exact: true });
