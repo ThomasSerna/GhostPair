@@ -68,7 +68,7 @@ describe('TabCapture authorization and scoped control', () => {
     await h.capture.execute({ type: 'input.release', controlRevision: 0, ...original });
     expect(h.browser.tabs.sendMessage.mock.calls.some(([, message]) => message.operation === 'release')).toBe(true);
     expect(h.commands()).toHaveLength(0);
-    h.browser.tabs.onZoomChange.emit({ tabId: 12 }); await h.capture.refresh();
+    h.browser.tabs.onZoomChange.emit({ tabId: 12, oldZoomFactor: 1, newZoomFactor: 1.25 }); await h.capture.refresh();
     h.browser.tabs.sendMessage.mockClear();
     await h.capture.execute({ type: 'input.release', controlRevision: 0, ...original });
     expect(h.browser.tabs.sendMessage).not.toHaveBeenCalled();
@@ -135,6 +135,8 @@ describe('TabCapture authorization and scoped control', () => {
 
   it('invalidates immediately on navigation and admits input only for the new document', async () => {
     const h = harness(); await h.share(); const old = h.target();
+    h.browser.webNavigation.onBeforeNavigate.emit({ tabId: 12, frameId: 0 });
+    expect(h.current()).toBeUndefined();
     Object.assign(h.tabs.get(12), { status: 'loading', url: 'https://second.example.com' });
     h.browser.tabs.onUpdated.emit(12, { status: 'loading', url: 'https://second.example.com' }, h.tabs.get(12));
     expect(h.current()).toBeUndefined();
@@ -155,6 +157,41 @@ describe('TabCapture authorization and scoped control', () => {
     await h.capture.execute({ type: 'text', controlRevision: 0, ...h.target(), text: 'still usable' });
     h.browser.webNavigation.onBeforeNavigate.emit({ tabId: 12, frameId: 0 });
     expect(h.current()).toBeUndefined(); await h.capture.stop();
+  });
+
+  it.each(['complete', 'loading'])('keeps the shared document during SPA URL changes while the tab is %s', async status => {
+    const h = harness(); await h.share(); const original = h.current(), target = h.target();
+    const injections = h.browser.scripting.executeScript.mock.calls.length;
+    if (status === 'loading') h.browser.webNavigation.onBeforeNavigate.emit({ tabId: 12, frameId: 9 });
+    for (const path of ['/messages', '/profile?view=recent', '/profile?view=recent#activity']) {
+      const url = `https://example.com${path}`, title = `Section ${path}`;
+      Object.assign(h.tabs.get(12), { status, url, title });
+      h.browser.tabs.onUpdated.emit(12, { status, url, title }, h.tabs.get(12));
+      h.browser.tabs.onZoomChange.emit({ tabId: 12, oldZoomFactor: 1, newZoomFactor: 1 });
+      expect(h.current()).toBe(original);
+      await vi.advanceTimersByTimeAsync(150);
+      expect(h.current()).toBe(original); expect(h.target()).toEqual(target);
+      expect(h.hooks.state.mock.lastCall![0][0]).toMatchObject({ url, title, captureState: 'ready' });
+      await h.capture.execute({ type: 'text', controlRevision: 0, ...target, text: 'still usable' });
+    }
+    expect(h.commands()).toHaveLength(3);
+    expect(h.browser.scripting.executeScript).toHaveBeenCalledTimes(injections);
+    expect(h.browser.tabCapture.getMediaStreamId).toHaveBeenCalledTimes(1);
+    expect(h.hooks.acquire).toHaveBeenCalledTimes(1); expect(h.hooks.release).not.toHaveBeenCalled();
+    await h.capture.stop();
+  });
+
+  it.each(['chrome://settings', 'https://chromewebstore.google.com/detail/test'])('immediately blocks a URL update to %s without a navigation event', async url => {
+    const h = harness(); await h.share(); const old = h.target();
+    h.tabs.get(12).url = url;
+    h.browser.tabs.onUpdated.emit(12, { url }, h.tabs.get(12));
+    expect(h.current()).toBeUndefined();
+    await expect(h.capture.execute({ type: 'text', controlRevision: 0, ...old, text: 'blocked' })).rejects.toThrow('shared page changed');
+    await vi.advanceTimersByTimeAsync(150);
+    expect(h.current()).toBeUndefined();
+    expect(h.hooks.state.mock.lastCall![0][0]).toMatchObject({ supported: false, captureState: 'unavailable' });
+    expect(h.commands()).toHaveLength(0);
+    expect(h.browser.tabCapture.getMediaStreamId).toHaveBeenCalledTimes(1); await h.capture.stop();
   });
 
   it('rejects a pending action if control is withdrawn and restored while resolving its tab', async () => {
@@ -186,7 +223,7 @@ describe('TabCapture authorization and scoped control', () => {
     expect(h.current()).toBeUndefined();
     await expect(h.capture.execute({ type: 'text', controlRevision: 0, ...old, text: 'old' })).rejects.toThrow('shared page changed');
     await h.capture.refresh(); const resized = h.target(); expect(resized.generation).toBeGreaterThan(old.generation);
-    h.browser.tabs.onZoomChange.emit({ tabId: 12, newZoomFactor: 1.25 }); expect(h.current()).toBeUndefined();
+    h.browser.tabs.onZoomChange.emit({ tabId: 12, oldZoomFactor: 1, newZoomFactor: 1.25 }); expect(h.current()).toBeUndefined();
     await expect(h.capture.execute({ type: 'text', controlRevision: 0, ...resized, text: 'old' })).rejects.toThrow('shared page changed'); await h.capture.stop();
   });
 

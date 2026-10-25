@@ -36,15 +36,16 @@ export class TabCapture {
     chrome.tabs.onActivated.addListener(info => { if (info.windowId === this.windowId) { this.invalidate(); this.schedule(); } });
     chrome.tabs.onUpdated.addListener((id, change, tab) => {
       if (tab.windowId !== this.windowId) return;
-      // A child frame can set the tab's status to loading without changing its video document.
-      if (id === this.activeTabId && change.url) this.invalidate();
+      // SPA URL changes keep the video document; a loading child must not block it.
+      if (id === this.activeTabId && change.url && !isSupportedUrl(change.url)) this.invalidate();
       if (change.status || change.url || change.title) this.schedule();
     });
     chrome.tabs.onCreated.addListener(tab => { if (tab.windowId === this.windowId) this.schedule(); });
     chrome.tabs.onRemoved.addListener((id, info) => { if (info.windowId === this.windowId) void this.release(id); });
     chrome.tabs.onDetached.addListener((id, info) => { if (info.oldWindowId === this.windowId) void this.release(id); });
     chrome.tabs.onAttached.addListener((_id, info) => { if (info.newWindowId === this.windowId) this.schedule(); });
-    chrome.tabs.onZoomChange.addListener(info => { if (info.tabId === this.activeTabId) { this.invalidate(true); this.schedule(); } });
+    // Chrome can report an unchanged zoom factor during same-document navigation.
+    chrome.tabs.onZoomChange.addListener(info => { if (info.tabId === this.activeTabId && info.oldZoomFactor !== info.newZoomFactor) { this.invalidate(true); this.schedule(); } });
     chrome.windows.onBoundsChanged.addListener(window => {
       if (window.id !== this.windowId) return;
       this.invalidate(window.state !== 'minimized');

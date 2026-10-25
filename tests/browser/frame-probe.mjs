@@ -6,8 +6,19 @@ import { createServer } from '../../apps/signaling/dist/server.js';
 import { launchExtension, closeBrowser, removeTestArtifact, poll, artifactRoot, copyTestExtension, callBackground as call, authorizeTab as authorize } from './helpers.mjs';
 import { startStun } from './stun.mjs';
 
+const pendingFrames = new Set();
 const fixture = httpServer((request, response) => {
   response.setHeader('Content-Type', 'text/html; charset=utf-8');
+  if (request.url === '/pending-frame') {
+    pendingFrames.add(response); response.on('close', () => pendingFrames.delete(response));
+    response.write('<!doctype html><title>Pending embedded resource</title><body>Still loading'); return;
+  }
+  if (request.url.startsWith('/spa')) {
+    response.end(`<!doctype html><title>SPA feed</title><style>body{margin:0;min-height:100vh;background:rgb(210,70,30);font:20px sans-serif}nav{padding:20px}button{font:inherit;margin:10px;padding:10px}iframe{position:absolute;left:0;bottom:0;width:1px;height:1px;border:0}</style><nav><button data-section="profile">Profile</button><button data-section="messages">Messages</button></nav><h1>feed</h1><script>
+      const colors={profile:'rgb(30,170,60)',messages:'rgb(30,70,210)'};
+      document.querySelector('nav').addEventListener('click',event=>{const section=event.target.dataset.section;if(!section)return;history.pushState({},'', '/spa/'+section);document.title='SPA '+section;document.querySelector('h1').textContent=section;document.body.style.background=colors[section]});
+    </script>`); return;
+  }
   const port = fixture.address().port;
   const child = request.url !== '/';
   response.end(`<!doctype html><meta charset="utf-8"><title>GhostPair embedded control fixture</title>
@@ -37,7 +48,7 @@ try {
       host = await launchExtension(name, extensionPath); guest = await launchExtension(name, extensionPath);
       signal = createServer({ databasePath: ':memory:', port: 0 });
       const address = await signal.listen(0), settings = { signalingUrl: `http://127.0.0.1:${address.port}`, stunUrls: [stun.url] };
-      const menu = await host.context.newPage(); await menu.goto(`chrome-extension://${host.id}/popup.html`);
+      let menu = await host.context.newPage(); await menu.goto(`chrome-extension://${host.id}/popup.html`);
       const viewer = await guest.context.newPage(); await viewer.goto(`chrome-extension://${guest.id}/viewer.html`);
       await call(menu, 'ui.settings.save', { settings }); await call(viewer, 'ui.settings.save', { settings });
       const page = await host.context.newPage(); await page.goto(base); await authorize(host, page);
@@ -58,6 +69,42 @@ try {
       const pointer = async (locator, event, extra = {}) => command({ type: 'pointer', ...await point(locator), event, button: 'left', buttons: event === 'up' ? 0 : 1, modifiers: 0, clickCount: 1, ...extra });
       const click = async (locator, extra) => { await pointer(locator, 'down', extra); await pointer(locator, 'up', extra); };
       const count = locator => locator.evaluate(() => probe.clicks.length);
+      await menu.close();
+      await page.goto(`${base}/spa`); const spa = await ready();
+      const popupUrl = `chrome-extension://${host.id}/popup.html`;
+      for (const target of (await host.cdp.send('Target.getTargets')).targetInfos.filter(target => target.url === popupUrl)) await host.cdp.send('Target.closeTarget', { targetId: target.targetId });
+      await page.evaluate(url => { const frame = document.createElement('iframe'); frame.src = url; document.body.append(frame); }, `${base}/pending-frame`);
+      await poll(() => host.worker.evaluate(async tabId => (await chrome.tabs.get(tabId)).status === 'loading', spa.activeTabId), 'pending iframe keeps tab loading');
+      const videoSample = () => viewer.locator('video').evaluate(video => {
+        let pixel;
+        if (video.readyState >= 2 && video.videoWidth) {
+          const canvas = document.createElement('canvas'); canvas.width = canvas.height = 1;
+          const context = canvas.getContext('2d');
+          context.drawImage(video, Math.floor(video.videoWidth * .75), Math.floor(video.videoHeight * .75), 1, 1, 0, 0, 1, 1);
+          pixel = [...context.getImageData(0, 0, 1, 1).data].slice(0, 3);
+        }
+        return { pixel, width: video.videoWidth, height: video.videoHeight, readyState: video.readyState, paused: video.paused, generation: video.dataset.generation, hidden: document.hidden, focus: document.hasFocus() };
+      });
+      const sectionReady = async (section, color) => {
+        const current = await poll(async () => {
+          const s = await call(viewer, 'ui.status'), tab = s.tabs.find(tab => tab.id === s.activeTabId);
+          if (!s.presentation || tab?.url !== `${base}/spa/${section}` || tab.title !== `SPA ${section}`) return false;
+          const painted = (await videoSample()).pixel?.every((value, index) => Math.abs(value - color[index]) < 35);
+          return painted && s;
+        }, `SPA ${section} reaches native video with host popup closed`).catch(async error => {
+          const root = await page.evaluate(() => ({ url: location.href, title: document.title, background: getComputedStyle(document.body).backgroundColor, hidden: document.hidden, focus: document.hasFocus(), readyState: document.readyState, viewport: [innerWidth, innerHeight] }));
+          const hostState = await host.worker.evaluate(async tabId => ({ tab: await chrome.tabs.get(tabId), state: (await chrome.storage.session.get('appState')).appState }), spa.activeTabId);
+          throw new Error(`${error.message}; diagnostics=${JSON.stringify({ original: spa.presentation, root, host: hostState, guest: await call(viewer, 'ui.status'), video: await videoSample() })}`);
+        });
+        assert.equal(await page.title(), `SPA ${section}`); assert.equal(page.url(), `${base}/spa/${section}`);
+        assert.deepEqual(current.presentation, spa.presentation, 'same-document navigation preserves video presentation');
+        assert.equal(await host.worker.evaluate(async tabId => (await chrome.tabs.get(tabId)).status, spa.activeTabId), 'loading');
+        assert.ok(!(await host.cdp.send('Target.getTargets')).targetInfos.some(target => target.url === popupUrl), 'host popup stays closed during SPA navigation');
+      };
+      await page.getByRole('button', { name: 'Profile', exact: true }).click(); await sectionReady('profile', [30, 170, 60]);
+      await click(page.getByRole('button', { name: 'Messages', exact: true })); await sectionReady('messages', [30, 70, 210]);
+      menu = await host.context.newPage(); await menu.goto(popupUrl);
+      await page.bringToFront(); await page.goto(base); await ready();
       const a = page.frameLocator('#a'), b = page.frameLocator('#b'), same = page.frameLocator('#same'), nested = same.frameLocator('#nested');
       const canvas = page.locator('#canvas'), canvasPoint = await point(canvas);
       await click(canvas, { modifiers: 2 });
@@ -141,9 +188,9 @@ try {
         return Promise.all(frames.filter(frame => /^https?:/.test(frame.url)).map(async frame => (await chrome.scripting.executeScript({ target: { tabId, documentIds: [frame.documentId] }, world: 'ISOLATED', func: () => Boolean(globalThis.__ghostpairControl) }))[0].result));
       }, waiting.presentation.tabId);
       assert.ok(controllers.every(value => value === false), 'all document controllers disposed');
-      results.push({ browser: name, version: host.version, isolatedWorlds: true, crossOriginSiblings: true, nested: true, visualNestedFocus: true, visualZoom: true, canvas: true, scaledBorders: true, dynamic: true, navigationAndReordering: true, nativeVideo: true, badge: '', passed: true });
+      results.push({ browser: name, version: host.version, isolatedWorlds: true, crossOriginSiblings: true, nested: true, visualNestedFocus: true, visualZoom: true, canvas: true, scaledBorders: true, dynamic: true, navigationAndReordering: true, spaWithPendingFrame: true, nativeVideo: true, badge: '', passed: true });
       console.log(JSON.stringify(results.at(-1)));
     } finally { await signal?.close(); await closeBrowser(guest); await closeBrowser(host); }
   }
   await writeFile(resolve(artifactRoot, 'frame-control-results.json'), JSON.stringify(results, null, 2));
-} finally { await stun.close(); await new Promise(done => fixture.close(done)); await removeTestArtifact(extensionPath); }
+} finally { await stun.close(); for (const response of pendingFrames) response.destroy(); await new Promise(done => fixture.close(done)); await removeTestArtifact(extensionPath); }
