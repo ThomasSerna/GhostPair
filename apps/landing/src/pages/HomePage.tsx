@@ -5,7 +5,7 @@ import ModeDemo from "../components/ModeDemo";
 import { useLandingMotion } from "../motion/useLandingMotion";
 
 const HeroScene = lazy(() => import("../components/hero/HeroScene"));
-const releases = "https://github.com/ThomasSerna/GhostPair/releases/latest";
+const chromeWebStore = "https://chromewebstore.google.com/detail/ghostpair/gmcemjpedmacbgcmfdegpbhfeladinfd";
 const repository = "https://github.com/ThomasSerna/GhostPair";
 
 export default function HomePage() {
@@ -25,7 +25,7 @@ export default function HomePage() {
                 <br className="desktop-break" /> something together.
               </p>
               <div className="hero-actions">
-                <a className="button primary" href={releases}>
+                <a className="button primary" href={chromeWebStore}>
                   Download GhostPair <Icon name="download" />
                 </a>
                 <a
@@ -251,11 +251,11 @@ export default function HomePage() {
                 <span>for two.</span>
               </h2>
               <p>
-                Download &amp; install GhostPair in both browsers.
+                Install GhostPair from Chrome Web Store in both browsers.
                 <br />A shared space starts with you.
               </p>
-              <a className="button install-button" href={releases}>
-                Get the latest release <Icon name="download" />
+              <a className="button install-button" href={chromeWebStore}>
+                Install GhostPair <Icon name="download" />
               </a>
               <p className="install-compatibility">
                 Chrome &amp; Edge · Windows
@@ -266,30 +266,26 @@ export default function HomePage() {
           <ol className="install-steps wrap">
             <li>
               <span className="step-number">01</span>
-              <h3>Choose your browser</h3>
+              <h3>Open Chrome Web Store</h3>
               <p>
-                Download the Chrome or Edge ZIP from the release’s{" "}
-                <strong>Assets</strong>. Choose the extension package, rather
-                than the source code archive.
+                Open the official GhostPair listing in Chrome or Edge.
+                In Edge, allow extensions from other stores if prompted.
               </p>
             </li>
             <li>
               <span className="step-number">02</span>
-              <h3>Extract the ZIP</h3>
+              <h3>Add GhostPair</h3>
               <p>
-                Keep the extracted folder in a permanent location on your
-                computer.
+                Select <strong>Add to Chrome</strong>, review the requested
+                permissions, and confirm <strong>Add extension</strong>.
               </p>
             </li>
             <li>
               <span className="step-number">03</span>
-              <h3>Load the extension</h3>
+              <h3>Pin and connect</h3>
               <p>
-                Open <code>chrome://extensions</code> or{" "}
-                <code>edge://extensions</code>. Enable{" "}
-                <strong>Developer mode</strong>, select{" "}
-                <strong>Load unpacked</strong>, and choose the folder containing{" "}
-                <code>manifest.json</code>.
+                Pin GhostPair from the browser’s Extensions menu. Each
+                participant installs it in their own browser or profile.
               </p>
             </li>
           </ol>

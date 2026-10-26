@@ -13,6 +13,7 @@ const output = resolve(root, '.impeccable/review');
 const base = '/GhostPair/';
 const screenshots = !process.argv.includes('--check-only');
 const pagesOnly = process.argv.includes('--pages-only');
+const officialStore = 'https://chromewebstore.google.com/detail/ghostpair/gmcemjpedmacbgcmfdegpbhfeladinfd';
 const viewports = [[1440, 1000, 'desktop'], [768, 1024, 'tablet'], [390, 844, 'mobile'], [375, 812], [320, 812]];
 const choices = ['shared', 'host', 'guest'];
 const labels = ['Shared view', 'Share a tab', 'Join a session'];
@@ -106,7 +107,10 @@ async function inspectNavigation(page, width) {
   assert.equal(await heroRepository.getAttribute('aria-label'), 'GhostPair repository on GitHub', 'The repository icon has an accessible destination name');
   assert.equal(await heroRepository.locator('svg.github-icon').count(), 1, 'The Home repository link uses the existing GitHub icon');
   assert.equal(await heroRepository.locator('svg.github-icon path').getAttribute('d'), await page.locator('.site-footer .github-link svg.github-icon path').getAttribute('d'), 'Home and footer share the authored GitHub mark');
-  assert.equal(await page.getByRole('link', { name: 'Download GhostPair', exact: true }).getAttribute('href'), 'https://github.com/ThomasSerna/GhostPair/releases/latest');
+  const downloads = page.locator('.hero-actions > a.button, #install .install-button');
+  assert.equal(await downloads.count(), 2, 'Home offers the hero and installation download actions');
+  for (const link of await downloads.all()) assert.equal(await link.getAttribute('href'), officialStore, 'Every Home download opens the official Chrome Web Store listing');
+  assert.doesNotMatch(await page.locator('#install').textContent(), /ZIP|Developer mode|Load unpacked|manifest\.json/, 'Home installation describes the store flow');
 }
 
 async function inspectMotion(page, width) {
@@ -534,6 +538,15 @@ try {
   const origin = `http://127.0.0.1:${server.httpServer.address().port}`;
   const url = origin + base;
   browser = await launchHeadlessBrowser();
+  const noScriptContext = await browser.newContext({ javaScriptEnabled: false });
+  try {
+    const page = await noScriptContext.newPage();
+    await page.goto(url, { waitUntil: 'domcontentloaded' });
+    const download = page.getByRole('link', { name: 'Download GhostPair', exact: true });
+    assert.ok(await download.isVisible(), 'The download remains available without JavaScript');
+    assert.equal(await download.getAttribute('href'), officialStore, 'The no-JavaScript download opens the official Chrome Web Store listing');
+    assert.doesNotMatch(await page.locator('noscript').textContent(), /ZIP|Developer mode|Load unpacked/, 'The no-JavaScript instructions describe the store flow');
+  } finally { await noScriptContext.close(); }
   if (!pagesOnly) await inspectHeroFallbacks(browser, url);
   if (screenshots) await mkdir(output, { recursive: true });
   for (const [width, height, name] of pagesOnly ? [] : viewports) {

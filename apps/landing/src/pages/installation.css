@@ -32,16 +32,6 @@
 .installation-page .guide-quiet { display: inline-flex; align-items: center; justify-content: center; gap: 9px; color: var(--mint); background: transparent; border: 0; padding: 10px 6px; min-height: 44px; font: inherit; font-size: 12px; cursor: pointer; }
 .installation-page .guide-quiet:hover { text-decoration: underline; text-underline-offset: 4px; }
 .installation-page .guide-quiet .icon { width: 15px; height: 15px; }
-.installation-page .guide-switch { display: inline-flex; border: 0; background: var(--panel); padding: 4px; gap: 4px; border-radius: 8px; margin-bottom: 32px; }
-.installation-page .guide-switch label { position: relative; }
-.installation-page .guide-switch input { position: absolute; opacity: 0; width: 1px; height: 1px; }
-.installation-page .guide-switch span { display: block; padding: 12px 24px; border-radius: 5px; min-height: 44px; font-size: 13px; color: var(--muted); cursor: pointer; }
-.installation-page .guide-switch input:checked + span { background: var(--mint); color: var(--ink); }
-.installation-page .guide-switch input:focus-visible + span { outline: 2px solid var(--mint); outline-offset: 4px; }
-.installation-page .guide-release-file { display: flex; align-items: center; gap: 12px; padding-block: 10px; color: var(--mint); font-size: 17px; overflow-wrap: anywhere; }
-.installation-page .guide-release-file .icon { width: 20px; height: 20px; flex-shrink: 0; }
-.installation-page .guide-browser-address { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 24px; justify-content: space-between; border: 1px solid var(--line); background: var(--forest); padding: 8px 16px; border-radius: 6px; font-size: 17px; }
-.installation-page .guide-browser-address > code { color: var(--text); }
 .installation-page .guide-copy { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; }
 .installation-page .guide-copy-status { font-size: 12px; color: var(--mint); }
 .installation-page .guide-copy-fallback { display: grid; gap: 7px; flex-basis: 100%; min-width: 0; font-size: 12px; color: var(--muted); }
@@ -100,7 +90,6 @@
   .installation-page .guide-chapter h2 { font-size: 30px; }
   .installation-page p, .installation-page li { font-size: 13px; }
   .installation-page .guide-install-steps > li + li { margin-top: 25px; }
-  .installation-page .guide-browser-address { padding-inline: 12px; }
   .installation-page .guide-command { padding-inline: 12px; }
   .installation-page .guide-service-list { grid-template-columns: 65px minmax(0, 1fr); gap: 10px; }
   .installation-page .guide-outro { padding-top: 45px; }

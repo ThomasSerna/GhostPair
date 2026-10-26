@@ -3,6 +3,7 @@ import { access, mkdir } from 'node:fs/promises';
 import { resolve, sep } from 'node:path';
 
 const viewports = [[1440, 1000, 'desktop'], [768, 1024], [390, 844, 'mobile'], [375, 812], [320, 812]];
+const officialStore = 'https://chromewebstore.google.com/detail/ghostpair/gmcemjpedmacbgcmfdegpbhfeladinfd';
 
 function screenUrl(url, view, hash = '') {
   const target = new URL(url);
@@ -39,7 +40,7 @@ async function assertLocalAssets(page, origin, docs, base) {
 }
 
 async function installCapabilityGuard(context) {
-  // Guide copy actions may write a URL to the clipboard. The simulator must
+  // Guide copy actions may write commands to the clipboard. The simulator must
   // never read the real clipboard, capture a tab, pair browsers, or ask consent.
   await context.addInitScript(() => {
     const calls = [];
@@ -181,23 +182,31 @@ async function inspectInstallation(page, width) {
   const install = page.locator('#install-extension');
   assert.equal(await page.getByRole('heading', { level: 1 }).textContent(), 'Install GhostPair');
   assert.equal(await page.locator('.guide-scene').count(), 0, 'Installation has no practice scenes');
-  assert.equal(await page.locator('main input').count(), 2, 'Only the browser selector remains in the guide');
+  assert.equal(await install.getByRole('radio').count(), 0, 'The official store installation needs no browser selector');
   const steps = install.locator('ol.guide-install-steps > li');
-  assert.equal(await steps.count(), 5, 'The installation process is numbered');
+  assert.equal(await steps.count(), 3, 'The official store installation has three numbered steps');
   for (const step of await steps.all()) assert.ok(await step.isVisible(), 'All installation steps are readable without completing an exercise');
-  for (const pattern of [/permanent/i, /Developer mode/, /Load unpacked/, /manifest\.json/]) assert.match(await install.textContent(), pattern);
+  for (const pattern of [/Chrome Web Store/, /Add to Chrome/, /Edge/, /other stores/i, /Pin/]) assert.match(await install.textContent(), pattern);
+  assert.doesNotMatch(await install.textContent(), /ZIP|Developer mode|Load unpacked|manifest\.json/, 'Installation describes the official store flow');
+  assert.equal(await page.locator('.guide-intro .guide-primary').getAttribute('href'), officialStore, 'The guide download opens the official listing');
+  assert.equal(await install.getByRole('link').getAttribute('href'), officialStore, 'The installation step opens the official listing');
   assert.match(await page.locator('#connection-settings').textContent(), /ghostpair-3c9f3903aad3\.herokuapp\.com/, 'The download uses the production server');
 
-  const chrome = install.getByRole('radio', { name: 'Chrome', exact: true });
-  const edge = install.getByRole('radio', { name: 'Edge', exact: true });
-  assert.ok(await chrome.isChecked(), 'Installation defaults to Chrome');
-  assert.match(await install.locator('.guide-release-file').textContent(), /ghostpair-chrome-<version>\.zip/);
-  assert.equal(await install.locator('.guide-browser-address > code').textContent(), 'chrome://extensions');
-  await edge.focus();
-  await page.keyboard.press('Space');
-  assert.ok(await edge.isChecked(), 'The browser selector supports the keyboard');
-  assert.match(await install.locator('.guide-release-file').textContent(), /ghostpair-edge-<version>\.zip/);
-  assert.equal(await install.locator('.guide-browser-address > code').textContent(), 'edge://extensions');
+  const advanced = page.locator('details#custom-server-settings, details#self-hosting, details#troubleshooting');
+  assert.equal(await advanced.count(), 3, 'Advanced instructions use native disclosures');
+  for (const details of await advanced.all()) assert.equal(await details.evaluate(element => element.open), false, 'Advanced instructions start collapsed');
+  for (const pattern of [/Host/, /Guest/, /Connection code/, /Session password/, /Preview changes/]) assert.match(await page.locator('#first-session').textContent(), pattern);
+  assert.ok(await page.locator('#updates-help').isVisible(), 'Update instructions stay visible');
+  assert.match(await page.locator('#updates-help').textContent(), /automatically/i, 'The browser manages store extension updates');
+  assert.doesNotMatch(await page.locator('#updates-help').textContent(), /ZIP|Developer mode|Load unpacked|manifest\.json/, 'Updates and troubleshooting describe the store installation');
+
+  await page.getByRole('navigation', { name: 'Installation chapters' }).locator('a[href="#self-hosting"]').click();
+  await page.waitForURL(target => target.hash === '#self-hosting');
+  const hosting = page.locator('details#self-hosting');
+  await page.waitForFunction(() => document.getElementById('self-hosting').open);
+  for (const pattern of [/Docker/, /SQLite/, /PostgreSQL/, /Render/, /80/, /443/, /3478/, /\/health/, /\/ready/, /backup|back up/i]) assert.match(await hosting.textContent(), pattern);
+  const commands = (await hosting.locator('pre').allTextContents()).join('\n');
+  for (const pattern of [/SIGNAL_DOMAIN=pair\.example\.org/, /VITE_SIGNALING_URL=https:\/\/pair\.example\.org/, /VITE_STUN_URLS=stun:pair\.example\.org:3478/]) assert.match(commands, pattern);
 
   // Only explicit guide copy actions can write; rejected copying still exposes selectable text.
   await page.evaluate(() => {
@@ -206,40 +215,27 @@ async function inspectInstallation(page, width) {
     Object.defineProperty(navigator.clipboard, 'writeText', { configurable: true, writable: true, value: async value => { window.__websiteWrites.push(value); } });
   });
   try {
-    const copy = install.getByRole('button', { name: 'Copy address', exact: true });
+    const copy = hosting.getByRole('button', { name: 'Copy command', exact: true }).first();
     const copyRegion = copy.locator('..');
+    const command = await hosting.locator('pre code').first().textContent();
     await copy.click();
-    assert.deepEqual(await page.evaluate(() => window.__websiteWrites), ['edge://extensions']);
+    assert.deepEqual(await page.evaluate(() => window.__websiteWrites), [command], 'A command copy writes the displayed instructions');
     await copyRegion.getByRole('status').filter({ hasText: 'Copied' }).waitFor();
-    assert.equal(await copy.getAttribute('aria-label'), 'Copy address', 'Copy feedback preserves its accessible name');
-    await chrome.check();
+    assert.equal(await copy.getAttribute('aria-label'), 'Copy command', 'Copy feedback preserves its accessible name');
     await page.evaluate(() => { navigator.clipboard.writeText = async () => { throw new Error('Clipboard unavailable for this test'); }; });
     await copy.click();
-    const manual = install.getByRole('textbox', { name: 'Copy address manually', exact: true });
+    const manual = hosting.getByRole('textbox', { name: 'Copy command manually', exact: true });
     await manual.waitFor();
-    assert.equal(await manual.inputValue(), 'chrome://extensions', 'Manual copying uses the selected browser address');
+    assert.equal(await manual.inputValue(), command, 'Manual copying exposes the complete command');
     assert.ok(await manual.evaluate(element => element.readOnly));
     await manual.focus();
     assert.ok(await manual.evaluate(element => element.selectionStart === 0 && element.selectionEnd === element.value.length), 'Manual copy selects the complete value');
     assert.match(await copyRegion.textContent(), /Copy unavailable\. Select the text below\./);
     await page.evaluate(() => { navigator.clipboard.writeText = async value => { window.__websiteWrites.push(value); }; });
 
-    const advanced = page.locator('details#custom-server-settings, details#self-hosting, details#troubleshooting');
-    assert.equal(await advanced.count(), 3, 'Advanced instructions use native disclosures');
-    for (const details of await advanced.all()) assert.equal(await details.evaluate(element => element.open), false, 'Advanced instructions start collapsed');
-    for (const pattern of [/Host/, /Guest/, /Connection code/, /Session password/, /Preview changes/]) assert.match(await page.locator('#first-session').textContent(), pattern);
-    assert.ok(await page.locator('#updates-help').isVisible(), 'Update instructions stay visible');
-    assert.match(await page.locator('#updates-help').textContent(), /Reload/);
-
-    await page.getByRole('navigation', { name: 'Installation chapters' }).locator('a[href="#self-hosting"]').click();
-    await page.waitForURL(target => target.hash === '#self-hosting');
-    const hosting = page.locator('details#self-hosting');
-    await page.waitForFunction(() => document.getElementById('self-hosting').open);
-    for (const pattern of [/Docker/, /SQLite/, /PostgreSQL/, /Render/, /80/, /443/, /3478/, /\/health/, /\/ready/, /backup|back up/i]) assert.match(await hosting.textContent(), pattern);
-    const commands = (await hosting.locator('pre').allTextContents()).join('\n');
-    for (const pattern of [/SIGNAL_DOMAIN=pair\.example\.org/, /VITE_SIGNALING_URL=https:\/\/pair\.example\.org/, /VITE_STUN_URLS=stun:pair\.example\.org:3478/]) assert.match(commands, pattern);
-    await hosting.getByRole('button', { name: 'Copy command', exact: true }).first().click();
-    assert.ok((await page.evaluate(() => window.__websiteWrites)).at(-1)?.length > 0, 'A command copy writes displayed instructions');
+    await copy.click();
+    await manual.waitFor({ state: 'detached' });
+    assert.deepEqual(await page.evaluate(() => window.__websiteWrites), [command, command], 'Copying recovers after clipboard failure');
     await noOverflow(page, `${width}px: expanded self hosting instructions`);
   } finally {
     await page.evaluate(() => { Object.defineProperty(navigator.clipboard, 'writeText', window.__websiteOriginalClipboardDescriptor); });
