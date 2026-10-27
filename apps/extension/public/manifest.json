@@ -1,8 +1,9 @@
 {
   "manifest_version": 3,
   "name": "GhostPair",
-  "version": "0.6.6",
-  "description": "Share and control authorized browser tabs over a direct peer-to-peer connection.",
+  "version": "0.7.0",
+  "default_locale": "en",
+  "description": "__MSG_extensionDescription__",
   "minimum_chrome_version": "125",
   "permissions": [
     "tabCapture",
@@ -44,7 +45,7 @@
       "suggested_key": {
         "default": "Ctrl+Shift+9"
       },
-      "description": "Stop the GhostPair session"
+      "description": "__MSG_stopSessionDescription__"
     }
   },
   "incognito": "not_allowed",

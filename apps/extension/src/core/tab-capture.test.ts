@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { type Presentation, type TabInfo } from '@ghostpair/protocol';
 import { MAX_CAPTURED_TABS, TabCapture } from './tab-capture';
+import { pageMessages } from './page-messages';
 
 function event() {
   const addListener = vi.fn();
@@ -47,6 +48,45 @@ describe('TabCapture authorization and scoped control', () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); vi.unstubAllGlobals(); });
 
+  it('changes page language without canceling in-flight input or recreating its capture', async () => {
+    const h = harness(); await h.share();
+    const presentation = h.current(), stateUpdates = h.hooks.state.mock.calls.length;
+    const entered = Promise.withResolvers<void>(), gate = Promise.withResolvers<void>(), original = h.browser.tabs.get.getMockImplementation()!;
+    h.browser.tabs.get.mockImplementation(async (...args) => { entered.resolve(); await gate.promise; return original(...args); });
+    const pending = h.capture.execute({ type: 'text', controlRevision: 0, ...h.target(), text: 'Uninterrupted' });
+    await entered.promise;
+    await h.capture.setLanguage(pageMessages('es'));
+    expect(h.current()).toBe(presentation);
+    expect(h.hooks.state).toHaveBeenCalledTimes(stateUpdates);
+    expect(h.browser.tabs.sendMessage.mock.calls.every(([, message]) => message.operation === 'localize')).toBe(true);
+    gate.resolve(); await expect(pending).resolves.toBeUndefined();
+    expect(h.commands()).toHaveLength(1);
+    expect(h.browser.tabCapture.getMediaStreamId).toHaveBeenCalledTimes(1);
+    expect(h.browser.scripting.executeScript).toHaveBeenCalledTimes(1);
+    await h.capture.stop();
+  });
+
+  it('passes the selected language to newly installed page controls', async () => {
+    const h = harness(), messages = pageMessages('es');
+    await h.capture.setLanguage(messages); await h.share();
+    expect(h.browser.scripting.executeScript.mock.calls[0]![0].args[4]).toEqual(messages);
+    await h.capture.stop();
+  });
+
+  it('localizes a delayed root injection before publishing its presentation', async () => {
+    const h = harness(), entered = Promise.withResolvers<void>(), gate = Promise.withResolvers<void>();
+    const original = h.browser.scripting.executeScript.getMockImplementation()!;
+    h.browser.scripting.executeScript.mockImplementation(async (...args) => { entered.resolve(); await gate.promise; return original(...args); });
+    const sharing = h.share(); await entered.promise;
+    const messages = pageMessages('es'); await h.capture.setLanguage(messages);
+    expect(h.current()).toBeUndefined();
+    gate.resolve(); await sharing;
+    expect(h.browser.tabs.sendMessage).toHaveBeenCalledWith(12, expect.objectContaining({ operation: 'localize', messages }), { documentId: 'document-one' });
+    expect(h.current()?.documentId).toBe('document-one');
+    expect(h.browser.tabs.sendMessage.mock.invocationCallOrder[0]).toBeLessThan(h.hooks.state.mock.invocationCallOrder.at(-1)!);
+    await h.capture.stop();
+  });
+
   it('accepts visibility changes only from the current authorized top document', async () => {
     const h = harness(); await h.share();
     const message = { ...h.target(), controlRevision: 0 };
@@ -82,7 +122,7 @@ describe('TabCapture authorization and scoped control', () => {
     const h = harness(); h.add(13); await h.share();
     expect(h.browser.tabCapture.getMediaStreamId).toHaveBeenCalledExactlyOnceWith({ targetTabId: 12 });
     expect(h.hooks.acquire).toHaveBeenCalledExactlyOnceWith(12, h.current()!.captureId, 'stream-12');
-    expect(h.browser.scripting.executeScript).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ target: { tabId: 12, frameIds: [0] }, world: 'ISOLATED', args: [h.current()!.captureId, h.current()!.generation, true, expect.objectContaining({ mode: 'visual' })] }));
+    expect(h.browser.scripting.executeScript).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ target: { tabId: 12, frameIds: [0] }, world: 'ISOLATED', args: [h.current()!.captureId, h.current()!.generation, true, expect.objectContaining({ mode: 'visual' }), pageMessages('en')] }));
     expect(h.current()).toMatchObject({ tabId: 12, documentId: 'document-one', ...h.geometry });
     expect(h.hooks.state.mock.lastCall![0].find(tab => tab.id === 13)).toMatchObject({ authorized: false, captureState: 'pending' });
     await h.capture.execute({ type: 'text', controlRevision: 0, ...h.target(), text: '日本語 🐈' });

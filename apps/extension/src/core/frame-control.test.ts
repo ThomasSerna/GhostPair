@@ -1,6 +1,7 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import type { ControlCommand, Presentation } from '@ghostpair/protocol';
 import { FrameControl } from './frame-control';
+import { pageMessages } from './page-messages';
 
 function event() {
   const listeners: ((value: any) => void)[] = [];
@@ -35,6 +36,63 @@ function harness() {
   return { control, topology, frame, routes, indices, operations, committed, sendMessage, scripting, navigation, input, key, disable: () => { usable = false; } };
 }
 afterEach(() => vi.unstubAllGlobals());
+
+it('localizes authorized frames without releasing held input or changing control revisions', async () => {
+  const h = harness(); await h.control.bind(p);
+  await h.control.execute(h.input()); await h.control.execute(h.key('down'));
+  h.operations.length = 0;
+  const messages = pageMessages('es');
+  await h.control.setLanguage(messages);
+  expect(h.operations.map(entry => entry.id).sort()).toEqual(['a', 'b', 'nested', 'root']);
+  expect(h.operations.every(entry => entry.message.operation === 'localize' && entry.message.controlRevision === 0 && entry.message.messages === messages)).toBe(true);
+  await h.control.execute(h.input('pointer', { event: 'up', buttons: 0 }));
+  await h.control.execute(h.key('up'));
+  expect(h.committed.slice(-2).map(entry => [entry.id, entry.command.event])).toEqual([['nested', 'up'], ['nested', 'up']]);
+  await h.control.clear();
+});
+
+it('keeps preview expiry deadlines when the language changes', async () => {
+  vi.useFakeTimers();
+  try {
+    const h = harness(); await h.control.bind(p); h.routes.clear();
+    await h.control.configure({ mode: 'visual', revision: 1, preferences: { notices: false, clickAnimations: true, showInteractions: true, showHostPanel: true, text: { duration: 'temporary', seconds: 1 }, other: { duration: 'persistent', seconds: 3 }, accentColor: '#7871e8' } });
+    const original = h.sendMessage.getMockImplementation()!;
+    h.sendMessage.mockImplementation(async (...args) => ({ ...await original(...args), ...(args[1].operation === 'commit' ? { visualActivity: { category: 'text', kind: 'typing' } } : {}) }));
+    await h.control.execute({ ...h.input('text'), controlRevision: 1 });
+    h.operations.length = 0;
+    await vi.advanceTimersByTimeAsync(300);
+    await h.control.setLanguage(pageMessages('es'));
+    await vi.advanceTimersByTimeAsync(699);
+    expect(h.operations.some(entry => entry.message.operation === 'visual.clear')).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(h.operations.filter(entry => entry.message.operation === 'visual.clear')).toHaveLength(4);
+    await h.control.clear();
+  } finally { vi.useRealTimers(); }
+});
+
+it('applies the latest language after a delayed child injection', async () => {
+  const h = harness(), entered = Promise.withResolvers<void>(), gate = Promise.withResolvers<void>();
+  const original = h.scripting.executeScript.getMockImplementation()!;
+  h.scripting.executeScript.mockImplementation(async (...args) => { entered.resolve(); await gate.promise; return original(...args); });
+  const binding = h.control.bind(p); await entered.promise;
+  const messages = pageMessages('es'); await h.control.setLanguage(messages);
+  gate.resolve(); await binding;
+  expect(h.operations.filter(entry => entry.message.operation === 'localize').map(entry => entry.id).sort()).toEqual(['a', 'b', 'nested', 'root']);
+  expect(h.operations.every(entry => entry.message.operation !== 'localize' || entry.message.messages === messages)).toBe(true);
+  await h.control.clear();
+});
+
+it('retains usable control after a page rejects a language update', async () => {
+  const h = harness(); await h.control.bind(p);
+  const original = h.sendMessage.getMockImplementation()!;
+  h.sendMessage.mockImplementation(async (...args) => args[1].operation === 'localize' && args[2].documentId === 'a' ? { ok: false, error: 'The shared page changed. Try again.' } : original(...args));
+  h.operations.length = 0;
+  await expect(h.control.setLanguage(pageMessages('es'))).rejects.toThrow('Could not update page controls. Try again.');
+  expect(h.operations.every(entry => entry.message.operation === 'localize')).toBe(true);
+  await h.control.execute(h.input());
+  expect(h.committed.at(-1)?.id).toBe('nested');
+  await h.control.clear();
+});
 
 it('updates click visibility throughout authorized frames without releasing virtual state', async () => {
   const h = harness(); await h.control.bind(p);

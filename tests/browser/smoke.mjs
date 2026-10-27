@@ -80,6 +80,22 @@ try {
       await join(viewer, waiting.deviceId, 'Eight-42');
       await waitState(viewer, s => s.status === 'connected', 'direct session connected'); await videoReady(viewer);
       assert.equal((await state(viewer)).controlMode, 'visual');
+      const beforeLanguage = await state(hostUi);
+      await call(hostUi, 'ui.language.set', { preference: 'es' });
+      await hostUi.waitForFunction(() => document.documentElement.lang === 'es');
+      await poll(async () => {
+        const [result] = await host.worker.evaluate(tabId => chrome.scripting.executeScript({ target: { tabId }, world: 'ISOLATED', func: () => __gpPanelRoot.querySelector('strong').textContent }), panelTabId);
+        return result.result === 'Vista previa de cambios';
+      }, 'shared-page controls follow the host language during a session');
+      const afterLanguage = await state(hostUi);
+      assert.equal(afterLanguage.sessionId, beforeLanguage.sessionId, 'language change preserves the live session');
+      assert.equal(afterLanguage.deviceId, beforeLanguage.deviceId, 'language change preserves the installation identity');
+      assert.equal(afterLanguage.controlRevision, beforeLanguage.controlRevision, 'language change does not change control authorization');
+      assert.equal((await state(viewer)).locale, 'en', 'each participant keeps their own language');
+      assert.equal(await viewer.locator('html').getAttribute('lang'), 'en');
+      await videoReady(viewer);
+      await call(hostUi, 'ui.language.set', { preference: 'en' });
+      await hostUi.waitForFunction(() => document.documentElement.lang === 'en');
       const localPanelClick = async selector => {
         const [result] = await host.worker.evaluate(({ tabId, selector }) => chrome.scripting.executeScript({ target: { tabId }, world: 'ISOLATED', func: selector => { const b = __gpPanelRoot.querySelector(selector).getBoundingClientRect(); return { x: b.x + b.width / 2, y: b.y + b.height / 2 }; }, args: [selector] }), { tabId: panelTabId, selector });
         await page.bringToFront(); await page.mouse.click(result.result.x, result.result.y);

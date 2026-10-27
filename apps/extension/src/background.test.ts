@@ -4,7 +4,7 @@ import { GHOSTPAIR_SERVER_SETTINGS } from './connection-presets';
 const capture = vi.hoisted(() => ({
   start: vi.fn(async (_windowId: number) => {}), stop: vi.fn(async () => {}),
   authorize: vi.fn(async (_tabId: number) => {}), release: vi.fn(async (_tabId: number) => {}),
-  configure: vi.fn(async () => {}), setControl: vi.fn(async () => {}), setPaused: vi.fn(async () => {}), execute: vi.fn(async () => {}), geometry: vi.fn(),
+  configure: vi.fn(async () => {}), setLanguage: vi.fn(async () => {}), setControl: vi.fn(async () => {}), setPaused: vi.fn(async () => {}), execute: vi.fn(async () => {}), geometry: vi.fn(),
   validateHostPage: vi.fn(),
 }));
 vi.mock('./core/tab-capture', () => ({ TabCapture: class { constructor() { return capture; } } }));
@@ -14,7 +14,7 @@ function event() {
   return { addListener, emit: (...args: any[]) => { for (const [listener] of addListener.mock.calls) listener(...args); } };
 }
 async function settled() { for (let i = 0; i < 35; i++) await Promise.resolve(); }
-async function harness(stored: Record<string, unknown> = {}) {
+async function harness(stored: Record<string, unknown> = {}, browserLanguage = 'en-US') {
   vi.resetModules(); vi.clearAllMocks();
   capture.stop.mockImplementation(async () => {}); capture.start.mockImplementation(async () => {}); capture.authorize.mockImplementation(async () => {});
   const registered = { deviceId: 'a'.repeat(32), ownerToken: 'b'.repeat(64) };
@@ -26,6 +26,7 @@ async function harness(stored: Record<string, unknown> = {}) {
   };
   const browser = {
     runtime,
+    i18n: { getUILanguage: () => browserLanguage },
     storage: {
       local: { setAccessLevel: vi.fn(async () => {}), get: vi.fn(async () => stored), set: vi.fn(async (value: object) => Object.assign(stored, value)), remove: vi.fn(async (key: string) => { delete stored[key]; }) },
       session: { get: vi.fn(async () => ({})), set: vi.fn(async () => {}) },
@@ -57,6 +58,66 @@ async function harness(stored: Record<string, unknown> = {}) {
   return { stored, browser, runtime, send, sendPage, connectViewer, registered, hasOffscreenMessage };
 }
 afterEach(() => vi.unstubAllGlobals());
+
+describe('local language preferences', () => {
+  it('starts automatically in the browser UI language and ignores invalid saved preferences', async () => {
+    const automatic = await harness({}, 'es-CO');
+    expect((await automatic.send('ui.status')).state).toMatchObject({ languagePreference: 'auto', locale: 'es' });
+    expect(automatic.stored.languagePreference).toBeUndefined();
+    const invalid = await harness({ languagePreference: 'fr' }, 'es-ES');
+    expect((await invalid.send('ui.status')).state).toMatchObject({ languagePreference: 'auto', locale: 'es' });
+    const unsupported = await harness({}, 'fr-FR');
+    expect((await unsupported.send('ui.status')).state.locale).toBe('en');
+  });
+
+  it('persists a manual preference independently of server settings and restores automatic mode', async () => {
+    const h = await harness({ settings: GHOSTPAIR_SERVER_SETTINGS, identities: { keep: { deviceId: 'identity' } } }, 'es-CO');
+    expect((await h.send('ui.language.set', { preference: 'en' })).state).toMatchObject({ locale: 'en', languagePreference: 'en' });
+    expect(h.stored.identities).toEqual({ keep: { deviceId: 'identity' } });
+    expect(h.stored.settings).toEqual(GHOSTPAIR_SERVER_SETTINGS);
+    await h.send('ui.settings.reset');
+    expect((await h.send('ui.status')).state.languagePreference).toBe('en');
+    const restarted = await harness(h.stored, 'es-ES');
+    expect((await restarted.send('ui.status')).state).toMatchObject({ locale: 'en', languagePreference: 'en' });
+    expect((await restarted.send('ui.language.set', { preference: 'auto' })).state).toMatchObject({ locale: 'es', languagePreference: 'auto' });
+    expect(restarted.stored.languagePreference).toBe('auto');
+    expect(restarted.stored.locale).toBeUndefined();
+  });
+
+  it('changes active UI language without configuring capture or sharing locale with peers', async () => {
+    const h = await harness();
+    await h.send('ui.host.start', { password: 'Eight-42' });
+    await h.send('transport.connected', { sessionId: 'session' }, 'offscreen');
+    const before = (await h.send('ui.status')).state;
+    capture.configure.mockClear(); capture.stop.mockClear(); h.runtime.sendMessage.mockClear();
+    const changed = await h.send('ui.language.set', { preference: 'es' });
+    expect(changed.state).toEqual({ ...before, locale: 'es', languagePreference: 'es' });
+    expect(capture.setLanguage).toHaveBeenLastCalledWith(expect.objectContaining({ locale: 'es' }));
+    expect(capture.configure).not.toHaveBeenCalled(); expect(capture.stop).not.toHaveBeenCalled();
+    expect(h.hasOffscreenMessage('session.state')).toBe(false); expect(h.hasOffscreenMessage('session.start')).toBe(false);
+    expect(h.browser.permissions.request).not.toHaveBeenCalled();
+    expect(h.runtime.sendMessage).toHaveBeenCalledWith(expect.objectContaining({ type: 'state', state: changed.state }));
+  });
+
+  it('rejects invalid preferences and keeps the current language when persistence fails', async () => {
+    const h = await harness({}, 'en-US');
+    expect(await h.send('ui.language.set', { preference: 'es-CO' })).toEqual({ ok: false, error: 'Choose a supported language.' });
+    h.browser.storage.local.set.mockRejectedValueOnce(new Error('Storage unavailable'));
+    expect(await h.send('ui.language.set', { preference: 'es' })).toEqual({ ok: false, error: 'Could not save the language. Try again.' });
+    expect((await h.send('ui.status')).state).toMatchObject({ languagePreference: 'auto', locale: 'en' });
+    expect(h.stored.languagePreference).toBeUndefined();
+  });
+
+  it('keeps the session running when a page cannot refresh its labels', async () => {
+    const h = await harness();
+    await h.send('ui.host.start', { password: 'Eight-42' });
+    capture.setLanguage.mockRejectedValueOnce(new Error('Page unavailable'));
+    const result = await h.send('ui.language.set', { preference: 'es' });
+    expect(result.ok).toBe(true);
+    expect(result.state).toMatchObject({ role: 'host', status: 'starting', locale: 'es', controlRevision: 0, controlEnabled: true });
+    expect(result.state.notification.message).toBe('Could not update page controls. Try again.');
+  });
+});
 
 describe('background connection ownership and settings', () => {
   it('preserves saved Render settings and registers a separate identity when switching to Heroku', async () => {

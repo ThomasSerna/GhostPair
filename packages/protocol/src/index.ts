@@ -81,7 +81,11 @@ export const MediaSignalSchema = z.discriminatedUnion('type', [
 ]);
 export type MediaSignal = z.infer<typeof MediaSignalSchema>;
 export interface TabInfo { id: number; title: string; url: string; active: boolean; supported: boolean; authorized?: boolean; captureState?: 'pending' | 'ready' | 'unavailable' }
+export type Locale = 'en' | 'es';
+export type LanguagePreference = 'auto' | Locale;
 export interface AppState {
+  languagePreference: LanguagePreference;
+  locale: Locale;
   role: 'host' | 'guest' | null;
   status: 'idle' | 'starting' | 'waiting' | 'connecting' | 'connected' | 'paused' | 'error';
   deviceId?: string;

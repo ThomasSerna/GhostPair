@@ -1,5 +1,6 @@
 import { isSupportedUrl, type ControlCommand, type ControlConfiguration, type Presentation, type VisualActivity, type VisualCategory } from '@ghostpair/protocol';
 import { installDomControl } from './dom-control';
+import { pageMessages, type PageMessages } from './page-messages';
 
 type Input = Extract<ControlCommand, { type: 'pointer' | 'wheel' | 'key' | 'text' }>;
 type Frame = { frameId: number; documentId: string; parentFrameId: number; parentDocumentId?: string };
@@ -21,12 +22,22 @@ export class FrameControl {
   private keys = new Map<string, Owner>();
   private canceledKeys = new Set<string>();
   private drag?: { token: string; frame: Frame; started: number };
+  private messages = pageMessages('en');
   private configuration: ControlConfiguration = { mode: 'visual', revision: 0, preferences: { notices: false, clickAnimations: true, showInteractions: true, showHostPanel: true, text: { duration: 'temporary', seconds: 0.5 }, other: { duration: 'temporary', seconds: 0.5 }, accentColor: '#7871e8' } };
   private expiry: Partial<Record<VisualCategory, ReturnType<typeof setTimeout>>> = {};
   private lastActivity: Partial<Record<VisualCategory, number>> = {};
   private resetExpiry() {
     for (const timer of Object.values(this.expiry)) clearTimeout(timer);
     this.expiry = {}; this.lastActivity = {};
+  }
+
+  async setLanguage(messages: PageMessages) {
+    this.messages = messages;
+    const p = this.presentation;
+    if (!p) return;
+    const frames = [...this.frames.values()];
+    const results = await Promise.allSettled(frames.map(frame => this.message(p, frame, 'localize', { messages })));
+    if (this.presentation === p && results.some((result, index) => this.frames.has(frames[index]!.documentId) && (result.status === 'rejected' || !result.value?.ok))) throw new Error('Could not update page controls. Try again.');
   }
 
   async configure(configuration: ControlConfiguration) {
@@ -86,7 +97,11 @@ export class FrameControl {
     this.frames.set(presentation.documentId, { frameId: 0, documentId: presentation.documentId, parentFrameId: -1 });
     if (previous && previous.generation !== presentation.generation) {
       await Promise.all([...this.frames.values()].filter(frame => frame.frameId !== 0).map(async frame => {
-        try { await chrome.scripting.executeScript({ target: { tabId: presentation.tabId, documentIds: [frame.documentId] }, world: 'ISOLATED', func: installDomControl, args: [presentation.captureId, presentation.generation, false, this.configuration] }); }
+        try {
+          const messages = this.messages;
+          await chrome.scripting.executeScript({ target: { tabId: presentation.tabId, documentIds: [frame.documentId] }, world: 'ISOLATED', func: installDomControl, args: [presentation.captureId, presentation.generation, false, this.configuration, messages] });
+          if (this.messages !== messages) await this.message(presentation, frame, 'localize', { messages: this.messages });
+        }
         catch { this.frames.delete(frame.documentId); }
       }));
     }
@@ -207,12 +222,14 @@ export class FrameControl {
       const related = /^(about:(blank|srcdoc)|blob:)/.test(frame.url);
       if (!isSupportedUrl(frame.url) && !related) { this.failures.add(frame.documentId); return; }
       try {
-        const result = (await chrome.scripting.executeScript({ target: { tabId: p.tabId, documentIds: [frame.documentId] }, world: 'ISOLATED', injectImmediately: true, func: installDomControl, args: [p.captureId, p.generation, false, this.configuration] }))[0];
+        const messages = this.messages;
+        const result = (await chrome.scripting.executeScript({ target: { tabId: p.tabId, documentIds: [frame.documentId] }, world: 'ISOLATED', injectImmediately: true, func: installDomControl, args: [p.captureId, p.generation, false, this.configuration, messages] }))[0];
         if (this.presentation !== p || this.revision !== revision || this.blocked.has(frame.frameId)) {
           await this.message(p, frame, 'dispose').catch(() => undefined); return;
         }
         if (result?.documentId !== frame.documentId) return;
         this.frames.set(frame.documentId, frame); this.failures.delete(frame.documentId);
+        if (this.messages !== messages) await this.message(p, frame, 'localize', { messages: this.messages });
       } catch {
         if (this.presentation === p) this.failures.add(frame.documentId);
       }

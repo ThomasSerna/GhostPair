@@ -1,6 +1,7 @@
 import { ControlCommandSchema, PresentationSchema, isSupportedUrl, type ControlConfiguration, type Presentation, type TabInfo } from '@ghostpair/protocol';
 import { installDomControl } from './dom-control';
 import { FrameControl } from './frame-control';
+import { pageMessages, type PageMessages } from './page-messages';
 
 interface Hooks {
   state: (tabs: TabInfo[], activeTabId: number | undefined, generation: number, presentation?: Presentation) => void;
@@ -20,6 +21,7 @@ export class TabCapture {
   private paused = false;
   private control = true;
   private configuring = false;
+  private messages = pageMessages('en');
   private configuration: ControlConfiguration = { mode: 'visual', revision: 0, preferences: { notices: false, clickAnimations: true, showInteractions: true, showHostPanel: true, text: { duration: 'temporary', seconds: 0.5 }, other: { duration: 'temporary', seconds: 0.5 }, accentColor: '#7871e8' } };
   private tabs: TabInfo[] = [];
   private sources = new Map<number, string>();
@@ -100,6 +102,10 @@ export class TabCapture {
   }
   async setPaused(paused: boolean) { this.paused = paused; this.invalidate(); await this.refresh(); }
   async setControl(enabled: boolean) { this.control = enabled; if (!enabled) { this.invalidate(); await this.refresh(); } }
+  async setLanguage(messages: PageMessages) {
+    this.messages = messages;
+    await this.frameControl.setLanguage(messages);
+  }
   async configure(configuration: ControlConfiguration) {
     this.configuring = true; ++this.inputRevision;
     this.configuration = configuration;
@@ -153,7 +159,8 @@ export class TabCapture {
     if (active.status === 'loading') { this.publish(); return; }
     const generation = this.generation;
     try {
-      const injection = (await chrome.scripting.executeScript({ target: { tabId: active.id, frameIds: [0] }, world: 'ISOLATED', func: installDomControl, args: [captureId, generation, true, this.configuration] }))[0];
+      const messages = this.messages;
+      const injection = (await chrome.scripting.executeScript({ target: { tabId: active.id, frameIds: [0] }, world: 'ISOLATED', func: installDomControl, args: [captureId, generation, true, this.configuration, messages] }))[0];
       if (epoch !== this.epoch || generation !== this.generation || !injection?.documentId || !injection.result || this.sources.get(active.id) !== captureId) return;
       const now = await chrome.tabs.get(active.id);
       if (epoch !== this.epoch || generation !== this.generation || !now.active || now.windowId !== windowId || now.url !== active.url || now.status === 'loading') return;
@@ -161,6 +168,7 @@ export class TabCapture {
       const presentation = this.presentation;
       // A slow child must not delay publication of the already captured top document.
       void this.frameControl.bind(presentation).catch(() => { if (this.presentation === presentation) this.hooks.error('Embedded page discovery is unavailable. Check the extension navigation permission.'); });
+      if (this.messages !== messages) await this.frameControl.setLanguage(this.messages).catch(error => this.hooks.error(error.message));
     } catch (error) {
       if (epoch !== this.epoch || generation !== this.generation) return;
       this.presentation = undefined;

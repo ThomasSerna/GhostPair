@@ -39,7 +39,7 @@ async function attachPopup(browser) {
   // a tab, which would conceal native auto-size regressions.
   const target = await poll(async () => {
     const { targetInfos } = await browser.cdp.send('Target.getTargets');
-    return targetInfos.find(info => info.url === `chrome-extension://${browser.id}/popup.html`) ?? targetInfos.find(info => info.type === 'other' && info.url === '');
+    return targetInfos.find(info => info.url === `chrome-extension://${browser.id}/popup.html`);
   }, 'native toolbar popup target');
   const { sessionId } = await browser.cdp.send('Target.attachToTarget', { targetId: target.targetId, flatten: false });
   let commandId = 0;
@@ -58,7 +58,7 @@ async function attachPopup(browser) {
   async function send(method, params = {}) {
     const id = ++commandId;
     const response = new Promise((resolve, reject) => {
-      const timer = setTimeout(() => { pending.delete(id); reject(new Error(`Popup CDP command timed out: ${method}`)); }, 15000);
+      const timer = setTimeout(() => { pending.delete(id); reject(new Error(`Popup CDP command timed out: ${method}${params.expression ? ` ${params.expression.slice(0, 180)}` : ''}`)); }, 15000);
       pending.set(id, { resolve: result => { clearTimeout(timer); resolve(result); }, reject: error => { clearTimeout(timer); reject(error); } });
     });
     try { await browser.cdp.send('Target.sendMessageToTarget', { sessionId, message: JSON.stringify({ id, method, params }) }); }
@@ -217,6 +217,16 @@ try {
       await popup.scroll('.interaction-feedback>.secondary');
       await checkFocusVisible(popup, '.interaction-feedback>.secondary', 'Clear previews');
       layouts.push(await checkSize(popup, name, 'host-feedback-bottom'));
+      await popup.click('[aria-label="Open settings"]');
+      await call(popup, 'ui.language.set', { preference: 'es' });
+      await poll(() => popup.evaluate(() => document.documentElement.lang === 'es'), 'toolbar switches to Spanish during sharing');
+      layouts.push(await checkSize(popup, name, 'host-settings-es'));
+      await checkFocusVisible(popup, '.language-settings select', 'Spanish language selector');
+      await checkFocusVisible(popup, '.session-actions .danger', 'Spanish End session in settings');
+      await popup.click('[aria-label="Cerrar configuración"]');
+      layouts.push(await checkSize(popup, name, 'host-es'));
+      await call(popup, 'ui.language.set', { preference: 'en' });
+      await poll(() => popup.evaluate(() => document.documentElement.lang === 'en'), 'toolbar restores English');
       const footerVisible = await popup.evaluate(() => {
         const button = document.querySelector('.session-actions .danger'); button.focus();
         const rect = button.getBoundingClientRect(); return document.activeElement === button && rect.top >= 0 && rect.bottom <= innerHeight;

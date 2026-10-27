@@ -1,8 +1,9 @@
 import type { ControlCommand, ControlConfiguration, VisualActivity, VisualCategory } from '@ghostpair/protocol';
+import type { PageMessage, PageMessages } from './page-messages';
 
 /** Self-contained: Chrome serializes this function into the page's ISOLATED world. */
-export function installDomControl(captureId: string, generation: number, root = true, configuration: ControlConfiguration = { mode: 'visual', revision: 0, preferences: { notices: false, clickAnimations: true, showInteractions: true, showHostPanel: true, text: { duration: 'temporary', seconds: 0.5 }, other: { duration: 'temporary', seconds: 0.5 }, accentColor: '#7871e8' } }) {
-  type Context = { captureId: string; generation: number; ready: boolean; geometry: string; dispose: () => void; release: () => void; configure: (value: ControlConfiguration) => void };
+export function installDomControl(captureId: string, generation: number, root = true, configuration: ControlConfiguration = { mode: 'visual', revision: 0, preferences: { notices: false, clickAnimations: true, showInteractions: true, showHostPanel: true, text: { duration: 'temporary', seconds: 0.5 }, other: { duration: 'temporary', seconds: 0.5 }, accentColor: '#7871e8' } }, messages?: PageMessages) {
+  type Context = { captureId: string; generation: number; ready: boolean; geometry: string; dispose: () => void; release: () => void; configure: (value: ControlConfiguration) => void; localize: (value?: PageMessages) => void };
   const scope = globalThis as typeof globalThis & { __ghostpairControl?: Context };
   const geometry = () => ({ viewportWidth: innerWidth, viewportHeight: innerHeight, offsetLeft: visualViewport?.offsetLeft ?? 0, offsetTop: visualViewport?.offsetTop ?? 0, scale: visualViewport?.scale ?? 1 });
   if (scope.__ghostpairControl) {
@@ -12,6 +13,7 @@ export function installDomControl(captureId: string, generation: number, root = 
     if (scope.__ghostpairControl.captureId === captureId && scope.__ghostpairControl.generation > generation) throw new Error('The shared page changed. Wait for the current view.');
     scope.__ghostpairControl.release();
     scope.__ghostpairControl.configure(configuration);
+    scope.__ghostpairControl.localize(messages);
     scope.__ghostpairControl.captureId = captureId;
     scope.__ghostpairControl.generation = generation;
     scope.__ghostpairControl.ready = true;
@@ -24,7 +26,7 @@ export function installDomControl(captureId: string, generation: number, root = 
   const keys = new Map<string, { element: Element | null; fields: KeyboardEventInit; space?: boolean }>();
   type Prepared = { token: string; command: ControlCommand; element: Element | null; child?: { index: number; x?: number; y?: number }; childWindow?: Window | null };
   let prepared: Prepared | undefined;
-  const context: Context = { captureId, generation, ready: true, geometry: JSON.stringify(geometry()), dispose, release, configure };
+  const context: Context = { captureId, generation, ready: true, geometry: JSON.stringify(geometry()), dispose, release, configure, localize };
   scope.__ghostpairControl = context;
 
   // All preview data and nodes belong to the extension, never to a page control.
@@ -82,19 +84,40 @@ export function installDomControl(captureId: string, generation: number, root = 
   const focusReplica: { replica?: Replica } = {};
   const styleCache = new Map<Document | ShadowRoot, { at: number; css: string; sheet: CSSStyleSheet; complete: boolean; version: number }>();
   let panel: HTMLDivElement | undefined, panelMode: HTMLElement | undefined, panelHint: HTMLElement | undefined;
+  let panelSection: HTMLElement | undefined, panelError: HTMLElement | undefined, panelErrorMessage = '';
   let panelSelect: HTMLSelectElement | undefined;
+  let noticeKind = 'click';
+  const labels = new Map<Node, PageMessage>();
   const visibilityInputs = new Map<'showInteractions' | 'clickAnimations', HTMLInputElement>();
+
+  function label(message: PageMessage) { return messages?.translations[message] ?? message; }
+  function appendLabel(parent: HTMLElement, message: PageMessage) {
+    const text = document.createTextNode(label(message)); labels.set(text, message); parent.append(text);
+  }
+  function localize(value?: PageMessages) {
+    messages = value;
+    for (const [node, message] of labels) node.textContent = label(message);
+    if (panel) panel.lang = messages?.locale ?? 'en';
+    panelSection?.setAttribute('aria-label', label('Page sharing controls'));
+    layer?.setAttribute('aria-label', label('GhostPair previews'));
+    if (layer) layer.lang = messages?.locale ?? 'en';
+    for (const [element, preview] of previews) if (preview.editor) preview.editor.setAttribute('aria-label', `${label('Preview')}: ${element.getAttribute('aria-label') || element.getAttribute('placeholder') || label('text')}`);
+    if (notice) { notice.textContent = label(noticeKind === 'typing' ? 'Typing preview' : 'Click preview'); notice.lang = messages?.locale ?? 'en'; }
+    updatePanel();
+  }
 
   function updatePanel() {
     panel?.style.setProperty('display', configuration.preferences.showHostPanel === false ? 'none' : 'block', 'important');
-    if (panelMode) panelMode.textContent = configuration.mode === 'visual' ? 'Preview changes' : 'Full control';
+    if (panelMode) panelMode.textContent = label(configuration.mode === 'visual' ? 'Preview changes' : 'Full control');
     if (panelSelect) panelSelect.value = configuration.mode;
-    if (panelHint) panelHint.textContent = configuration.mode === 'visual' ? 'Clicks and typing are previews. Scrolling, navigation and tab management still change the shared page.' : 'Actions change the page. Hiding feedback keeps these changes visible.';
+    if (panelHint) panelHint.textContent = label(configuration.mode === 'visual' ? 'Clicks and typing are previews. Scrolling, navigation and tab management still change the shared page.' : 'Actions change the page. Hiding feedback keeps these changes visible.');
+    if (panelError) panelError.textContent = panelErrorMessage ? messages?.translations[panelErrorMessage as PageMessage] ?? label('Could not update page controls. Try again.') : '';
     for (const [preference, input] of visibilityInputs) input.checked = configuration.preferences[preference] !== false;
   }
   function installPanel() {
     if (!root) return;
     panel = document.createElement('div'); panel.dataset.ghostpairPanel = '';
+    panel.lang = messages?.locale ?? 'en';
     panel.style.cssText = 'all:initial!important;position:fixed!important;right:12px!important;top:12px!important;z-index:2147483647!important;max-width:calc(100vw - 24px)!important;';
     const panelRoot = panel.attachShadow({ mode: 'closed' });
     const style = document.createElement('style');
@@ -102,36 +125,36 @@ export function installDomControl(captureId: string, generation: number, root = 
     const details = document.createElement('details');
     const summary = document.createElement('summary'); summary.append('GhostPair ·');
     panelMode = document.createElement('strong'); panelMode.setAttribute('role', 'status'); summary.append(panelMode);
-    const section = document.createElement('section'); section.setAttribute('aria-label', 'Page sharing controls');
-    const error = document.createElement('p'); error.setAttribute('role', 'alert');
+    const section = panelSection = document.createElement('section'); section.setAttribute('aria-label', label('Page sharing controls'));
+    const error = panelError = document.createElement('p'); error.setAttribute('role', 'alert');
     const controls: (HTMLInputElement | HTMLSelectElement | HTMLButtonElement)[] = [];
     async function changePanel(event: Event, message: object) {
       if (!event.isTrusted) { updatePanel(); return; }
       for (const field of controls) field.disabled = true;
-      error.textContent = '';
+      panelErrorMessage = ''; error.textContent = '';
       try {
         const reply = await chrome.runtime.sendMessage({ target: 'background', captureId: context.captureId, generation: context.generation, controlRevision: configuration.revision, ...message });
         if (!reply?.ok) throw new Error(reply?.error ?? 'Could not update page controls. Try again.');
-      } catch (reason) { error.textContent = reason instanceof Error ? reason.message : 'Could not update page controls. Try again.'; }
+      } catch (reason) { panelErrorMessage = reason instanceof Error ? reason.message : 'Could not update page controls. Try again.'; }
       finally { updatePanel(); for (const field of controls) field.disabled = false; }
     }
-    const modeLabel = document.createElement('label'); modeLabel.className = 'mode'; modeLabel.append('Interaction mode');
+    const modeLabel = document.createElement('label'); modeLabel.className = 'mode'; appendLabel(modeLabel, 'Interaction mode');
     panelSelect = document.createElement('select');
-    for (const [value, label] of [['visual', 'Preview changes'], ['live', 'Full control']] as const) {
-      const option = document.createElement('option'); option.value = value; option.textContent = label; panelSelect.append(option);
+    for (const [value, message] of [['visual', 'Preview changes'], ['live', 'Full control']] as const) {
+      const option = document.createElement('option'); option.value = value; appendLabel(option, message); panelSelect.append(option);
     }
     panelSelect.addEventListener('change', event => void changePanel(event, { type: 'dom.control.mode', mode: panelSelect!.value }));
     controls.push(panelSelect); modeLabel.append(panelSelect); section.append(modeLabel);
-    for (const [preference, label] of [['showInteractions', 'Show their actions'], ['clickAnimations', 'Show where they click']] as const) {
+    for (const [preference, message] of [['showInteractions', 'Show their actions'], ['clickAnimations', 'Show where they click']] as const) {
       const row = document.createElement('label'), input = document.createElement('input'); input.type = 'checkbox';
       input.name = preference;
-      visibilityInputs.set(preference, input); row.append(input, label); section.append(row);
+      visibilityInputs.set(preference, input); row.append(input); appendLabel(row, message); section.append(row);
       controls.push(input);
       input.addEventListener('change', event => void changePanel(event, { type: 'dom.preferences', preference, enabled: input.checked }));
     }
-    const hide = document.createElement('button'); hide.type = 'button'; hide.textContent = 'Hide panel'; controls.push(hide);
+    const hide = document.createElement('button'); hide.type = 'button'; appendLabel(hide, 'Hide panel'); controls.push(hide);
     hide.addEventListener('click', event => void changePanel(event, { type: 'dom.preferences', preference: 'showHostPanel', enabled: false }));
-    const restoreHint = document.createElement('small'); restoreHint.textContent = 'Show it again from the GhostPair extension menu.';
+    const restoreHint = document.createElement('small'); appendLabel(restoreHint, 'Show it again from the GhostPair extension menu.');
     panelHint = document.createElement('small'); section.append(panelHint, hide, restoreHint, error);
     details.append(summary, section); panelRoot.append(style, details);
     // Local controls must never become targets of synthetic remote input.
@@ -159,7 +182,8 @@ export function installDomControl(captureId: string, generation: number, root = 
     if (layer) { if (!layer.isConnected) document.documentElement.insertBefore(layer, panel?.isConnected ? panel : null); return; }
     layer = document.createElement('div');
     layer.dataset.ghostpairVisual = '';
-    layer.setAttribute('aria-label', 'GhostPair previews');
+    layer.lang = messages?.locale ?? 'en';
+    layer.setAttribute('aria-label', label('GhostPair previews'));
     layer.style.cssText = 'all:initial!important;position:fixed!important;inset:0!important;width:100vw!important;height:100vh!important;z-index:2147483647!important;pointer-events:none!important;overflow:hidden!important;contain:strict!important;';
     updateAccent();
     updateVisibility();
@@ -587,7 +611,8 @@ export function installDomControl(captureId: string, generation: number, root = 
   function showNotice(kind: string) {
     const now = performance.now();
     if (!root || !configuration.preferences.notices || configuration.preferences.showInteractions === false || now - lastNotice < 3000 || !['click', 'typing'].includes(kind)) return;
-    notice ??= node(); notice.textContent = kind === 'typing' ? 'Typing preview' : 'Click preview';
+    noticeKind = kind;
+    notice ??= node(); notice.textContent = label(kind === 'typing' ? 'Typing preview' : 'Click preview'); notice.lang = messages?.locale ?? 'en';
     notice.style.cssText = 'position:fixed;right:12px;bottom:12px;max-width:220px;padding:5px 8px;border-radius:5px;background:rgba(30,30,38,.82);color:#fff;font:11px/14px system-ui;white-space:nowrap;';
     noticeUntil = now + 1500; lastNotice = now; scheduleDraw();
   }
@@ -629,7 +654,7 @@ export function installDomControl(captureId: string, generation: number, root = 
     const editor = element instanceof HTMLInputElement ? document.createElement('input') : document.createElement('textarea');
     if (editor instanceof HTMLInputElement) editor.type = element instanceof HTMLInputElement && element.type === 'password' ? 'password' : 'text';
     editor.dataset.gpEditor = preview.id;
-    editor.setAttribute('aria-label', `Preview: ${element.getAttribute('aria-label') || element.getAttribute('placeholder') || 'text'}`);
+    editor.setAttribute('aria-label', `${label('Preview')}: ${element.getAttribute('aria-label') || element.getAttribute('placeholder') || label('text')}`);
     editor.autocomplete = 'off'; editor.spellcheck = false; editor.tabIndex = -1;
     editor.style.cssText = 'all:initial;position:absolute;box-sizing:border-box;margin:0;opacity:0;';
     editor.value = preview.value ?? '';
@@ -1127,6 +1152,7 @@ export function installDomControl(captureId: string, generation: number, root = 
       if (message.generation !== undefined && message.generation !== context.generation) throw new Error('The shared page changed. Wait for the current view.');
       if (message.operation === 'configure') { configure(message.configuration); respond({ ok: true }); return; }
       if (message.controlRevision !== undefined && message.controlRevision !== configuration.revision) throw new Error('The interaction mode changed.');
+      if (message.operation === 'localize') { localize(message.messages); respond({ ok: true }); return; }
       if (message.operation === 'dispose') { dispose(); respond({ ok: true }); return; }
       if (message.operation === 'release') { release(); respond({ ok: true }); return; }
       if (message.operation === 'visual.clear') { const protectedPreview = message.category === 'text' || message.category === 'other' ? clearCategory(message.category) : (release(), clearVisual(), false); respond({ ok: true, protected: Boolean(protectedPreview) }); return; }

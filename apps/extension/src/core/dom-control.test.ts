@@ -1,5 +1,6 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { installDomControl } from './dom-control';
+import { pageMessages } from './page-messages';
 
 afterEach(() => { (globalThis as any).__ghostpairControl?.dispose(); vi.unstubAllGlobals(); });
 it('rejects stale generations and untrusted senders before touching the document', () => {
@@ -16,6 +17,12 @@ it('rejects stale generations and untrusted senders before touching the document
   expect(respond).toHaveBeenCalledWith({ ok: false, error: expect.stringContaining('changed') });
   respond.mockClear(); listener({ ...message, generation: 3 }, { id: 'another-extension' }, respond);
   expect(respond).not.toHaveBeenCalled(); expect(hit).not.toHaveBeenCalled();
+  listener({ ...message, generation: 3, controlRevision: 0, operation: 'localize', messages: pageMessages('es') }, { id: 'extension' }, respond);
+  expect(respond).toHaveBeenLastCalledWith({ ok: true });
+  listener({ ...message, generation: 3, controlRevision: 1, operation: 'localize', messages: pageMessages('es') }, { id: 'extension' }, respond);
+  expect(respond).toHaveBeenLastCalledWith({ ok: false, error: 'The interaction mode changed.' });
+  expect(hit).not.toHaveBeenCalled();
+  respond.mockClear();
   installDomControl('replacement', 4, false);
   listener(message, { id: 'extension' }, respond);
   expect(respond).not.toHaveBeenCalled();

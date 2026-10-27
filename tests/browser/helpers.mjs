@@ -72,18 +72,18 @@ async function stopNative(child) {
 }
 
 /** Only launches new test profiles. Never connects to an existing browser. */
-export async function launchExtension(name, extensionPath, { nativeVisibility = false } = {}) {
+export async function launchExtension(name, extensionPath, { nativeVisibility = false, locale = 'en-US' } = {}) {
   await mkdir(artifactRoot, { recursive: true });
   const profile = await mkdtemp(resolve(artifactRoot, `${name}-profile-`));
   // A fresh Edge profile can otherwise sign in automatically using Windows.
   // These preferences belong only to this disposable test profile.
   await mkdir(resolve(profile, 'Default'));
-  await writeFile(resolve(profile, 'Default/Preferences'), JSON.stringify({ signin: { allowed: false, allowed_on_next_startup: false } }));
+  await writeFile(resolve(profile, 'Default/Preferences'), JSON.stringify({ signin: { allowed: false, allowed_on_next_startup: false }, intl: { accept_languages: locale, selected_languages: locale } }));
   let nativeProcess, context;
   if (nativeVisibility) {
     // connectOverCDP(noDefaults) is the public API for retaining native focus and
     // visibility. Normal Playwright launch forces focus on every attached page.
-    nativeProcess = spawn(browsers[name], [...(process.env.GHOSTPAIR_HEADED === '1' ? [] : ['--headless=new']), '--remote-debugging-port=0', `--user-data-dir=${profile}`, '--disable-sync', '--disable-background-networking', '--enable-unsafe-extension-debugging', '--no-first-run', '--no-default-browser-check', '--window-size=1100,860', 'about:blank'], { windowsHide: true, stdio: 'ignore' });
+    nativeProcess = spawn(browsers[name], [...(process.env.GHOSTPAIR_HEADED === '1' ? [] : ['--headless=new']), `--lang=${locale}`, '--remote-debugging-port=0', `--user-data-dir=${profile}`, '--disable-sync', '--disable-background-networking', '--enable-unsafe-extension-debugging', '--no-first-run', '--no-default-browser-check', '--window-size=1100,860', 'about:blank'], { windowsHide: true, stdio: 'ignore' });
     let launchError; nativeProcess.once('error', error => { launchError = error; });
     try {
       const port = await poll(async () => {
@@ -100,6 +100,7 @@ export async function launchExtension(name, extensionPath, { nativeVisibility = 
   } else context = await chromium.launchPersistentContext(profile, {
     executablePath: browsers[name],
     headless: process.env.GHOSTPAIR_HEADED !== '1',
+    locale,
     // Native viewport dimensions must agree with the captured tab's geometry.
     viewport: null,
     // Visual inspection does not opt into Playwright's automation-only toolbar banner.
@@ -107,7 +108,7 @@ export async function launchExtension(name, extensionPath, { nativeVisibility = 
     ignoreDefaultArgs: ['--disable-extensions', ...(process.env.GHOSTPAIR_INSPECT === '1' ? ['--enable-automation'] : [])],
     // CDP's official test-only install API requires this in an isolated process.
     // No flag suppresses the browser's debugger warning or sharing indicators.
-    args: ['--enable-unsafe-extension-debugging', '--window-size=1100,860'],
+    args: [`--lang=${locale}`, '--enable-unsafe-extension-debugging', '--window-size=1100,860'],
   });
   try {
     context.setDefaultTimeout(15000);

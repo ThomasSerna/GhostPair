@@ -1,0 +1,8 @@
+{
+  "extensionDescription": {
+    "message": "Share and control authorized browser tabs over a direct peer-to-peer connection."
+  },
+  "stopSessionDescription": {
+    "message": "Stop the GhostPair session"
+  }
+}

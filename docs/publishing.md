@@ -2,7 +2,7 @@
 
 ## Delivery status
 
-Release 0.6.6 uses **https://ghostpair-3c9f3903aad3.herokuapp.com** as the official signaling origin. Its `/health` and `/ready` endpoints returned HTTP 200 on October 24, 2026. Saved custom settings, preview behavior, peer protocol 4 and existing permissions are preserved. The new signaling origin creates a new installation identity and connection code.
+Release 0.7.0 adds automatic English/Spanish language selection and a local **Settings → Language** preference. It retains **https://ghostpair-3c9f3903aad3.herokuapp.com** as the official signaling origin. That service's `/health` and `/ready` endpoints returned HTTP 200 on October 24, 2026; this historical check is not a fresh release verification. Saved identities, custom settings, preview behavior, peer protocol 4 and existing permissions are preserved.
 
 The repository generates Chrome and Edge ZIPs; this publication effort targets Chrome Web Store only. GitHub Releases distributes downloadable ZIPs automatically; store submission and approval remain separate. Heroku is the active official endpoint. Complete the account, privacy and real-browser gates below before submitting; a healthy endpoint and a valid ZIP do not establish those external checks. Do not announce a Chrome Web Store listing that does not exist.
 
@@ -17,13 +17,13 @@ Only a successful push to `main` can publish a release. The version comes from `
 To release the next version, update all workspaces and the root package without creating tags, then update the manifest to the same version. For example:
 
 ```powershell
-npm.cmd version 0.6.6 --workspaces --include-workspace-root --no-git-tag-version
-node --input-type=module -e "import fs from 'node:fs'; const path = 'apps/extension/public/manifest.json'; const manifest = JSON.parse(fs.readFileSync(path, 'utf8')); manifest.version = '0.6.6'; fs.writeFileSync(path, JSON.stringify(manifest, null, 2) + '\n');"
+npm.cmd version 0.7.0 --workspaces --include-workspace-root --no-git-tag-version
+node --input-type=module -e "import fs from 'node:fs'; const path = 'apps/extension/public/manifest.json'; const manifest = JSON.parse(fs.readFileSync(path, 'utf8')); manifest.version = '0.7.0'; fs.writeFileSync(path, JSON.stringify(manifest, null, 2) + '\n');"
 ```
 
 Commit the updated package files, `package-lock.json` and manifest together on `main`, then push. CI creates the tag and release after verification; no manual tag, personal access token, or version bump on ordinary commits is needed. This does not change branch protection or require a pull request for direct work on `main`.
 
-Write the version's changes in `docs/releases/<version>.md`. The publisher includes those notes before the installation instructions and GitHub's automatic notes. Versions without a notes file retain the installation instructions and automatic notes. [0.6.6 notes](releases/0.6.6.md) cover SPA navigation, clipboard/viewer fixes and extension cleanup; [0.6.5 notes](releases/0.6.5.md) cover the Heroku default and store preparation; [0.6.4 notes](releases/0.6.4.md) cover first-use sharing after permission approval; [0.6.3 notes](releases/0.6.3.md) cover the audit simplifications; [0.6.2 notes](releases/0.6.2.md) cover connection-code visibility and preview timing; [0.6.1 notes](releases/0.6.1.md) cover the native popup sizing fix and refreshed GitHub Pages previews; [0.6.0 notes](releases/0.6.0.md) document the redesigned sharing and connection flows.
+Write the version's changes in `docs/releases/<version>.md`. The publisher includes those notes before the installation instructions and GitHub's automatic notes. Versions without a notes file retain the installation instructions and automatic notes. [0.7.0 notes](releases/0.7.0.md) cover English/Spanish detection and saved language preferences; [0.6.6 notes](releases/0.6.6.md) cover SPA navigation, clipboard/viewer fixes and extension cleanup; [0.6.5 notes](releases/0.6.5.md) cover the Heroku default and store preparation; [0.6.4 notes](releases/0.6.4.md) cover first-use sharing after permission approval; [0.6.3 notes](releases/0.6.3.md) cover the audit simplifications; [0.6.2 notes](releases/0.6.2.md) cover connection-code visibility and preview timing; [0.6.1 notes](releases/0.6.1.md) cover the native popup sizing fix and refreshed GitHub Pages previews; [0.6.0 notes](releases/0.6.0.md) document the redesigned sharing and connection flows.
 
 Publication is serialized by version. It creates a draft, uploads both verified ZIPs with checksum checks, then publishes. To recover from an interrupted upload, rerun the original **Publish extension release** job while its Actions artifact remains available; matching completed assets are retained. A draft or existing tag from a different commit fails instead of moving the tag or overwriting assets. Fix that original run or publish a new version. Published releases are never modified by reruns. If artifacts have expired, use a new version and a fresh CI run.
 
@@ -53,7 +53,7 @@ Moving from an unpacked installation to Chrome Web Store can change the extensio
 
 **Category:** Productivity.
 
-**Language:** English, matching the current extension interface.
+**Languages:** English and Spanish in the extension. Browser language is selected automatically, with an optional local preference in Settings. The public website and prepared listing text remain in English.
 
 **Price:** Free.
 

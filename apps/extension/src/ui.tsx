@@ -1,7 +1,10 @@
 import { useEffect, useState } from 'react';
 import type { AppState } from '@ghostpair/protocol';
+import { useLocale, useTranslation } from './language';
+import type { Message } from './messages';
+import { translateRuntimeMessage } from './runtime-messages';
 
-export const statusLabels: Record<AppState['status'], string> = {
+export const statusLabels: Record<AppState['status'], Message> = {
   idle: 'Ready to connect', starting: 'Preparing session', waiting: 'Waiting for someone to join', connecting: 'Connecting…', connected: 'Connected', paused: 'Session paused', error: 'Could not connect',
 };
 
@@ -27,19 +30,23 @@ export function useSession() {
 }
 
 export function Brand({ compact = false }: { compact?: boolean }) {
-  return <div className={`brand ${compact ? 'compact' : ''}`}><svg viewBox="0 0 40 40" aria-hidden="true"><rect x="1" y="1" width="38" height="38" rx="12" fill="#123638"/><path d="M16 12h-2a7 7 0 0 0 0 14h7a7 7 0 0 0 0-14h-2M24 28h2a7 7 0 0 0 0-14h-7a7 7 0 0 0 0 14h2" fill="none" stroke="#9be7bf" strokeWidth="2.4" strokeLinecap="round"/></svg><span>GhostPair</span>{!compact && <small>CONNECTED, TOGETHER</small>}</div>;
+  const t = useTranslation();
+  return <div className={`brand ${compact ? 'compact' : ''}`}><svg viewBox="0 0 40 40" aria-hidden="true"><rect x="1" y="1" width="38" height="38" rx="12" fill="#123638"/><path d="M16 12h-2a7 7 0 0 0 0 14h7a7 7 0 0 0 0-14h-2M24 28h2a7 7 0 0 0 0-14h-7a7 7 0 0 0 0 14h2" fill="none" stroke="#9be7bf" strokeWidth="2.4" strokeLinecap="round"/></svg><span>GhostPair</span>{!compact && <small>{t("CONNECTED, TOGETHER")}</small>}</div>;
 }
 
 export function Status({ state }: { state: AppState }) {
-  return <span className={`status status-${state.status}`}><i/>{statusLabels[state.status]}</span>;
+  const t = useTranslation();
+  return <span className={`status status-${state.status}`}><i/>{t(statusLabels[state.status])}</span>;
 }
 
 export function Notifications({ state, error, onError, floating = false }: { state?: AppState; error: string; onError: (value: string) => void; floating?: boolean }) {
+  const t = useTranslation();
+  const locale = useLocale();
   const notification = state?.notification;
   if (!error && !notification) return null;
   return <div className={floating ? 'notification-stack floating' : 'notification-stack'}>
-    {error && <div className="alert" role="alert">{error}<button aria-label="Dismiss error" onClick={() => onError('')}>×</button></div>}
-    {notification && <div className={notification.kind === 'error' ? 'alert' : 'notice'} role={notification.kind === 'error' ? 'alert' : 'status'}>{notification.message}<button aria-label="Dismiss notification" onClick={() => void request('ui.notification.dismiss', { id: notification.id }).catch(e => onError(e.message))}>×</button></div>}
+    {error && <div className="alert" role="alert">{translateRuntimeMessage(locale, error)}<button aria-label={t("Dismiss error")} onClick={() => onError('')}>×</button></div>}
+    {notification && <div className={notification.kind === 'error' ? 'alert' : 'notice'} role={notification.kind === 'error' ? 'alert' : 'status'}>{translateRuntimeMessage(locale, notification.message)}<button aria-label={t("Dismiss notification")} onClick={() => void request('ui.notification.dismiss', { id: notification.id }).catch(e => onError(e.message))}>×</button></div>}
   </div>;
 }
 

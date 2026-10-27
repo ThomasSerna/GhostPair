@@ -17,10 +17,14 @@ const deepEqual = (...args) => { checks++; assert.deepEqual(...args); };
 const ok = (...args) => { checks++; assert.ok(...args); };
 const errors = [];
 
-function mockChrome({ manifest, official, code }) {
+function mockChrome({ manifest, official, code, browserLanguage = 'en-US' }) {
   const scenario = new URLSearchParams(location.search).get('scenario');
+  const languageKey = 'ghostpair-ui-test-language';
+  const preference = localStorage.getItem(languageKey) ?? 'auto';
+  const locale = preference === 'auto' ? (/^es(?:[-_]|$)/i.test(browserLanguage) ? 'es' : 'en') : preference;
   const state = {
     role: null, status: 'idle', deviceId: code, paused: false, controlEnabled: true, controlMode: 'visual', controlRevision: 0,
+    languagePreference: preference, locale,
     visualPreferences: { notices: false, clickAnimations: true, showInteractions: true, showHostPanel: true, text: { duration: 'temporary', seconds: 0.5 }, other: { duration: 'temporary', seconds: 0.5 }, accentColor: '#7871e8' },
     clipboardEnabled: false, remoteClipboardEnabled: false, tabs: [], generation: 0, settings: structuredClone(official),
   };
@@ -39,7 +43,7 @@ function mockChrome({ manifest, official, code }) {
   const broadcast = () => { const message = { type: 'state', state: structuredClone(state) }; runtimeMessages.emit(message); for (const port of ports) port.onMessage.emit(message); };
   const mock = {
     calls: [], permissionRequests: [], permissions: 'allow', pendingPermission: null, viewerOpens: 0, copiedText: '', clearCount: 0,
-    pendingStatuses: [],
+    pendingStatuses: [], failLanguageSave: false,
     update: patch => { Object.assign(state, structuredClone(patch)); broadcast(); },
     resolveStatus: () => { const finish = mock.pendingStatuses.shift(); if (!finish) throw new Error('No status response is pending.'); finish(); },
     resolvePermission: granted => { const finish = mock.pendingPermission; mock.pendingPermission = null; if (!finish) throw new Error('No permission request is pending.'); finish(granted); },
@@ -47,8 +51,15 @@ function mockChrome({ manifest, official, code }) {
     disconnectPort: () => { const port = ports.at(-1); port.disconnect(); port.onDisconnect.emit(); },
   };
   globalThis.uiState = state; globalThis.uiMock = mock;
+  window.addEventListener('storage', event => {
+    if (event.key !== languageKey) return;
+    state.languagePreference = event.newValue ?? 'auto';
+    state.locale = state.languagePreference === 'auto' ? (/^es(?:[-_]|$)/i.test(browserLanguage) ? 'es' : 'en') : state.languagePreference;
+    broadcast();
+  });
   Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async text => { mock.copiedText = text; }, readText: async () => mock.copiedText } });
   globalThis.chrome = {
+    i18n: { getUILanguage: () => browserLanguage },
     runtime: {
       id: 'a'.repeat(32), getManifest: () => manifest, getURL: path => `http://127.0.0.1:5193/${path}`, onMessage: runtimeMessages,
       connect: () => { const port = { onMessage: event(), onDisconnect: event(), postMessage() {}, disconnect() { ports.splice(ports.indexOf(port), 1); } }; ports.push(port); return port; },
@@ -64,6 +75,13 @@ function mockChrome({ manifest, official, code }) {
           case 'ui.settings.save':
             if (!['idle', 'error'].includes(state.status)) return { ok: false, error: 'End the session before changing connection settings.' };
             state.settings = structuredClone(message.settings); state.deviceId = state.settings.signalingUrl === official.signalingUrl ? code : 'fedcba9876543210fedcba9876543210'; break;
+          case 'ui.language.set':
+            if (!['auto', 'en', 'es'].includes(message.preference)) return { ok: false, error: 'Choose a supported language.' };
+            if (mock.failLanguageSave) return { ok: false, error: 'Could not save the language. Try again.' };
+            state.languagePreference = message.preference;
+            state.locale = message.preference === 'auto' ? (/^es(?:[-_]|$)/i.test(browserLanguage) ? 'es' : 'en') : message.preference;
+            localStorage.setItem(languageKey, message.preference);
+            break;
           case 'ui.host.start':
             if (message.requestPermissions && !await chrome.permissions.request({ origins: ['http://*/*', 'https://*/*'], ...(message.clipboard ? { permissions: ['clipboardRead', 'clipboardWrite'] } : {}) })) return { ok: false, error: 'The selected permissions are required to start this session.' };
             Object.assign(state, { role: 'host', status: 'waiting', sessionId: 'mock-session', paused: false, clipboardEnabled: message.clipboard, tabs: [tab(1)], activeTabId: 1 }); break;
@@ -91,7 +109,7 @@ function mockChrome({ manifest, official, code }) {
 
 async function open(context, path = 'popup', scenario = '', size = { width: 398, height: 600 }) {
   const page = await context.newPage(); page.on('pageerror', error => errors.push(error.message));
-  await page.setViewportSize(size); await page.goto(`http://127.0.0.1:5193/${path}.html${scenario ? `?scenario=${scenario}` : ''}`);
+  await page.setViewportSize(size); await page.goto(`http://127.0.0.1:5193/${path}.html${scenario ? `?scenario=${scenario}` : ''}`, { timeout: 30000 });
   await page.waitForFunction(() => globalThis.uiMock?.calls.some(call => call.type === 'ui.status'));
   await page.locator('main').waitFor(); return page;
 }
@@ -139,7 +157,7 @@ async function keyboardFeedback(page, verify = false) {
 
 try {
   await server.listen(); browser = await chromium.launch({ executablePath: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe', headless: true });
-  const context = await browser.newContext(); context.setDefaultTimeout(5000); await context.addInitScript(mockChrome, { manifest, official, code });
+  const context = await browser.newContext({ locale: 'en-US' }); context.setDefaultTimeout(5000); await context.addInitScript(mockChrome, { manifest, official, code });
 
   for (const path of ['popup', 'viewer']) {
     const delayed = await open(context, path, 'status-race', path === 'viewer' ? { width: 1365, height: 850 } : undefined);
@@ -164,7 +182,7 @@ try {
   await set(replacedPort, { role: 'guest', status: 'paused', paused: true, controlEnabled: false, controlMode: 'live', controlRevision: 1, generation: 17, sessionId: 'replacement-session' });
   await replacedPort.waitForFunction(() => uiMock.pendingStatuses.length === 2);
   await replacedPort.evaluate(async () => { uiMock.resolveStatus(); await new Promise(finish => requestAnimationFrame(() => requestAnimationFrame(finish))); });
-  equal(await replacedPort.getByText('Loading GhostPair…', { exact: true }).count(), 1, 'A replaced viewer port cannot apply its delayed snapshot');
+  equal(await replacedPort.locator('main').getAttribute('aria-busy'), 'true', 'A replaced viewer port cannot apply its delayed snapshot');
   equal(await replacedPort.getByRole('button', { name: 'Join session', exact: true }).count(), 0, 'An old port cannot restore a stale idle form');
   await replacedPort.evaluate(() => uiMock.resolveStatus());
   await replacedPort.getByText('Session paused', { exact: true }).waitFor();
@@ -253,7 +271,9 @@ try {
   const dev = await open(context, 'popup', 'dev'); await settings(dev); equal(await dev.getByRole('radio', { name: 'Custom server', exact: false }).isChecked(), true);
   equal(await dev.getByLabel('Connection server', { exact: true }).inputValue(), 'http://127.0.0.1:8787');
   const guestEditor = await open(context); await settings(guestEditor); await guestEditor.getByText('Interaction feedback', { exact: true }).click();
-  await set(guestEditor, { role: 'guest', status: 'connected' }); equal(await guestEditor.getByLabel('Show page controls', { exact: false }).isDisabled(), true, 'Joining while settings are open cannot edit sharing preferences');
+  await set(guestEditor, { role: 'guest', status: 'connected' });
+  await guestEditor.getByText('Interaction feedback is available when you share a tab.', { exact: true }).waitFor();
+  equal(await guestEditor.getByLabel('Show page controls', { exact: false }).isDisabled(), true, 'Joining while settings are open cannot edit sharing preferences');
   await guestEditor.getByRole('button', { name: 'Close settings' }).click(); await guestEditor.getByRole('button', { name: 'Leave session', exact: true }).waitFor();
 
   const host = await open(context, 'popup', 'host'); await host.getByText('Connected', { exact: true }).waitFor();
@@ -261,7 +281,7 @@ try {
     const panel = document.querySelector('.session-panel').getBoundingClientRect(), actions = document.querySelector('.session-actions').getBoundingClientRect(), popup = document.querySelector('.popup').getBoundingClientRect();
     return panel.bottom <= actions.top && actions.bottom <= popup.bottom;
   }), 'Scrollable session content and persistent actions occupy separate areas');
-  equal(await host.getByRole('button', { name: 'Open settings' }).isDisabled(), true); equal(await host.getByLabel('Show page controls', { exact: false }).isVisible(), false);
+  equal(await host.getByRole('button', { name: 'Open settings' }).isEnabled(), true, 'Language settings remain available during a session'); equal(await host.getByLabel('Show page controls', { exact: false }).isVisible(), false);
   await host.getByRole('button', { name: 'Copy code', exact: true }).click(); await host.getByRole('button', { name: 'Copied', exact: true }).waitFor();
   equal(await host.evaluate(() => uiMock.copiedText), code);
   await host.getByLabel('Let them control the page', { exact: true }).uncheck(); equal(await host.evaluate(() => uiState.controlEnabled), false);
@@ -344,8 +364,72 @@ try {
   ok(await narrow.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'Narrow viewer has no horizontal overflow');
   await context.close();
 
+  const spanish = await browser.newContext({ locale: 'es-CO' }); spanish.setDefaultTimeout(5000);
+  await spanish.addInitScript(mockChrome, { manifest, official, code, browserLanguage: 'es-CO' });
+  const automatic = await open(spanish);
+  await automatic.getByRole('button', { name: 'Compartir mi pestaña', exact: true }).waitFor();
+  equal(await automatic.locator('html').getAttribute('lang'), 'es', 'First use automatically follows regional Spanish');
+  equal(await automatic.getByRole('dialog').count(), 0, 'First use never asks for a language');
+  equal(await automatic.getByLabel('Idioma', { exact: true }).count(), 0, 'The language selector only appears in settings');
+  await automatic.getByRole('button', { name: 'Abrir configuración' }).click();
+  equal(await automatic.getByLabel('Idioma', { exact: true }).inputValue(), 'auto');
+  deepEqual(await automatic.getByLabel('Idioma', { exact: true }).locator('option').allTextContents(), ['Automático (Español)', 'English', 'Español']);
+  const languageViewer = await open(spanish, 'viewer', 'guest', { width: 398, height: 790 });
+  equal(await languageViewer.locator('html').getAttribute('lang'), 'es', 'Viewer automatically follows the same local preference');
+  await automatic.getByLabel('Idioma', { exact: true }).selectOption('en');
+  await automatic.getByRole('heading', { name: 'Settings', exact: true }).waitFor();
+  await languageViewer.waitForFunction(() => document.documentElement.lang === 'en');
+  equal(await automatic.getByLabel('Language', { exact: true }).inputValue(), 'en', 'Manual English overrides a Spanish browser');
+  const reopened = await open(spanish);
+  await reopened.getByRole('button', { name: 'Open settings' }).click();
+  equal(await reopened.getByLabel('Language', { exact: true }).inputValue(), 'en', 'Language preference survives closing and reopening views');
+  await reopened.getByLabel('Language', { exact: true }).selectOption('auto');
+  await automatic.waitForFunction(() => document.documentElement.lang === 'es');
+  await languageViewer.waitForFunction(() => document.documentElement.lang === 'es');
+  equal(await reopened.getByLabel('Idioma', { exact: true }).inputValue(), 'auto', 'Automatic restores the current browser language');
+  await reopened.evaluate(() => { uiMock.failLanguageSave = true; });
+  await reopened.getByLabel('Idioma', { exact: true }).selectOption('en');
+  await reopened.getByRole('alert').waitFor();
+  equal(await reopened.getByLabel('Idioma', { exact: true }).inputValue(), 'auto', 'Failed persistence keeps the previous language selected');
+  equal(await reopened.locator('html').getAttribute('lang'), 'es', 'Failed persistence keeps the current document language');
+  await reopened.evaluate(() => { uiMock.failLanguageSave = false; });
+
+  const activeLanguage = await open(spanish, 'popup', 'host');
+  const sessionBeforeLanguage = await activeLanguage.evaluate(() => {
+    const { locale, languagePreference, ...session } = uiState; return session;
+  });
+  await activeLanguage.getByRole('button', { name: 'Abrir configuración' }).click();
+  await activeLanguage.getByRole('button', { name: 'Finalizar sesión', exact: true }).waitFor();
+  equal(await activeLanguage.locator('.connection-settings button[type="submit"]').isDisabled(), true, 'Connection settings remain locked during a session');
+  await activeLanguage.getByLabel('Idioma', { exact: true }).selectOption('en');
+  await activeLanguage.getByRole('heading', { name: 'Settings', exact: true }).waitFor();
+  deepEqual(await activeLanguage.evaluate(() => {
+    const { locale, languagePreference, ...session } = uiState; return session;
+  }), sessionBeforeLanguage, 'Changing language preserves the complete active session');
+  equal((await calls(activeLanguage, 'ui.stop')).length, 0, 'Changing language never stops the session');
+  equal(await activeLanguage.getByRole('button', { name: 'End session', exact: true }).isVisible(), true, 'Session actions remain reachable in language settings');
+  await activeLanguage.getByLabel('Language', { exact: true }).selectOption('es');
+  await activeLanguage.getByRole('button', { name: 'Cerrar configuración' }).click();
+  ok(await activeLanguage.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'Spanish popup has no horizontal overflow');
+  ok(await languageViewer.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'Spanish narrow viewer has no horizontal overflow');
   if (!checkOnly) {
-    mkdirSync(output, { recursive: true }); const gallery = await browser.newContext(); await gallery.addInitScript(mockChrome, { manifest, official, code });
+    mkdirSync(output, { recursive: true });
+    await snapshot(activeLanguage, 'popup-host-es');
+    await snapshot(languageViewer, 'viewer-active-es-narrow');
+    await activeLanguage.getByRole('button', { name: 'Abrir configuración' }).click();
+    await snapshot(activeLanguage, 'settings-active-es');
+  }
+  await spanish.close();
+
+  const unsupportedLanguage = await browser.newContext({ locale: 'fr-CA' }); unsupportedLanguage.setDefaultTimeout(5000);
+  await unsupportedLanguage.addInitScript(mockChrome, { manifest, official, code, browserLanguage: 'fr-CA' });
+  const fallback = await open(unsupportedLanguage);
+  await fallback.getByRole('button', { name: 'Share my tab', exact: true }).waitFor();
+  equal(await fallback.locator('html').getAttribute('lang'), 'en', 'Unsupported browser language falls back to English');
+  await unsupportedLanguage.close();
+
+  if (!checkOnly) {
+    mkdirSync(output, { recursive: true }); const gallery = await browser.newContext({ locale: 'en-US' }); await gallery.addInitScript(mockChrome, { manifest, official, code });
     const page = await open(gallery); await snapshot(page, 'popup-home'); await startForm(page); await snapshot(page, 'popup-share'); await page.close();
     const settingsPage = await open(gallery); await settings(settingsPage); await snapshot(settingsPage, 'settings-ghostpair'); await custom(settingsPage); await snapshot(settingsPage, 'settings-custom'); await snapshot(settingsPage, 'settings-custom-bottom', 'bottom'); await settingsPage.close();
     for (const scenario of ['host', 'empty', 'five', 'capture', 'unsupported', 'paused', 'guest']) {

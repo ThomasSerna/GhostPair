@@ -1,6 +1,6 @@
 {
   "name": "ghostpair",
-  "version": "0.6.6",
+  "version": "0.7.0",
   "license": "MIT",
   "private": true,
   "type": "module",
@@ -27,6 +27,7 @@
     "package": "npm run build && node scripts/package.mjs",
     "test:browser": "node tests/browser/smoke.mjs",
     "test:popup": "node tests/browser/popup-size.mjs",
+    "test:language": "node tests/browser/language.mjs",
     "test:frames": "node tests/browser/frame-probe.mjs",
     "test:visual": "node tests/browser/visual-probe.mjs",
     "test:questionnaires": "node tests/browser/questionnaire-probe.mjs",

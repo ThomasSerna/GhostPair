@@ -1,9 +1,14 @@
-import { ControlModeSchema, VisualPreferencesSchema, PasswordSchema, SettingsSchema, type AppState, type Settings } from '@ghostpair/protocol';
+import { ControlModeSchema, VisualPreferencesSchema, PasswordSchema, SettingsSchema, type AppState, type Settings, type LanguagePreference } from '@ghostpair/protocol';
 import { TabCapture } from './core/tab-capture';
 import { dismissNotification, patchState } from './core/notifications';
+import { pageMessages } from './core/page-messages';
+import { isLanguagePreference, resolveLocale } from './locale';
+import { validationMessage } from './runtime-messages';
 
 const defaults: Settings = SettingsSchema.parse({ signalingUrl: import.meta.env.VITE_SIGNALING_URL || 'http://127.0.0.1:8787', stunUrls: (import.meta.env.VITE_STUN_URLS || 'stun:stun.l.google.com:19302').split(',').map((s: string) => s.trim()).filter(Boolean) });
 let visualPreferences = VisualPreferencesSchema.parse({});
+let languagePreference: LanguagePreference = 'auto';
+let locale = resolveLocale(languagePreference);
 let state: AppState = idle(defaults);
 let authorizedWindowId: number | undefined;
 let creatingOffscreen: Promise<void> | undefined;
@@ -14,7 +19,7 @@ let viewerTabId: number | undefined;
 let ownerPort: chrome.runtime.Port | undefined;
 const viewers = new Set<chrome.runtime.Port>();
 const pending = new Map<string, { resolve: (reply: any) => void; timer: ReturnType<typeof setTimeout> }>();
-function idle(settings: Settings, deviceId?: string): AppState { return { role: null, status: 'idle', deviceId, paused: false, controlEnabled: true, controlMode: 'visual', controlRevision: 0, visualPreferences, clipboardEnabled: false, remoteClipboardEnabled: false, tabs: [], generation: 0, settings }; }
+function idle(settings: Settings, deviceId?: string): AppState { return { languagePreference, locale, role: null, status: 'idle', deviceId, paused: false, controlEnabled: true, controlMode: 'visual', controlRevision: 0, visualPreferences, clipboardEnabled: false, remoteClipboardEnabled: false, tabs: [], generation: 0, settings }; }
 const pageUrl = (url?: string) => url?.split(/[?#]/)[0];
 const isViewer = (sender: chrome.runtime.MessageSender) => pageUrl(sender.url) === chrome.runtime.getURL('viewer.html');
 async function openViewer() {
@@ -64,7 +69,10 @@ const capture = new TabCapture({
 });
 const ready = (async () => {
   await chrome.storage.local.setAccessLevel({ accessLevel: 'TRUSTED_CONTEXTS' });
-  const saved = await chrome.storage.local.get(['settings', 'identities', 'visualPreferences']);
+  const saved = await chrome.storage.local.get(['settings', 'identities', 'visualPreferences', 'languagePreference']);
+  languagePreference = isLanguagePreference(saved.languagePreference) ? saved.languagePreference : 'auto';
+  locale = resolveLocale(languagePreference);
+  await capture.setLanguage(pageMessages(locale));
   // Keep valid saved preferences when narrowing the old 30-second maximum.
   let storedPreferences: unknown = saved.visualPreferences;
   if (storedPreferences && typeof storedPreferences === 'object' && !Array.isArray(storedPreferences)) {
@@ -134,6 +142,17 @@ async function action(message: Record<string, any>, sender: chrome.runtime.Messa
     }
     case 'ui.notification.dismiss': state = dismissNotification(state, String(message.id)); broadcast(); return state;
     case 'ui.viewer.open': await openViewer(); return state;
+    case 'ui.language.set': {
+      if (!isLanguagePreference(message.preference)) throw new Error('Choose a supported language.');
+      try { await chrome.storage.local.set({ languagePreference: message.preference }); }
+      catch { throw new Error('Could not save the language. Try again.'); }
+      languagePreference = message.preference;
+      locale = resolveLocale(languagePreference);
+      update({ languagePreference, locale });
+      try { await capture.setLanguage(pageMessages(locale)); }
+      catch { update({ notice: 'Could not update page controls. Try again.' }); }
+      return state;
+    }
     case 'ui.settings.reset': case 'ui.settings.save': {
       if (!['idle', 'error'].includes(state.status)) throw new Error('End the session before changing settings.');
       const settings = message.type === 'ui.settings.reset' ? defaults : SettingsSchema.parse(message.settings);
@@ -178,7 +197,7 @@ async function action(message: Record<string, any>, sender: chrome.runtime.Messa
         const reply = await transport('session.start', { role: host ? 'host' : 'guest', settings: state.settings, deviceId, ownerToken: owner?.ownerToken, password, clipboard });
         if (!current()) return state;
         if (!reply?.ok) throw new Error(reply?.error ?? 'Could not start the session.');
-      } catch (error) { if (!current()) return state; await stop(); update({ status: 'error', error: error instanceof Error ? error.message : 'Could not start the session.' }); }
+      } catch (error) { if (!current()) return state; await stop(); update({ status: 'error', error: validationMessage(error) }); }
       return state;
     }
     case 'ui.host.authorize': {
@@ -280,7 +299,7 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
     const work = mutation.then(() => authorization && requestedEpoch !== sessionEpoch ? state : action(message, sender, authorization)); mutation = work.catch(() => undefined);
     const result = await work;
     return ['dom.preferences', 'dom.control.mode'].includes(message.type) ? { ok: true } : { ok: true, state: result };
-  })().then(respond).catch(error => respond({ ok: false, error: error instanceof Error ? error.message : 'Could not complete the operation.' }));
+  })().then(respond).catch(error => respond({ ok: false, error: validationMessage(error) }));
   return true;
 });
 chrome.runtime.onConnect.addListener(port => {

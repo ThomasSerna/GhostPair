@@ -1,0 +1,8 @@
+{
+  "extensionDescription": {
+    "message": "Comparte y controla pestañas autorizadas del navegador mediante una conexión directa entre participantes."
+  },
+  "stopSessionDescription": {
+    "message": "Finalizar la sesión de GhostPair"
+  }
+}

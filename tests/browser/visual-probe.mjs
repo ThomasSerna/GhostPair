@@ -3,6 +3,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { chromium } from 'playwright';
 import { installDomControl } from '../../apps/extension/src/core/dom-control.ts';
+import { pageMessages } from '../../apps/extension/src/core/page-messages.ts';
 import { artifactRoot, browsers } from './helpers.mjs';
 import { visualStyles } from './visual-styles.mjs';
 import { selectionStyles } from './selection-styles.mjs';
@@ -99,6 +100,17 @@ for (const name of process.argv.slice(2).length ? process.argv.slice(2) : ['chro
     await send(undefined, { operation: 'configure', configuration: config });
     await send(undefined, { operation: 'visual.notice', kind: 'typing' });
     assert.equal((await contents()).filter(t => t === 'Typing preview').length, 1);
+    const beforeLanguage = await page.evaluate(() => {
+      globalThis.languageEditor = preview.querySelector('[data-gp-editor]');
+      return { value: languageEditor.value, start: languageEditor.selectionStart, end: languageEditor.selectionEnd, focused: preview.activeElement === languageEditor, source: document.querySelector('#text').value, generation: __ghostpairControl.generation };
+    });
+    await send(undefined, { operation: 'localize', messages: pageMessages('es') });
+    assert.ok((await contents()).includes('Vista previa de escritura'));
+    assert.equal(await page.evaluate(() => replicaRoots.get(document.querySelector('[data-ghostpair-panel]')).querySelector('section').getAttribute('aria-label')), 'Controles de la página compartida');
+    assert.deepEqual(await page.evaluate(() => ({ value: languageEditor.value, start: languageEditor.selectionStart, end: languageEditor.selectionEnd, focused: preview.activeElement === languageEditor, source: document.querySelector('#text').value, generation: __ghostpairControl.generation })), beforeLanguage);
+    assert.equal(await page.evaluate(() => languageEditor.isConnected && languageEditor === preview.querySelector('[data-gp-editor]')), true);
+    assert.ok(await page.evaluate(() => languageEditor.getAttribute('aria-label').startsWith('Vista previa:')));
+    await send(undefined, { operation: 'localize', messages: pageMessages('en') });
     await send(undefined, { operation: 'visual.notice', kind: 'click' }); assert.ok(!(await contents()).includes('Click preview'));
     await page.clock.runFor(1550); assert.ok(!(await contents()).includes('Typing preview'));
     await page.clock.runFor(1500); await send(undefined, { operation: 'visual.notice', kind: 'click' }); assert.ok((await contents()).includes('Click preview'));
@@ -121,6 +133,14 @@ for (const name of process.argv.slice(2).length ? process.argv.slice(2) : ['chro
     await page.keyboard.press('Control+a'); await page.keyboard.insertText('Host á漢🙂'); await page.clock.runFor(40);
     assert.ok((await contents()).includes('Host á漢🙂'));
     assert.equal(await page.locator('#text').inputValue(), 'Original');
+    const focusedEditor = await page.evaluate(() => {
+      globalThis.languageEditor = preview.activeElement; languageEditor.setSelectionRange(2, 6);
+      return { value: languageEditor.value, start: languageEditor.selectionStart, end: languageEditor.selectionEnd };
+    });
+    await send(undefined, { operation: 'localize', messages: pageMessages('es') });
+    assert.equal(await page.evaluate(() => preview.activeElement === languageEditor && languageEditor.isConnected), true, 'changing language preserves the focused preview editor');
+    assert.deepEqual(await page.evaluate(() => ({ value: languageEditor.value, start: languageEditor.selectionStart, end: languageEditor.selectionEnd })), focusedEditor);
+    await send(undefined, { operation: 'localize', messages: pageMessages('en') });
     const clipboard = await page.evaluate(() => {
       const editor = preview.activeElement, data = new DataTransfer();
       editor.setSelectionRange(0, 4);

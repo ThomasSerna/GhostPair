@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { resolve } from 'node:path';
 import { installDomControl } from '../../apps/extension/src/core/dom-control.ts';
+import { pageMessages } from '../../apps/extension/src/core/page-messages.ts';
 import { artifactRoot } from './helpers.mjs';
 
 export async function hostPanel(page, name) {
@@ -21,7 +22,7 @@ export async function hostPanel(page, name) {
       if (['dom.preferences', 'dom.control.mode'].includes(message.type)) {
         panelMessages.push(message);
         if (globalThis.holdPanelReply) await new Promise(resolve => { globalThis.resumePanel = resolve; });
-        if (globalThis.failPreference) { globalThis.failPreference = false; return { ok: false, error: 'Try again.' }; }
+        if (globalThis.failPreference) { const error = typeof globalThis.failPreference === 'string' ? globalThis.failPreference : 'Try again.'; globalThis.failPreference = false; return { ok: false, error }; }
         if (message.type === 'dom.control.mode') { panelConfig.mode = message.mode; panelConfig.revision++; }
         else panelConfig.preferences[message.preference] = message.enabled;
         configurePanel();
@@ -33,6 +34,7 @@ export async function hostPanel(page, name) {
   const panelPoint = selector => page.evaluate(selector => { const b = hostPanelRoot.querySelector(selector).getBoundingClientRect(); return { x: b.x + b.width / 2, y: b.y + b.height / 2 }; }, selector);
   const localClick = async selector => { const p = await panelPoint(selector); await page.mouse.click(p.x, p.y); };
   const localMode = async mode => { await localClick('select'); await page.keyboard.press(mode === 'live' ? 'End' : 'Home'); await page.keyboard.press('Enter'); };
+  const localize = locale => page.evaluate(messages => controller({ target: 'ghostpair.dom', captureId: 'panel', generation: 1, controlRevision: panelConfig.revision, operation: 'localize', messages }, { id: 'fixture' }, () => {}), pageMessages(locale));
   const remote = command => page.evaluate(command => {
     let result;
     controller({ target: 'ghostpair.dom', captureId: 'panel', generation: 1, operation: 'command', command: { controlRevision: panelConfig.revision, ...command } }, { id: 'fixture' }, reply => { result = reply; });
@@ -98,11 +100,18 @@ export async function hostPanel(page, name) {
     await page.screenshot({ path: resolve(artifactRoot, `host-panel-${mode}-${name}.png`) });
     await localClick('input[name="clickAnimations"]');
   }
-  await page.evaluate(() => { globalThis.failPreference = true; }); await localClick('input');
-  assert.equal(await page.evaluate(() => hostPanelRoot.querySelector('[role="alert"]').textContent), 'Try again.');
+  await page.evaluate(() => { globalThis.failPreference = 'El navegador rechazó el acceso.'; }); await localClick('input');
+  assert.equal(await page.evaluate(() => hostPanelRoot.querySelector('[role="alert"]').textContent), 'Could not update page controls. Try again.');
+  await localize('es');
+  assert.equal(await page.evaluate(() => hostPanelRoot.querySelector('[role="alert"]').textContent), 'No se pudieron actualizar los controles de la página. Inténtalo de nuevo.');
+  await localize('en');
   assert.equal(await page.evaluate(() => hostPanelRoot.querySelector('input').checked), true);
-  await page.evaluate(() => { globalThis.failPreference = true; }); await localMode('live');
-  assert.equal(await page.evaluate(() => hostPanelRoot.querySelector('[role="alert"]').textContent), 'Try again.');
+  await page.evaluate(() => { globalThis.failPreference = 'The interaction mode changed.'; }); await localMode('live');
+  assert.equal(await page.evaluate(() => hostPanelRoot.querySelector('[role="alert"]').textContent), 'The interaction mode changed.');
+  await localize('es');
+  assert.equal(await page.evaluate(() => hostPanelRoot.querySelector('[role="alert"]').textContent), 'El modo de interacción cambió.');
+  await localize('en');
+  assert.equal(await page.evaluate(() => hostPanelRoot.querySelector('[role="alert"]').textContent), 'The interaction mode changed.');
   assert.equal(await page.evaluate(() => hostPanelRoot.querySelector('select').value), 'visual');
   await page.evaluate(() => { globalThis.holdPanelReply = true; }); await localClick('input');
   assert.equal(await page.evaluate(() => [...hostPanelRoot.querySelectorAll('input,select,button')].every(field => field.disabled)), true, 'all controls disabled during a request');
