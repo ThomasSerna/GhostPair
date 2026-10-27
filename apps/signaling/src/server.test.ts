@@ -11,6 +11,8 @@ import { Devices, type DeviceStore } from './devices.js';
 
 const origin = `chrome-extension://${'a'.repeat(32)}`;
 const password = 'GhostPair test password 937!';
+const offerSdp = `v=0\r\na=fingerprint:sha-256 ${'AA:'.repeat(31)}01\r\n`;
+const answerSdp = `v=0\r\na=fingerprint:sha-256 ${'BB:'.repeat(31)}02\r\n`;
 const servers: SignalingServer[] = [];
 const sockets: WebSocket[] = [];
 const temporaryDirectories: string[] = [];
@@ -182,9 +184,9 @@ describe('signaling security and lifecycle', () => {
     guest.send({ type: 'guest.join', deviceId: identity.deviceId, password });
     expect(await guest.next('paired')).toEqual({ type: 'paired', role: 'guest', sessionId: ready.sessionId });
     expect((await host.next('paired')).role).toBe('host');
-    host.send({ type: 'signal', sessionId: ready.sessionId, payload: { type: 'offer', sdp: 'v=0' } });
-    expect((await guest.next('signal')).payload).toEqual({ type: 'offer', sdp: 'v=0' });
-    guest.send({ type: 'signal', sessionId: ready.sessionId, payload: { type: 'answer', sdp: 'v=0' } });
+    host.send({ type: 'signal', sessionId: ready.sessionId, payload: { type: 'offer', sdp: offerSdp } });
+    expect((await guest.next('signal')).payload).toEqual({ type: 'offer', sdp: offerSdp });
+    guest.send({ type: 'signal', sessionId: ready.sessionId, payload: { type: 'answer', sdp: answerSdp } });
     expect((await host.next('signal')).payload.type).toBe('answer');
     guest.send({ type: 'host.close', sessionId: ready.sessionId });
     expect((await guest.next('error')).code).toBe('FORBIDDEN');
@@ -408,5 +410,97 @@ it('serves the privacy document directly without Caddy', async () => {
   expect(response.status).toBe(200);
   expect(response.headers.get('content-type')).toContain('text/html');
   expect(response.headers.get('content-security-policy')).toContain("frame-ancestors 'none'");
+  expect(response.headers.get('strict-transport-security')).toContain('max-age=63072000');
   expect(await response.text()).toContain('GhostPair privacy');
+});
+
+it('enforces DTLS fingerprint presence, prevents fingerprint reflection, and caps offer/answer/ICE quotas', async () => {
+  const app = await start({ maxIceCandidatesPerPeer: 2 });
+  const identity = await app.register();
+  const [host, guest] = await Promise.all([app.connect(), app.connect()]);
+  host.send({ type: 'host.open', ...identity, password });
+  const ready = await host.next('host.ready');
+  guest.send({ type: 'guest.join', deviceId: identity.deviceId, password });
+  await guest.next('paired'); await host.next('paired');
+
+  // Reject answer before offer and offer without a valid DTLS fingerprint.
+  guest.send({ type: 'signal', sessionId: ready.sessionId, payload: { type: 'answer', sdp: answerSdp } });
+  expect((await guest.next('error')).code).toBe('FORBIDDEN');
+  host.send({ type: 'signal', sessionId: ready.sessionId, payload: { type: 'offer', sdp: 'v=0' } });
+  expect((await host.next('error')).code).toBe('FORBIDDEN');
+
+  // Accept first valid offer and reject a duplicate offer.
+  host.send({ type: 'signal', sessionId: ready.sessionId, payload: { type: 'offer', sdp: offerSdp } });
+  expect((await guest.next('signal')).payload).toEqual({ type: 'offer', sdp: offerSdp });
+  host.send({ type: 'signal', sessionId: ready.sessionId, payload: { type: 'offer', sdp: offerSdp } });
+  expect((await host.next('error')).code).toBe('FORBIDDEN');
+
+  // Reject reflected host fingerprint in guest answer, then accept distinct guest fingerprint once.
+  guest.send({ type: 'signal', sessionId: ready.sessionId, payload: { type: 'answer', sdp: offerSdp } });
+  expect((await guest.next('error')).code).toBe('FORBIDDEN');
+  guest.send({ type: 'signal', sessionId: ready.sessionId, payload: { type: 'answer', sdp: answerSdp } });
+  expect((await host.next('signal')).payload).toEqual({ type: 'answer', sdp: answerSdp });
+  guest.send({ type: 'signal', sessionId: ready.sessionId, payload: { type: 'answer', sdp: answerSdp } });
+  expect((await guest.next('error')).code).toBe('FORBIDDEN');
+
+  // Cap ICE candidates per peer.
+  for (let i = 0; i < 2; i++) {
+    host.send({ type: 'signal', sessionId: ready.sessionId, payload: { type: 'ice', candidate: { candidate: `candidate:${i} 1 udp 1 192.0.2.1 9999 typ host` } } });
+    expect((await guest.next('signal')).payload.type).toBe('ice');
+  }
+  host.send({ type: 'signal', sessionId: ready.sessionId, payload: { type: 'ice', candidate: null } });
+  expect((await host.next('error')).code).toBe('RATE_LIMITED');
+});
+
+it('queues burst authentications in FIFO order and drops disconnected queued clients', async () => {
+  const app = await start({ scryptN: 32_768, maxAuthConcurrency: 1, maxAuthQueue: 2 });
+  const [one, two, three, four] = await Promise.all([app.register(), app.register(), app.register(), app.register()]);
+  const [c1, c2, c3, c4] = await Promise.all([app.connect(), app.connect(), app.connect(), app.connect()]);
+  c1.send({ type: 'host.open', ...one, password });
+  await vi.waitUntil(() => app.server.stats.activeAuth === 1, { timeout: 5000, interval: 2 });
+  c2.send({ type: 'host.open', ...two, password });
+  c3.send({ type: 'host.open', ...three, password });
+  c4.send({ type: 'host.open', ...four, password });
+  expect((await c4.next('error')).code).toBe('SERVER_BUSY');
+  c2.socket.terminate();
+  expect((await c1.next('host.ready')).deviceId).toBe(one.deviceId);
+  expect((await c3.next('host.ready')).deviceId).toBe(three.deviceId);
+  await vi.waitUntil(() => app.server.stats.activeAuth === 0, { timeout: 5000, interval: 2 });
+  expect(app.server.stats.activeRooms).toBe(2);
+});
+
+it('releases paired rooms after the signaling window without ending the direct session', async () => {
+  const app = await start({ pairedRoomTimeoutMs: 60, maxRooms: 1 });
+  const [one, two] = await Promise.all([app.register(), app.register()]);
+  const [host, guest, nextHost] = await Promise.all([app.connect(), app.connect(), app.connect()]);
+  host.send({ type: 'host.open', ...one, password });
+  const ready = await host.next('host.ready');
+  guest.send({ type: 'guest.join', deviceId: one.deviceId, password });
+  await guest.next('paired'); await host.next('paired');
+  await vi.waitUntil(() => app.server.stats.activeRooms === 0, { timeout: 5000, interval: 5 });
+  expect(host.history.some(m => m.type === 'ended')).toBe(false);
+  expect(guest.history.some(m => m.type === 'ended')).toBe(false);
+  nextHost.send({ type: 'host.open', ...two, password });
+  expect((await nextHost.next('host.ready')).deviceId).toBe(two.deviceId);
+  host.send({ type: 'host.close', sessionId: ready.sessionId });
+  expect((await host.next('ended')).sessionId).toBe(ready.sessionId);
+});
+
+it('rate-limits WebSocket upgrade floods per IP and closes sockets after repeated protocol errors', async () => {
+  const app = await start({ upgradeIpLimit: 2, maxProtocolErrorsPerSocket: 2 });
+  const peer = await app.connect();
+  peer.socket.send( JSON.stringify({ type: 'unknown' }));
+  expect((await peer.next('error')).code).toBe('INVALID_MESSAGE');
+  peer.socket.send(JSON.stringify({ type: 'unknown' }));
+  expect((await peer.next('error')).code).toBe('INVALID_MESSAGE');
+  await vi.waitUntil(() => peer.socket.readyState === WebSocket.CLOSED, { timeout: 5000, interval: 2 });
+  const second = await app.connect();
+  second.socket.close();
+  const third = new WebSocket(`${app.base.replace('http:', 'ws:')}/v1/connect`, { origin });
+  sockets.push(third);
+  third.on('error', () => {});
+  const status = await new Promise<number | undefined>((resolve) => {
+    third.once('unexpected-response', (_request, result) => { result.resume(); resolve(result.statusCode); third.terminate(); });
+  });
+  expect(status).toBe(429);
 });

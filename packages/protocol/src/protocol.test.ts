@@ -1,5 +1,6 @@
+import { createHmac } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-import { VisualPreferencesSchema, PasswordSchema, ClientSignalMessageSchema, ControlCommandSchema, SettingsSchema, isRelaySignal, isSupportedUrl, validateSignalingUrl } from './index';
+import { VisualPreferencesSchema, PasswordSchema, ClientSignalMessageSchema, ControlCommandSchema, SettingsSchema, isRelaySignal, isSupportedUrl, validateSignalingUrl, extractSdpFingerprints, deriveSessionKeys, signSdpFingerprint, verifySdpFingerprint } from './index';
 describe('network boundaries', () => {
   it('migrates click animations on by default and preserves an explicit opt-out', () => {
     for (const saved of [{}, { notices: true, duration: 'temporary', seconds: 4 }, { text: { seconds: 10 }, other: { seconds: 3 } }]) {
@@ -66,5 +67,33 @@ describe('network boundaries', () => {
       expect(SettingsSchema.parse({ ...settings, signalingUrl }).signalingUrl).toBe(signalingUrl);
     }
     expect(() => SettingsSchema.parse({ ...settings, signalingUrl: 'http://example.com' })).toThrow('Use HTTPS for signaling, or HTTP on localhost.');
+  });
+
+  it('extracts canonical DTLS fingerprints and authenticates SDP offers and answers end to end', () => {
+    const fpA = 'AA:'.repeat(31) + '01';
+    const fpB = 'BB:'.repeat(31) + '02';
+    const validSdp = `v=0\r\no=- 1 1 IN IP4 127.0.0.1\r\na=fingerprint:sha-256 ${fpA.toLowerCase()}\r\n`;
+    expect(extractSdpFingerprints(validSdp)).toEqual([`sha-256 ${fpA}`]);
+    for (const invalid of ['', 'a=fingerprint:sha-256 ' + fpA, `v=0\r\na=fingerprint:sha-1 ${'AA:'.repeat(19)}AA\r\n`, `v=0\r\na=fingerprint:sha-256 AA:BB\r\n`, `v=0\r\na=fingerprint:sha-256 ${fpA}\r\na=fingerprint:md5 invalid\r\n`, `v=0\r\n\0a=fingerprint:sha-256 ${fpA}`]) {
+      expect(extractSdpFingerprints(invalid)).toEqual([]);
+    }
+    const deviceId = 'a'.repeat(32);
+    const sessionId = 'c'.repeat(32);
+    const hostKeys = deriveSessionKeys('Shared-Secret-99', deviceId);
+    const guestKeys = deriveSessionKeys('Shared-Secret-99', deviceId.toUpperCase());
+    const wrongKeys = deriveSessionKeys('Wrong-Secret-99', deviceId);
+    expect(hostKeys).toEqual(guestKeys);
+    expect(hostKeys.authToken).toMatch(/^[a-f0-9]{64}$/);
+    expect(hostKeys.macKey).toMatch(/^[a-f0-9]{64}$/);
+    expect(hostKeys.authToken).not.toBe(hostKeys.macKey);
+    const mac = signSdpFingerprint(hostKeys.macKey, sessionId, 'host', validSdp);
+    const expectedNodeHmac = createHmac('sha256', Buffer.from(hostKeys.macKey, 'utf8')).update(`ghostpair:sdp-fp:v1|${sessionId}|host|sha-256 ${fpA}`, 'utf8').digest('hex');
+    expect(mac).toBe(expectedNodeHmac);
+    expect(verifySdpFingerprint(guestKeys.macKey, sessionId, 'host', validSdp, mac)).toBe(true);
+    expect(verifySdpFingerprint(guestKeys.macKey, sessionId, 'guest', validSdp, mac)).toBe(false);
+    expect(verifySdpFingerprint(guestKeys.macKey, 'd'.repeat(32), 'host', validSdp, mac)).toBe(false);
+    expect(verifySdpFingerprint(wrongKeys.macKey, sessionId, 'host', validSdp, mac)).toBe(false);
+    expect(verifySdpFingerprint(guestKeys.macKey, sessionId, 'host', `v=0\r\na=fingerprint:sha-256 ${fpB}\r\n`, mac)).toBe(false);
+    expect(verifySdpFingerprint(guestKeys.macKey, sessionId, 'host', validSdp, undefined)).toBe(false);
   });
 });

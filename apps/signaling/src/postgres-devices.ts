@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { Pool, type PoolClient } from 'pg';
-import { newIdentity, verifyOwner, type DeviceStore, type Identity } from './devices.js';
+import { isValidIdentityFormat, newIdentity, verifyOwner, type DeviceStore, type Identity } from './devices.js';
 
 export interface PostgresConfig { databaseUrl: string; databaseSslMode: 'verify-full' | 'disable'; databaseSslCaFile?: string }
 export function validatePostgresConfig(config: PostgresConfig) {
@@ -48,6 +48,7 @@ export class PostgresDevices implements DeviceStore {
     });
   }
   async authenticate(deviceId: string, ownerToken: string) {
+    if (!isValidIdentityFormat(deviceId, ownerToken)) return verifyOwner(ownerToken, undefined);
     const result = await this.pool.query('SELECT owner_token_hash FROM devices WHERE device_id = $1', [deviceId]);
     return verifyOwner(ownerToken, result.rows[0]?.owner_token_hash);
   }

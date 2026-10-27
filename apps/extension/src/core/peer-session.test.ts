@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { PROTOCOL_VERSION } from '@ghostpair/protocol';
+import { PROTOCOL_VERSION, deriveSessionKeys, signSdpFingerprint } from '@ghostpair/protocol';
 import { createPeerSession, JsonChannel } from './peer-session';
 
 async function settled() { for (let i = 0; i < 30; i++) await Promise.resolve(); }
@@ -27,6 +27,8 @@ const directStats = () => new Map<string, any>([
   ['pair', { localCandidateId: 'local', remoteCandidateId: 'remote' }],
   ['local', { candidateType: 'host' }], ['remote', { candidateType: 'host' }],
 ]);
+const syntheticOfferSdp = `v=0\r\na=fingerprint:sha-256 ${'AA:'.repeat(31)}01\r\n`;
+const syntheticAnswerSdp = `v=0\r\na=fingerprint:sha-256 ${'BB:'.repeat(31)}02\r\n`;
 class Peer {
   static instances: Peer[] = [];
   static nextLocal?: Promise<void>;
@@ -34,8 +36,10 @@ class Peer {
   onconnectionstatechange?: () => void;
   channels: Channel[] = [];
   createDataChannel(label: string) { const c = new Channel(label); this.channels.push(c); return c; }
-  createOffer = vi.fn(async () => ({ type: 'offer', sdp: 'synthetic offer' }));
+  createOffer = vi.fn(async () => ({ type: 'offer', sdp: syntheticOfferSdp }));
+  createAnswer = vi.fn(async () => ({ type: 'answer', sdp: syntheticAnswerSdp }));
   setLocalDescription = vi.fn(async () => { if (Peer.nextLocal) await Peer.nextLocal; });
+  setRemoteDescription = vi.fn(async () => {});
   getStats = vi.fn(async () => directStats());
   close = vi.fn(() => { this.connectionState = 'closed'; });
   constructor() { Peer.instances.push(this); }
@@ -266,6 +270,27 @@ describe('peer session lifetime', () => {
     expect(events.indexOf('transport.clipboard')).toBeGreaterThan(-1);
     expect(events.indexOf('transport.clipboard')).toBeLessThan(events.indexOf('clipboard.read'));
     session.stop();
+  });
+
+  it('blinds the human password from signaling and rejects tampered DTLS fingerprints before setRemoteDescription', async () => {
+    const h = harness(), first = await h.start();
+    const sentMessages = first.socket.send.mock.calls.map(([raw]) => JSON.parse(raw));
+    const openMsg = sentMessages.find(m => m.type === 'host.open');
+    const keys = deriveSessionKeys('Eight-42', id);
+    expect(openMsg.password).toBe(keys.authToken);
+    expect(openMsg.password).not.toBe('Eight-42');
+    const offerMsg = sentMessages.find(m => m.type === 'signal');
+    expect(offerMsg.payload.mac).toBe(signSdpFingerprint(keys.macKey, id, 'host', syntheticOfferSdp));
+
+    // Tampered answer fingerprint or wrong MAC must abort before setRemoteDescription.
+    first.socket.receive({
+      type: 'signal',
+      sessionId: id,
+      payload: { type: 'answer', sdp: `v=0\r\na=fingerprint:sha-256 ${'CC:'.repeat(31)}03\r\n`, mac: signSdpFingerprint(keys.macKey, id, 'guest', syntheticAnswerSdp) },
+    });
+    await settled();
+    expect(first.pc.setRemoteDescription).not.toHaveBeenCalled();
+    expect(h.notify).toHaveBeenCalledWith('transport.ended', expect.objectContaining({ failed: true, reason: 'Could not verify the peer security fingerprint. Start a new session.' }));
   });
 });
 

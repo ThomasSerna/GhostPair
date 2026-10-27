@@ -4,7 +4,7 @@ import { createServer as createHttpServer, type IncomingMessage, type ServerResp
 import { isIP, type AddressInfo } from 'node:net';
 import { promisify } from 'node:util';
 import { WebSocket, WebSocketServer, type RawData } from 'ws';
-import { ClientSignalMessageSchema, isRelaySignal, type ClientSignalMessage, type ServerSignalMessage } from '@ghostpair/protocol';
+import { ClientSignalMessageSchema, extractSdpFingerprints, isRelaySignal, type ClientSignalMessage, type ServerSignalMessage } from '@ghostpair/protocol';
 import { defaultConfig, type ServerConfig } from './config.js';
 import { Devices, type DeviceStore } from './devices.js';
 import { PostgresDevices } from './postgres-devices.js';
@@ -24,6 +24,7 @@ interface Client {
   alive: boolean;
   authAttempt?: symbol;
   messages: RateLimit;
+  errors: number;
 }
 interface Room {
   deviceId: string;
@@ -35,15 +36,32 @@ interface Room {
   passwordHash: Buffer;
   paired: boolean;
   timer: NodeJS.Timeout;
+  hostFingerprints?: string[];
+  guestFingerprints?: string[];
+  offerSent: boolean;
+  answerSent: boolean;
+  hostIceCount: number;
+  guestIceCount: number;
+}
+interface QueuedAuth {
+  client: Client;
+  attempt: symbol;
+  resolve: (acquired: boolean) => void;
 }
 
 export function createServer(overrides: Partial<ServerConfig> = {}, store?: DeviceStore) {
-  const config = { ...defaultConfig, ...overrides };
+  const config: ServerConfig = {
+    ...defaultConfig,
+    ...overrides,
+    maxAuthQueue: overrides.maxAuthQueue ?? (overrides.maxAuthConcurrency !== undefined ? 0 : defaultConfig.maxAuthQueue),
+  };
   const devices = store ?? (config.databaseUrl !== undefined ? new PostgresDevices({ ...config, databaseUrl: config.databaseUrl }) : new Devices(config.databasePath));
   const clients = new Set<Client>();
   const rooms = new Map<string, Room>();
   const openingHosts = new Map<string, Client>();
+  const authQueue: QueuedAuth[] = [];
   const registrationRate = new RateLimit(config.registrationLimit, config.registrationWindowMs);
+  const upgradeIpRate = new RateLimit(config.upgradeIpLimit, config.upgradeWindowMs);
   const authIpRate = new RateLimit(config.authIpLimit, config.authWindowMs);
   const authDeviceRate = new RateLimit(config.authDeviceLimit, config.authWindowMs);
   const counters = { registrations: 0, connections: 0, authFailures: 0, rateLimited: 0, protocolErrors: 0, sessionsPaired: 0, signalingMessages: 0, internalErrors: 0 };
@@ -84,15 +102,23 @@ export function createServer(overrides: Partial<ServerConfig> = {}, store?: Devi
     return request.socket.remoteAddress ?? 'unknown';
   }
 
+  const securityHeaders = {
+    'X-Content-Type-Options': 'nosniff',
+    'Strict-Transport-Security': 'max-age=63072000; includeSubDomains',
+    'Referrer-Policy': 'no-referrer',
+    'X-Frame-Options': 'DENY',
+    'Cross-Origin-Resource-Policy': 'same-origin',
+  };
+
   function json(response: ServerResponse, status: number, payload: object): void {
-    response.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
+    response.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', ...securityHeaders });
     response.end(JSON.stringify(payload));
   }
 
   async function handleHttp(request: IncomingMessage, response: ServerResponse): Promise<void> {
     if (request.method === 'GET' && request.url === '/privacy') {
       const policy = await readFile(new URL('../../../docs/privacy.html', import.meta.url));
-      response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'", 'Cache-Control': 'no-cache' });
+      response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'", 'Cache-Control': 'no-cache', ...securityHeaders });
       response.end(policy); return;
     }
     if (request.method === 'GET' && request.url === '/health') {
@@ -164,15 +190,40 @@ export function createServer(overrides: Partial<ServerConfig> = {}, store?: Devi
     send(client, { type: 'error', code, message });
   }
 
+  function cancelQueuedAuth(client: Client): void {
+    const index = authQueue.findIndex(item => item.client === client);
+    if (index >= 0) {
+      const [removed] = authQueue.splice(index, 1);
+      removed!.resolve(false);
+    }
+  }
+
+  function releaseAuthSlot(): void {
+    activeAuth--;
+    while (authQueue.length > 0 && activeAuth < config.maxAuthConcurrency) {
+      const next = authQueue.shift()!;
+      if (currentAttempt(next.client, next.attempt)) {
+        activeAuth++;
+        next.resolve(true);
+        return;
+      }
+      next.resolve(false);
+    }
+  }
+
   function startAuthTimer(client: Client): void {
     clearTimeout(client.authTimer);
     client.authTimer = setTimeout(() => {
-      if (client.phase === 'idle' || client.phase === 'authenticating') client.socket.close(1008, 'Authentication timeout');
+      if (client.phase === 'idle' || client.phase === 'authenticating') {
+        cancelQueuedAuth(client);
+        client.socket.close(1008, 'Authentication timeout');
+      }
     }, config.authTimeoutMs);
     client.authTimer.unref();
   }
 
   function resetClient(client: Client): void {
+    cancelQueuedAuth(client);
     client.authAttempt = undefined;
     client.phase = 'idle';
     client.room = undefined;
@@ -208,6 +259,7 @@ export function createServer(overrides: Partial<ServerConfig> = {}, store?: Devi
   }
 
   function release(client: Client): void {
+    cancelQueuedAuth(client);
     client.authAttempt = undefined;
     clients.delete(client);
     clearTimeout(client.authTimer);
@@ -222,23 +274,35 @@ export function createServer(overrides: Partial<ServerConfig> = {}, store?: Devi
     return scryptAsync(password, salt, 32, { N: config.scryptN, r: config.scryptR, p: config.scryptP, maxmem: 256 * 1024 * 1024 });
   }
 
-  function beginAuth(client: Client, deviceId: string): symbol | undefined {
+  async function beginAuth(client: Client, deviceId: string): Promise<symbol | undefined> {
     if (stopping || !clients.has(client) || client.socket.readyState !== WebSocket.OPEN) return;
     if (client.phase !== 'idle') { error(client, 'INVALID_STATE', 'This connection already participates in a session.'); return; }
     if (!authIpRate.allow(client.ip) || !authDeviceRate.allow(deviceId)) {
       counters.rateLimited += 1;
       error(client, 'RATE_LIMITED', 'Too many attempts. Try again later.'); return;
     }
-    if (activeAuth >= config.maxAuthConcurrency) { error(client, 'SERVER_BUSY', 'The server is busy. Try again.'); return; }
+    if (activeAuth >= config.maxAuthConcurrency && authQueue.length >= config.maxAuthQueue) {
+      error(client, 'SERVER_BUSY', 'The server is busy. Try again.'); return;
+    }
     client.phase = 'authenticating';
-    activeAuth++; const attempt = Symbol('authentication'); client.authAttempt = attempt; return attempt;
+    const attempt = Symbol('authentication');
+    client.authAttempt = attempt;
+    if (activeAuth < config.maxAuthConcurrency) {
+      activeAuth++;
+      return attempt;
+    }
+    const acquired = await new Promise<boolean>((resolve) => {
+      authQueue.push({ client, attempt, resolve });
+    });
+    if (!acquired) return undefined;
+    return attempt;
   }
 
   function currentAttempt(client: Client, attempt: symbol) {
     return !stopping && clients.has(client) && client.socket.readyState === WebSocket.OPEN && client.phase === 'authenticating' && client.authAttempt === attempt;
   }
   async function openHost(client: Client, message: Extract<ClientSignalMessage, { type: 'host.open' }>): Promise<void> {
-    const attempt = beginAuth(client, message.deviceId); if (!attempt) return;
+    const attempt = await beginAuth(client, message.deviceId); if (!attempt) return;
     try {
       const authenticated = await devices.authenticate(message.deviceId, message.ownerToken);
       if (!currentAttempt(client, attempt)) return;
@@ -274,6 +338,7 @@ export function createServer(overrides: Partial<ServerConfig> = {}, store?: Devi
       const sessionId = randomBytes(16).toString('hex');
       const room: Room = {
         deviceId: message.deviceId, sessionId, host: client, salt, passwordHash, paired: false,
+        offerSent: false, answerSent: false, hostIceCount: 0, guestIceCount: 0,
         timer: setTimeout(() => removeRoom(room, true, 'The connection waiting period expired.'), config.waitingRoomTimeoutMs),
       };
       room.timer.unref();
@@ -285,13 +350,13 @@ export function createServer(overrides: Partial<ServerConfig> = {}, store?: Devi
       counters.internalErrors++;
       if (currentAttempt(client, attempt)) { client.phase = 'idle'; error(client, 'SERVER_BUSY', 'Identity storage is unavailable. Try again later.'); }
     } finally {
-      activeAuth--;
+      releaseAuthSlot();
       if (client.authAttempt === attempt) client.authAttempt = undefined;
     }
   }
 
   async function joinGuest(client: Client, message: Extract<ClientSignalMessage, { type: 'guest.join' }>): Promise<void> {
-    const attempt = beginAuth(client, message.deviceId); if (!attempt) return;
+    const attempt = await beginAuth(client, message.deviceId); if (!attempt) return;
     try {
       const room = rooms.get(message.deviceId);
       if (!room || room.paired || room.pendingGuest) {
@@ -320,6 +385,8 @@ export function createServer(overrides: Partial<ServerConfig> = {}, store?: Devi
       room.guest = client;
       room.passwordHash.fill(0); room.salt.fill(0);
       clearTimeout(room.timer); clearTimeout(client.authTimer);
+      room.timer = setTimeout(() => removeRoom(room, false, 'Signaling window completed.'), config.pairedRoomTimeoutMs);
+      room.timer.unref();
       client.phase = 'paired'; client.role = 'guest'; client.sessionId = room.sessionId;
       room.host.phase = 'paired';
       counters.sessionsPaired += 1;
@@ -329,7 +396,7 @@ export function createServer(overrides: Partial<ServerConfig> = {}, store?: Devi
       counters.internalErrors++;
       if (currentAttempt(client, attempt)) { client.phase = 'idle'; error(client, 'SERVER_BUSY', 'Identity storage is unavailable. Try again later.'); }
     } finally {
-      activeAuth--;
+      releaseAuthSlot();
       if (client.authAttempt === attempt) client.authAttempt = undefined;
     }
   }
@@ -345,7 +412,9 @@ export function createServer(overrides: Partial<ServerConfig> = {}, store?: Devi
     const parsed = ClientSignalMessageSchema.safeParse(input);
     if (!parsed.success) {
       counters.protocolErrors += 1;
-      error(client, 'INVALID_MESSAGE', 'Invalid message.'); return;
+      error(client, 'INVALID_MESSAGE', 'Invalid message.');
+      if (++client.errors >= config.maxProtocolErrorsPerSocket) client.socket.close(1008, 'Invalid message');
+      return;
     }
     const message = parsed.data;
     if (message.type === 'ping') { send(client, { type: 'pong', id: message.id }); return; }
@@ -363,6 +432,29 @@ export function createServer(overrides: Partial<ServerConfig> = {}, store?: Devi
     if ((message.payload.type === 'offer' && client.role !== 'host') || (message.payload.type === 'answer' && client.role !== 'guest') || isRelaySignal(message.payload)) {
       error(client, 'FORBIDDEN', 'This signal is not allowed.'); return;
     }
+    if (message.payload.type === 'offer') {
+      const fingerprints = extractSdpFingerprints(message.payload.sdp);
+      if (room.offerSent || fingerprints.length === 0) {
+        counters.protocolErrors += 1;
+        error(client, 'FORBIDDEN', 'This signal is not allowed.'); return;
+      }
+      room.offerSent = true;
+      room.hostFingerprints = fingerprints;
+    } else if (message.payload.type === 'answer') {
+      const fingerprints = extractSdpFingerprints(message.payload.sdp);
+      if (!room.offerSent || room.answerSent || fingerprints.length === 0 || fingerprints.some(fp => room.hostFingerprints?.includes(fp))) {
+        counters.protocolErrors += 1;
+        error(client, 'FORBIDDEN', 'This signal is not allowed.'); return;
+      }
+      room.answerSent = true;
+      room.guestFingerprints = fingerprints;
+    } else {
+      const count = client.role === 'host' ? ++room.hostIceCount : ++room.guestIceCount;
+      if (count > config.maxIceCandidatesPerPeer) {
+        counters.rateLimited += 1;
+        error(client, 'RATE_LIMITED', 'Too many ICE candidates.'); return;
+      }
+    }
     const peer = client.role === 'host' ? room.guest : room.host;
     if (peer) { send(peer, { type: 'signal', sessionId: room.sessionId, payload: message.payload }); counters.signalingMessages += 1; }
   }
@@ -370,12 +462,19 @@ export function createServer(overrides: Partial<ServerConfig> = {}, store?: Devi
   httpServer.on('upgrade', (request, socket, head) => {
     const ip = requestIp(request);
     const originOk = allowedOrigin(request.headers.origin);
-    if (stopping || request.url !== '/v1/connect' || !originOk || clients.size >= config.maxConnections || [...clients].filter((client) => client.ip === ip).length >= config.maxConnectionsPerIp) {
+    if (!originOk || stopping || request.url !== '/v1/connect') {
       const status = !originOk ? '403 Forbidden' : '503 Service Unavailable';
       socket.end(`HTTP/1.1 ${status}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`); return;
     }
+    if (!upgradeIpRate.allow(ip)) {
+      counters.rateLimited += 1;
+      socket.end('HTTP/1.1 429 Too Many Requests\r\nConnection: close\r\nContent-Length: 0\r\n\r\n'); return;
+    }
+    if (clients.size >= config.maxConnections || [...clients].filter((client) => client.ip === ip).length >= config.maxConnectionsPerIp) {
+      socket.end('HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\nContent-Length: 0\r\n\r\n'); return;
+    }
     wss.handleUpgrade(request, socket, head, (ws) => {
-      const client: Client = { socket: ws, ip, phase: 'idle', alive: true, messages: new RateLimit(config.socketMessageLimit, config.socketMessageWindowMs, 1) };
+      const client: Client = { socket: ws, ip, phase: 'idle', alive: true, messages: new RateLimit(config.socketMessageLimit, config.socketMessageWindowMs, 1), errors: 0 };
       clients.add(client); counters.connections += 1;
       startAuthTimer(client);
       ws.on('pong', () => { client.alive = true; });

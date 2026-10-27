@@ -19,6 +19,9 @@ export function verifyOwner(ownerToken: string, hash?: string): boolean {
   const valid = typeof hash === 'string' && /^[a-f0-9]{64}$/.test(hash);
   return timingSafeEqual(createHash('sha256').update(ownerToken).digest(), valid ? Buffer.from(hash, 'hex') : Buffer.alloc(32)) && valid;
 }
+export function isValidIdentityFormat(deviceId: string, ownerToken: string): boolean {
+  return /^[a-f0-9]{32}$/.test(deviceId) && /^[a-f0-9]{64}$/.test(ownerToken);
+}
 
 /** The existing SQLite file format stays unchanged. */
 export class Devices implements DeviceStore {
@@ -42,6 +45,7 @@ export class Devices implements DeviceStore {
     } catch (error) { db.exec('ROLLBACK'); throw error; }
   }
   async authenticate(deviceId: string, ownerToken: string) {
+    if (!isValidIdentityFormat(deviceId, ownerToken)) return verifyOwner(ownerToken, undefined);
     const record = this.database().prepare('SELECT owner_token_hash FROM devices WHERE device_id = ?').get(deviceId) as { owner_token_hash: string } | undefined;
     return verifyOwner(ownerToken, record?.owner_token_hash);
   }

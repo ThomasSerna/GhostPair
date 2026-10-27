@@ -32,6 +32,7 @@
     "test:visual": "node tests/browser/visual-probe.mjs",
     "test:questionnaires": "node tests/browser/questionnaire-probe.mjs",
     "test:postgres": "npm run build -w @ghostpair/signaling && node tests/server/postgres.mjs",
+    "test:load": "npm run build -w @ghostpair/signaling && node tests/server/load.mjs",
     "test:heroku": "node tests/server/heroku.mjs",
     "migrate:identities": "node apps/signaling/dist/migrate-main.js",
     "package:store": "node scripts/package-store.mjs",

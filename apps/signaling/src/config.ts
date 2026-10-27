@@ -18,6 +18,12 @@ export interface ServerConfig {
   maxRegisteredDevices: number;
   maxPayloadBytes: number;
   maxAuthConcurrency: number;
+  maxAuthQueue: number;
+  pairedRoomTimeoutMs: number;
+  upgradeIpLimit: number;
+  upgradeWindowMs: number;
+  maxIceCandidatesPerPeer: number;
+  maxProtocolErrorsPerSocket: number;
   registrationLimit: number;
   registrationWindowMs: number;
   authIpLimit: number;
@@ -45,7 +51,13 @@ export const defaultConfig: ServerConfig = {
   maxRooms: 500,
   maxRegisteredDevices: 100_000,
   maxPayloadBytes: 64 * 1024,
-  maxAuthConcurrency: 2,
+  maxAuthConcurrency: 4,
+  maxAuthQueue: 16,
+  pairedRoomTimeoutMs: 60_000,
+  upgradeIpLimit: 60,
+  upgradeWindowMs: 60_000,
+  maxIceCandidatesPerPeer: 64,
+  maxProtocolErrorsPerSocket: 3,
   registrationLimit: 20,
   registrationWindowMs: 60 * 60_000,
   authIpLimit: 30,
@@ -82,6 +94,9 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): ServerConfi
     maxConnectionsPerIp: positiveInt(env.MAX_CONNECTIONS_PER_IP, defaultConfig.maxConnectionsPerIp, 'MAX_CONNECTIONS_PER_IP'),
     maxRooms: positiveInt(env.MAX_ROOMS, defaultConfig.maxRooms, 'MAX_ROOMS'),
     maxRegisteredDevices: positiveInt(env.MAX_REGISTERED_DEVICES, defaultConfig.maxRegisteredDevices, 'MAX_REGISTERED_DEVICES'),
+    maxAuthConcurrency: positiveInt(env.MAX_AUTH_CONCURRENCY, defaultConfig.maxAuthConcurrency, 'MAX_AUTH_CONCURRENCY'),
+    maxAuthQueue: positiveInt(env.MAX_AUTH_QUEUE, defaultConfig.maxAuthQueue, 'MAX_AUTH_QUEUE'),
+    pairedRoomTimeoutMs: positiveInt(env.PAIRED_ROOM_TIMEOUT_MS, defaultConfig.pairedRoomTimeoutMs, 'PAIRED_ROOM_TIMEOUT_MS'),
   };
   if (config.databaseUrl !== undefined) validatePostgresConfig({ ...config, databaseUrl: config.databaseUrl });
   else if (env.DYNO !== undefined) throw new Error('Heroku requires DATABASE_URL; SQLite storage is ephemeral.');
