@@ -1,3 +1,4 @@
+import { useTranslation } from "../i18n";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import gsap from "gsap";
 import { Icon } from "./Icons";
@@ -40,6 +41,7 @@ const previews = {
 type PreviewName = keyof typeof previews;
 
 function PreviewFrame({ name }: { name: PreviewName }) {
+  const t = useTranslation();
   const stage = useRef<HTMLDivElement>(null);
   const frame = useRef<HTMLIFrameElement>(null);
   const preview = previews[name];
@@ -64,7 +66,7 @@ function PreviewFrame({ name }: { name: PreviewName }) {
         src={`assets/previews/${preview.file}`}
         width={preview.width}
         height={preview.height}
-        title={preview.frameTitle}
+        title={t(preview.frameTitle)}
         sandbox="allow-same-origin"
         tabIndex={-1}
         loading="lazy"
@@ -74,6 +76,7 @@ function PreviewFrame({ name }: { name: PreviewName }) {
 }
 
 export default function ProductPreview() {
+  const t = useTranslation();
   const [selected, setSelected] = useState<PreviewName>("shared");
   const [visited, setVisited] = useState<PreviewName[]>(["shared"]);
   const panel = useRef<HTMLDivElement>(null);
@@ -115,7 +118,7 @@ export default function ProductPreview() {
     <div className="product-preview">
       <div className="preview-toolbar">
         <fieldset className="preview-switch">
-          <legend className="sr-only">Choose an interface example</legend>
+          <legend className="sr-only">{t("Choose an interface example")}</legend>
           {(Object.keys(previews) as PreviewName[]).map((name) => (
             <div className="preview-option" key={name}>
               <input
@@ -126,34 +129,31 @@ export default function ProductPreview() {
                 checked={selected === name}
                 onChange={() => choose(name)}
               />
-              <label htmlFor={`preview-${name}`}>{previews[name].label}</label>
+              <label htmlFor={`preview-${name}`}>{t(previews[name].label)}</label>
             </div>
           ))}
         </fieldset>
         <span className="example-label">
-          <span className="status-dot" />
-          The real interface. Example data.
-        </span>
+          <span className="status-dot" />{t("The real interface. Example data.")}</span>
       </div>
       <div className={`gallery-panel gallery-panel-${selected}`} ref={panel}>
         <div className="gallery-description">
           <Icon name="browser" />
-          <h3>{preview.title}</h3>
-          <p>{preview.description}</p>
+          <h3>{t(preview.title)}</h3>
+          <p>{t(preview.description)}</p>
           <span className="gallery-note">
             {selected === "host"
-              ? "You approve every shared tab locally."
+              ? t("You approve every shared tab locally.")
               : selected === "guest"
-                ? "One session. Two people."
-                : "Sessions start in Preview changes."}
+                ? t("One session. Two people.")
+                : t("Sessions start in Preview changes.")}
           </span>
           <a
             className="text-link"
             href={`assets/previews/${preview.file}`}
             target="_blank"
             rel="noopener"
-          >
-            Open full-size example <Icon name="external" />
+          >{t("Open full-size example ")}<Icon name="external" />
           </a>
         </div>
         <div className="gallery-stage">
@@ -170,12 +170,12 @@ export default function ProductPreview() {
                   href={`assets/previews/${previews[name].file}`}
                   target="_blank"
                   rel="noopener"
-                  aria-label={`Open the ${previews[name].label.toLowerCase()} example at full size`}
+                  aria-label={t("Open full-size example") + ": " + t(previews[name].label)}
                 >
                   <PreviewFrame name={name} />
                 </a>
               )}
-              <figcaption>{previews[name].note}</figcaption>
+              <figcaption>{t(previews[name].note)}</figcaption>
             </figure>
           ))}
         </div>

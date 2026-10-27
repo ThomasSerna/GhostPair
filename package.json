@@ -34,7 +34,8 @@
     "test:postgres": "npm run build -w @ghostpair/signaling && node tests/server/postgres.mjs",
     "test:heroku": "node tests/server/heroku.mjs",
     "migrate:identities": "node apps/signaling/dist/migrate-main.js",
-    "package:store": "node scripts/package-store.mjs"
+    "package:store": "node scripts/package-store.mjs",
+    "test:landing:language": "node scripts/inspect-landing-language.mjs"
   },
   "devDependencies": {
     "@types/chrome": "^0.1.24",

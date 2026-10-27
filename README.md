@@ -60,7 +60,7 @@ The signaling server loads the root `.env`; Vite also reads its environment file
 
 ## Using a session
 
-Version 0.7.0 adds English and Spanish to the extension. Language follows the browser automatically, without a first-use prompt; other browser languages use English. Choose **Settings → Language** to keep **Automatic**, select **English** or select **Español**. The choice saves locally and applies to open extension views and shared-page controls without ending a session. Each participant keeps their own language; shared website content is not translated. The public website remains in English.
+Version 0.7.0 adds English and Spanish to the extension. Language follows the browser automatically, without a first-use prompt; other browser languages use English. Choose **Settings → Language** to keep **Automatic**, select **English** or select **Español**. The choice saves locally and applies to open extension views and shared-page controls without ending a session. Each participant keeps their own language; shared website content is not translated. The public website also follows the browser language and offers an independent English/Spanish selector in its header.
 
 The active Heroku server remains the default. Update both participants together and select **GhostPair server** and **Save** if you previously saved a custom endpoint. Existing identities, connection settings and preview preferences remain saved. First-use sharing continues after browser permission approval without repeating setup.
 

@@ -199,7 +199,7 @@ async function inspectMotion(page, width) {
 
 async function inspectHeroFallbacks(browser, url) {
   for (const scenario of ['reduced motion', 'missing video', 'playback rejected']) {
-    const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, reducedMotion: scenario === 'reduced motion' ? 'reduce' : 'no-preference' });
+    const context = await browser.newContext({ locale: 'en-US', viewport: { width: 1440, height: 1000 }, reducedMotion: scenario === 'reduced motion' ? 'reduce' : 'no-preference' });
     const videoRequests = [];
     const pageErrors = [];
     context.on('request', request => { if (/\.mp4(?:\?|$)/.test(request.url())) videoRequests.push(request.url()); });
@@ -538,7 +538,7 @@ try {
   const origin = `http://127.0.0.1:${server.httpServer.address().port}`;
   const url = origin + base;
   browser = await launchHeadlessBrowser();
-  const noScriptContext = await browser.newContext({ javaScriptEnabled: false });
+  const noScriptContext = await browser.newContext({ locale: 'en-US', javaScriptEnabled: false });
   try {
     const page = await noScriptContext.newPage();
     await page.goto(url, { waitUntil: 'domcontentloaded' });
@@ -550,7 +550,7 @@ try {
   if (!pagesOnly) await inspectHeroFallbacks(browser, url);
   if (screenshots) await mkdir(output, { recursive: true });
   for (const [width, height, name] of pagesOnly ? [] : viewports) {
-    const context = await browser.newContext({ viewport: { width, height }, reducedMotion: 'no-preference', hasTouch: width <= 390, isMobile: width <= 390 });
+    const context = await browser.newContext({ locale: 'en-US', viewport: { width, height }, reducedMotion: 'no-preference', hasTouch: width <= 390, isMobile: width <= 390 });
     context.on('page', page => {
       page.on('pageerror', error => errors.push(`${width}px: ${error.message}`));
       page.on('console', message => { if (message.type() === 'error') errors.push(`${width}px: ${message.text()}`); });

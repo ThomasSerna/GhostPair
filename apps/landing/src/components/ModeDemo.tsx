@@ -1,3 +1,4 @@
+import { useTranslation } from "../i18n";
 import {
   useEffect,
   useRef,
@@ -15,6 +16,7 @@ const initialNote = "Bring a camera.";
 const previewDuration = 1000;
 
 export default function ModeDemo() {
+  const t = useTranslation();
   const [mode, setMode] = useState<InteractionMode>("visual");
   const [hostNote, setHostNote] = useState(initialNote);
   const [hostPacked, setHostPacked] = useState(false);
@@ -185,12 +187,10 @@ export default function ModeDemo() {
 
   return (
     <div className="mode-demo" data-mode={mode}>
-      <p className="mode-demo-caption">
-        Interactive illustration · Example data
-      </p>
+      <p className="mode-demo-caption">{t("Interactive illustration · Example data")}</p>
 
       <fieldset className="mode-switch">
-        <legend>Interaction mode illustration</legend>
+        <legend>{t("Interaction mode illustration")}</legend>
         <div className="mode-switch-options">
           <div className="mode-switch-option">
             <input
@@ -202,7 +202,7 @@ export default function ModeDemo() {
               onChange={() => changeMode("visual")}
               aria-describedby="mode-explanation"
             />
-            <label htmlFor="mode-visual">Preview changes</label>
+            <label htmlFor="mode-visual">{t("Preview changes")}</label>
           </div>
           <div className="mode-switch-option">
             <input
@@ -214,22 +214,22 @@ export default function ModeDemo() {
               onChange={() => changeMode("live")}
               aria-describedby="mode-explanation"
             />
-            <label htmlFor="mode-live">Full control</label>
+            <label htmlFor="mode-live">{t("Full control")}</label>
           </div>
         </div>
       </fieldset>
 
       <p className="demo-mode-note" id="mode-explanation">
         {mode === "visual"
-          ? "Guest gestures appear as previews on the host’s page. Original values stay unchanged."
-          : "Guest gestures change the host’s page, when the host allows control."}
+          ? t("Guest gestures appear as previews on the host’s page. Original values stay unchanged.")
+          : t("Guest gestures change the host’s page, when the host allows control.")}
       </p>
 
       <div className="mode-demo-panels">
         <section className="mode-panel" aria-labelledby="guest-preview-title">
           <div className="mode-panel-label">
-            <h3 id="guest-preview-title">Guest input</h3>
-            <span className="mode-panel-status">Remote input</span>
+            <h3 id="guest-preview-title">{t("Guest input")}</h3>
+            <span className="mode-panel-status">{t("Remote input")}</span>
           </div>
           <div
             className="demo-page demo-guest"
@@ -244,12 +244,10 @@ export default function ModeDemo() {
           >
             <div className="demo-page-header">
               <span className="demo-page-indicator" aria-hidden="true" />
-              <span>Weekend plans</span>
+              <span>{t("Weekend plans")}</span>
             </div>
             <div className="demo-page-body">
-              <label className="demo-note" htmlFor="guest-note">
-                Guest note
-              </label>
+              <label className="demo-note" htmlFor="guest-note">{t("Guest note")}</label>
               <input
                 id="guest-note"
                 className="demo-note-input"
@@ -266,14 +264,12 @@ export default function ModeDemo() {
                   checked={previewPacked ?? hostPacked}
                   onChange={(event) => updatePacked(event.target.checked)}
                 />
-                <span>Pack a camera</span>
+                <span>{t("Pack a camera")}</span>
               </label>
               <div className="demo-save-actions">
-                <button className="demo-save" type="button" onClick={savePlans}>
-                  Save plans
-                </button>
+                <button className="demo-save" type="button" onClick={savePlans}>{t("Save plans")}</button>
                 <p className="demo-save-status" role="status">
-                  {hostSaved ? "Plans saved" : ""}
+                  {hostSaved ? t("Plans saved") : ""}
                 </p>
               </div>
             </div>
@@ -282,20 +278,18 @@ export default function ModeDemo() {
 
         <section className="mode-panel" aria-labelledby="host-original-title">
           <div className="mode-panel-label">
-            <h3 id="host-original-title">Host’s shared page</h3>
+            <h3 id="host-original-title">{t("Host’s shared page")}</h3>
             <span className="mode-panel-status">
-              {mode === "visual" ? "Preview overlay" : "Live"}
+              {mode === "visual" ? t("Preview overlay") : t("Live")}
             </span>
           </div>
           <div className="demo-page demo-host">
             <div className="demo-page-header">
               <span className="demo-page-indicator" aria-hidden="true" />
-              <span>Weekend plans</span>
+              <span>{t("Weekend plans")}</span>
             </div>
             <div className="demo-page-body">
-              <span className="demo-note" id="host-note-label">
-                Host note
-              </span>
+              <span className="demo-note" id="host-note-label">{t("Host note")}</span>
               <div className="demo-host-field">
                 <output
                   className="demo-host-value"
@@ -313,7 +307,7 @@ export default function ModeDemo() {
                   <span
                     className="demo-host-checkbox"
                     role="img"
-                    aria-label={hostPacked ? "Checked" : "Unchecked"}
+                    aria-label={hostPacked ? t("Checked") : t("Unchecked")}
                     data-checked={hostPacked}
                   >
                     {hostPacked && (
@@ -332,7 +326,7 @@ export default function ModeDemo() {
                     <span
                       className="demo-choice-preview"
                       role="img"
-                      aria-label={previewPacked ? "Preview checked" : "Preview unchecked"}
+                      aria-label={previewPacked ? t("Preview checked") : t("Preview unchecked")}
                       data-checked={previewPacked}
                     >
                       {previewPacked && (
@@ -349,19 +343,17 @@ export default function ModeDemo() {
                     </span>
                   )}
                 </span>
-                <span>Pack a camera</span>
+                <span>{t("Pack a camera")}</span>
               </div>
               <div className="demo-save-actions">
                 <span className="demo-button-field">
-                  <span className="demo-save demo-save-preview" aria-hidden="true">
-                    Save plans
-                  </span>
+                  <span className="demo-save demo-save-preview" aria-hidden="true">{t("Save plans")}</span>
                   {previewButton && (
                     <span className="demo-button-preview" aria-hidden="true" />
                   )}
                 </span>
                 <p className="demo-save-status" role="status">
-                  {hostSaved ? "Plans saved" : ""}
+                  {hostSaved ? t("Plans saved") : ""}
                 </p>
               </div>
             </div>
@@ -381,17 +373,10 @@ export default function ModeDemo() {
       </div>
 
       <div className="mode-demo-footer">
-        <p className="demo-mode-note">
-          The host chooses the mode in a real session. Scrolling, navigation,
-          and tab management remain live in both modes.
-        </p>
-        <button className="demo-reset" type="button" onClick={resetDemo}>
-          Reset demonstration
-        </button>
+        <p className="demo-mode-note">{t("The host chooses the mode in a real session. Scrolling, navigation, and tab management remain live in both modes.")}</p>
+        <button className="demo-reset" type="button" onClick={resetDemo}>{t("Reset demonstration")}</button>
       </div>
-      <p className="demo-preview-timing">
-        Demo previews last 1 second. Preview duration is configurable.
-      </p>
+      <p className="demo-preview-timing">{t("Demo previews last 1 second. Preview duration is configurable.")}</p>
     </div>
   );
 }

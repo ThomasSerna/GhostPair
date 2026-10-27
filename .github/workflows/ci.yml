@@ -39,6 +39,8 @@ jobs:
         run: npx playwright install --with-deps chromium
       - name: Check production landing
         run: npm run test:landing -- --check-only
+      - name: Check website languages
+        run: npm run test:landing:language
       - name: Package verified build
         run: node scripts/package.mjs --store
       - name: Read extension version

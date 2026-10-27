@@ -10,3 +10,13 @@
     .main-nav { gap: 16px; font-size: 12px; }
   }
 }
+
+@layer components {
+  .site-language { margin-left:auto; max-width:210px; }
+  .site-language select { width:100%; min-height:44px; border:1px solid var(--line); border-radius:7px; background:var(--panel); color:var(--text); font:inherit; font-size:12px; padding:8px; cursor:pointer; }
+  .site-language [role=alert] { display:block; max-width:210px; font-size:12px; }
+}
+@layer responsive {
+  @media(max-width:800px) { .site-header { gap:10px; } .site-language { max-width:155px; min-width:0; } .site-language select { font-size:11px; } .site-header>.brand { font-size:17px; gap:5px; } .site-header>.menu-toggle { flex-shrink:0; } }
+  @media(max-width:380px) { .site-header>.brand span { font-size:15px; } .site-language { max-width:135px; } }
+}

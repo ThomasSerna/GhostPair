@@ -534,7 +534,7 @@ export async function inspectWebsitePages({ browser, url, origin, docs, output, 
       const errors = [];
       const requests = new Set();
       const serviceRequests = [];
-      const context = await browser.newContext({ viewport: { width, height }, reducedMotion: 'no-preference', hasTouch: width <= 390, isMobile: width <= 390 });
+      const context = await browser.newContext({ locale: 'en-US', viewport: { width, height }, reducedMotion: 'no-preference', hasTouch: width <= 390, isMobile: width <= 390 });
       await installCapabilityGuard(context);
       await context.route('**/*', route => {
         const request = route.request();
