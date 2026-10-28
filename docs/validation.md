@@ -1,5 +1,13 @@
 # GhostPair validation
 
+## Mixed 0.6.6 and 0.7 sessions: October 28, 2026
+
+Workspace type checks, **243 Vitest tests**, **8 Node release tests**, and all production builds passed. Server tests cover strict legacy message validation, wrong credentials, concurrent legacy/current rooms, cross-mode rejection, shared authentication limits and competing guest checks. Legacy password hashing retains the original `scrypt` work factor (`N=131072`, `r=8`, `p=1`) and runs one hash at a time per server to bound memory; the 33 server tests also passed after this resource limit was applied.
+
+`node tests/browser/compatibility.mjs chrome` builds the actual 0.6.6 source at commit `87c845ca88118d127b431cb12930122e2c92cdeb`, including its protocol-4 package, in a disposable directory. Chrome checks passed for 0.6.6 host → 0.7 guest, 0.7 host → 0.6.6 guest, default 0.7 → 0.7, and 0.6.6 → 0.6.6. Each checked decoded tab video, remote clicks, Unicode input and session cleanup. These use synthetic pages, local signaling/STUN, and disposable profiles with test-only site permissions. The 0.7 compatibility option was verified off by default, saved and restored through the settings UI, and visually checked in English and Spanish at the shipped 398px popup width. Privacy text rendered without overflow at 360px and 1280px.
+
+No Edge, separate-computer/network, production deployment or Chrome Web Store update is claimed. The current 0.7 build must be reloaded and the updated server deployed before these changes affect users; 0.6.6 installations need no update.
+
 ## Extension audit, SPA navigation and 0.6.6 packages: October 25, 2026
 
 Release **0.6.6** includes the SPA navigation fix (`history.pushState` / `history.replaceState` keeping the shared view and remote control active without resetting document capture), resolves clipboard and viewer race conditions (publishing pre-connection remote clipboard state before starting the initial clipboard poll, propagating automatic clipboard error disablement across host snapshots and the guest offscreen adapter, recreating an idle offscreen document on demand for guest clipboard reads/writes, cleaning up pending viewer requests when the connection page reconnects on the same tab, and preserving the active `<video>` stream when toggling remote control or receiving presentation metadata after the first decoded frame), and removes dead markup, redundant state checks, duplicate/unused CSS selectors and leftover untranslated clipboard messages. Root/workspace/lockfile/manifest versions match **0.6.6**; permissions, Heroku signaling defaults and peer protocol **4** are unchanged.

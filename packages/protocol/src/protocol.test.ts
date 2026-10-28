@@ -2,6 +2,12 @@ import { createHmac, hkdfSync, pbkdf2Sync } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { VisualPreferencesSchema, PasswordSchema, ClientSignalMessageSchema, ControlCommandSchema, SettingsSchema, isRelaySignal, isSupportedUrl, validateSignalingUrl, extractSdpFingerprints, deriveSessionKeys, signSdpFingerprint, verifySdpFingerprint, generateSessionSalt, SessionSaltSchema, ServerSignalMessageSchema, KDF_ITERATIONS, PROTOCOL_VERSION, MIN_SUPPORTED_PROTOCOL_VERSION, isCompatibleProtocol } from './index';
 describe('network boundaries', () => {
+  it('requires an explicit boolean to enable legacy compatibility and keeps existing settings unchanged', () => {
+    const settings = { signalingUrl: 'https://connect.example.com', stunUrls: ['stun:example.com:3478'] };
+    expect(SettingsSchema.parse(settings)).toEqual(settings);
+    expect(SettingsSchema.parse({ ...settings, legacyCompatibility: true }).legacyCompatibility).toBe(true);
+    for (const legacyCompatibility of ['true', 1, null]) expect(SettingsSchema.safeParse({ ...settings, legacyCompatibility }).success).toBe(false);
+  });
   it('accepts the supported wire range independently of product versions without guessing future protocols', () => {
     expect(MIN_SUPPORTED_PROTOCOL_VERSION).toBeLessThanOrEqual(PROTOCOL_VERSION);
     for (let protocol = MIN_SUPPORTED_PROTOCOL_VERSION; protocol <= PROTOCOL_VERSION; protocol++) expect(isCompatibleProtocol(protocol)).toBe(true);

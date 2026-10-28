@@ -10,7 +10,7 @@ import type { ServerConfig } from './config.js';
 import { Devices, type DeviceStore } from './devices.js';
 
 const origin = `chrome-extension://${'a'.repeat(32)}`;
-// Signaling only ever sees the client-derived authentication token and the public session salt.
+// Protocol 6 sends a derived authentication token; legacy protocol 4 sends a human password.
 const password = 'a1'.repeat(32);
 const wrongPassword = 'e2'.repeat(32);
 const salt = '0123456789abcdef0123456789abcdef';
@@ -18,6 +18,8 @@ type Identity = { deviceId: string; ownerToken: string };
 const hostOpen = (identity: Identity, overrides: Partial<Extract<ClientSignalMessage, { type: 'host.open' }>> = {}): ClientSignalMessage => ({ type: 'host.open', protocol: PROTOCOL_VERSION, ...identity, salt, password, ...overrides });
 const guestChallenge = (deviceId: string): ClientSignalMessage => ({ type: 'guest.challenge', protocol: PROTOCOL_VERSION, deviceId });
 const guestJoin = (deviceId: string, token = password): ClientSignalMessage => ({ type: 'guest.join', protocol: PROTOCOL_VERSION, deviceId, password: token });
+const legacyOpen = (identity: Identity) => ({ type: 'host.open' as const, ...identity, password: 'Eight-42' });
+const legacyJoin = (deviceId: string, password = 'Eight-42') => ({ type: 'guest.join' as const, deviceId, password });
 const offerSdp = `v=0\r\na=fingerprint:sha-256 ${'AA:'.repeat(31)}01\r\n`;
 const answerSdp = `v=0\r\na=fingerprint:sha-256 ${'BB:'.repeat(31)}02\r\n`;
 const servers: SignalingServer[] = [];
@@ -41,7 +43,7 @@ class Peer {
     socket.on('error', () => {});
   }
 
-  send(message: ClientSignalMessage): void { this.socket.send(JSON.stringify(message)); }
+  send(message: ClientSignalMessage | ReturnType<typeof legacyOpen> | ReturnType<typeof legacyJoin>): void { this.socket.send(JSON.stringify(message)); }
 
   async next<T extends ServerSignalMessage['type']>(type: T): Promise<Extract<ServerSignalMessage, { type: T }>> {
     const index = this.pending.findIndex((message) => message.type === type);
@@ -514,12 +516,12 @@ it.each([...new Set([MIN_SUPPORTED_PROTOCOL_VERSION, PROTOCOL_VERSION])])('pairs
   expect((await host.next('signal')).payload).toEqual({ type: 'answer', sdp: answerSdp });
 });
 
-it('rejects unsupported or missing handshake protocol versions with INCOMPATIBLE_PROTOCOL without closing the socket', async () => {
+it('rejects explicit unsupported handshake protocol versions with INCOMPATIBLE_PROTOCOL without closing the socket', async () => {
   const app = await start({ maxProtocolErrorsPerSocket: 1 });
   const identity = await app.register();
   const peer = await app.connect();
   for (const outdated of [
-    { type: 'host.open', deviceId: identity.deviceId, ownerToken: identity.ownerToken, password: 'Eight-42' },
+    { type: 'host.open', protocol: 4, ...identity, password: 'Eight-42' },
     { type: 'host.open', protocol: MIN_SUPPORTED_PROTOCOL_VERSION - 1, ...identity, salt, password },
     { type: 'guest.challenge', protocol: MIN_SUPPORTED_PROTOCOL_VERSION - 1, deviceId: identity.deviceId },
     { type: 'guest.join', protocol: PROTOCOL_VERSION + 1, deviceId: identity.deviceId, password },
@@ -532,6 +534,119 @@ it('rejects unsupported or missing handshake protocol versions with INCOMPATIBLE
   expect(app.server.stats.protocolErrors).toBe(0);
   peer.send(hostOpen(identity));
   expect((await peer.next('host.ready')).deviceId).toBe(identity.deviceId);
+});
+
+it('serves legacy 0.6.6 and current sessions together without mixing credentials or signaling', async () => {
+  const app = await start();
+  const [legacyIdentity, currentIdentity] = await Promise.all([app.register(), app.register()]);
+  const [legacyHost, currentHost, legacyGuest, currentGuest] = await Promise.all([app.connect(), app.connect(), app.connect(), app.connect()]);
+  legacyHost.send(legacyOpen({ ...legacyIdentity, ownerToken: 'f'.repeat(64) }));
+  expect((await legacyHost.next('error')).code).toBe('AUTH_FAILED');
+  legacyHost.send(legacyOpen(legacyIdentity));
+  const legacyReady = await legacyHost.next('host.ready');
+  currentHost.send(hostOpen(currentIdentity));
+  const currentReady = await currentHost.next('host.ready');
+  expect(app.server.stats.activeRooms).toBe(2);
+
+  legacyGuest.send(legacyJoin(legacyIdentity.deviceId, 'Wrong-42'));
+  expect((await legacyGuest.next('error')).code).toBe('AUTH_FAILED');
+  expect(legacyHost.history.some(message => message.type === 'paired')).toBe(false);
+  legacyGuest.send(legacyJoin(legacyIdentity.deviceId));
+  expect((await legacyGuest.next('paired')).sessionId).toBe(legacyReady.sessionId);
+  await legacyHost.next('paired');
+  currentGuest.send(guestJoin(currentIdentity.deviceId));
+  expect((await currentGuest.next('paired')).sessionId).toBe(currentReady.sessionId);
+  await currentHost.next('paired');
+
+  legacyHost.send({ type: 'signal', sessionId: legacyReady.sessionId, payload: { type: 'offer', sdp: offerSdp } });
+  expect((await legacyGuest.next('signal')).payload).toEqual({ type: 'offer', sdp: offerSdp });
+  legacyGuest.send({ type: 'signal', sessionId: legacyReady.sessionId, payload: { type: 'answer', sdp: answerSdp } });
+  expect((await legacyHost.next('signal')).payload).toEqual({ type: 'answer', sdp: answerSdp });
+  expect(currentGuest.history.some(message => message.type === 'signal')).toBe(false);
+  legacyGuest.send({ type: 'host.close', sessionId: legacyReady.sessionId });
+  expect((await legacyGuest.next('error')).code).toBe('FORBIDDEN');
+  legacyHost.send({ type: 'host.close', sessionId: legacyReady.sessionId });
+  expect((await legacyHost.next('ended')).sessionId).toBe(legacyReady.sessionId);
+  expect((await legacyGuest.next('ended')).sessionId).toBe(legacyReady.sessionId);
+  expect(app.server.stats.activeRooms).toBe(1);
+  expect(currentHost.history.some(message => message.type === 'ended')).toBe(false);
+});
+
+it('rejects cross-protocol joins and challenges without downgrading or evicting either host', async () => {
+  const app = await start();
+  const [legacyIdentity, currentIdentity] = await Promise.all([app.register(), app.register()]);
+  const [legacyHost, currentHost, legacyGuest, currentGuest] = await Promise.all([app.connect(), app.connect(), app.connect(), app.connect()]);
+  legacyHost.send(legacyOpen(legacyIdentity)); await legacyHost.next('host.ready');
+  currentHost.send(hostOpen(currentIdentity)); await currentHost.next('host.ready');
+  for (const opening of [guestChallenge(legacyIdentity.deviceId), guestJoin(legacyIdentity.deviceId)]) {
+    currentGuest.send(opening);
+    expect((await currentGuest.next('error')).code).toBe('INCOMPATIBLE_PROTOCOL');
+  }
+  legacyGuest.send(legacyJoin(currentIdentity.deviceId));
+  expect((await legacyGuest.next('error')).code).toBe('INCOMPATIBLE_PROTOCOL');
+  expect(app.server.stats.activeRooms).toBe(2);
+  expect(app.server.stats.sessionsPaired).toBe(0);
+  legacyGuest.send(legacyJoin(legacyIdentity.deviceId));
+  await legacyGuest.next('paired'); await legacyHost.next('paired');
+  currentGuest.send(guestJoin(currentIdentity.deviceId));
+  await currentGuest.next('paired'); await currentHost.next('paired');
+  expect(app.server.stats.sessionsPaired).toBe(2);
+});
+
+it('requires the exact legacy handshake shape rather than treating malformed modern messages as legacy', async () => {
+  const app = await start({ maxProtocolErrorsPerSocket: 20 });
+  const identity = await app.register(), peer = await app.connect();
+  for (const malformed of [
+    null,
+    { ...legacyOpen(identity), salt },
+    { ...legacyOpen(identity), extra: true },
+    { ...legacyOpen(identity), password: null },
+    { ...legacyOpen(identity), password: 'short' },
+    { type: 'host.open', deviceId: identity.deviceId, password: 'Eight-42' },
+    { ...legacyJoin(identity.deviceId), extra: true },
+    { ...legacyJoin(identity.deviceId), password: null },
+  ]) {
+    peer.socket.send(JSON.stringify(malformed));
+    expect((await peer.next('error')).code).toBe('INVALID_MESSAGE');
+  }
+  expect(app.server.stats.activeAuth).toBe(0);
+  expect(app.server.stats.activeRooms).toBe(0);
+  peer.send(legacyOpen(identity));
+  expect((await peer.next('host.ready')).deviceId).toBe(identity.deviceId);
+});
+
+it('bounds legacy authentication with the shared queue and ignores disconnected owner lookups', async () => {
+  const store = new Devices(':memory:'), lookup = Promise.withResolvers<boolean>();
+  const originalAuth = store.authenticate.bind(store);
+  store.authenticate = vi.fn().mockImplementationOnce(() => lookup.promise).mockImplementation(originalAuth);
+  const app = await start({ maxAuthConcurrency: 1, maxAuthQueue: 0 }, store);
+  const [one, two] = await Promise.all([app.register(), app.register()]);
+  const [legacy, current] = await Promise.all([app.connect(), app.connect()]);
+  legacy.send(legacyOpen(one));
+  await vi.waitUntil(() => app.server.stats.activeAuth === 1, { timeout: 5000, interval: 2 });
+  current.send(hostOpen(two));
+  expect((await current.next('error')).code).toBe('SERVER_BUSY');
+  legacy.socket.terminate();
+  await vi.waitUntil(() => legacy.socket.readyState === WebSocket.CLOSED, { timeout: 5000, interval: 2 });
+  lookup.resolve(true);
+  await vi.waitUntil(() => app.server.stats.activeAuth === 0, { timeout: 5000, interval: 2 });
+  expect(app.server.stats.activeRooms).toBe(0);
+  current.send(hostOpen(two));
+  expect((await current.next('host.ready')).deviceId).toBe(two.deviceId);
+});
+
+it('never replaces a legacy guest when two password checks race', async () => {
+  const app = await start();
+  const identity = await app.register();
+  const [host, first, second] = await Promise.all([app.connect(), app.connect(), app.connect()]);
+  host.send(legacyOpen(identity)); await host.next('host.ready');
+  first.send(legacyJoin(identity.deviceId));
+  second.send(legacyJoin(identity.deviceId));
+  await vi.waitUntil(() => first.history.length > 0 && second.history.length > 0, { timeout: 5000, interval: 2 });
+  const results = [...first.history, ...second.history];
+  expect(results.filter(message => message.type === 'paired')).toHaveLength(1);
+  expect(results.filter(message => message.type === 'error' && message.code === 'SESSION_UNAVAILABLE')).toHaveLength(1);
+  expect(app.server.stats.sessionsPaired).toBe(1);
 });
 
 it('scopes guest rate limits per IP+device so third parties cannot lock out the host or other guests', async () => {

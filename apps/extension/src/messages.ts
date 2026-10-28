@@ -1,6 +1,9 @@
 import type { Locale } from '@ghostpair/protocol';
 
 export const spanish = {
+  'Connect with GhostPair 0.6.6': 'Conectar con GhostPair 0.6.6',
+  'Enable when the other person uses 0.6.6. Uses its older authentication: the server receives the session password and peer identity is not verified end to end.': 'Actívala si la otra persona usa 0.6.6. Usa su autenticación anterior: el servidor recibe la contraseña de sesión y no se verifica la identidad del otro participante de extremo a extremo.',
+  '0.6.6 compatibility is on.': 'La compatibilidad con 0.6.6 está activada.',
   '0.1–10 seconds, in steps of 0.1.': 'De 0,1 a 10 segundos, en intervalos de 0,1.',
   'Active · ': 'Activa · ',
   'Advanced connection settings': 'Configuración avanzada de conexión',

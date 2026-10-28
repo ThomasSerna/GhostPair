@@ -67,6 +67,7 @@ export const spanishRuntimeMessages = {
   'Incompatible GhostPair versions. Update both extensions.': 'Las versiones de GhostPair no son compatibles. Actualiza ambas extensiones.',
   'The extension and signaling server use incompatible connection protocols. Update the extension or server.': 'La extensión y el servidor de conexión usan protocolos incompatibles. Actualiza la extensión o el servidor.',
   'These extensions use incompatible connection protocols. Update the older extension.': 'Estas extensiones usan protocolos de conexión incompatibles. Actualiza la extensión más antigua.',
+  'The session uses a different compatibility mode. Check the 0.6.6 option in Connection settings on GhostPair 0.7.': 'La sesión usa otro modo de compatibilidad. Revisa la opción de 0.6.6 en la configuración de conexión de GhostPair 0.7.',
   'Invalid drag destination.': 'El destino de arrastre no es válido.',
   'Invalid drag token.': 'El identificador de arrastre no es válido.',
   'Invalid dragged text.': 'El texto arrastrado no es válido.',

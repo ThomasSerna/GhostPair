@@ -172,6 +172,7 @@ function Popup() {
       <form onSubmit={e => { e.preventDefault(); void start(); }}>
         <label>{t("Password")}<input autoFocus required type="password" autoComplete="new-password" minLength={MIN_PASSWORD_LENGTH} maxLength={256} value={password} onChange={e => setPassword(e.target.value)} placeholder={t('At least {count} characters', { count: MIN_PASSWORD_LENGTH })} disabled={busy}/></label>
         <p className="helper">{t("This password is only for this session.")}</p>
+        {state.settings.legacyCompatibility && <p className="helper">{t("0.6.6 compatibility is on.")}</p>}
         <label className="check"><input type="checkbox" checked={clipboard} onChange={e => setClipboard(e.target.checked)} disabled={busy}/><span>{t("Share clipboard")}<small>{t("Text copied in any application. Both people must enable sharing.")}</small></span></label>
         <label className="check consent"><input required type="checkbox" checked={consent} onChange={e => setConsent(e.target.checked)} disabled={busy}/><span>{t("I allow the person with my connection code and password to view and interact with this tab, and manage tabs in this window. I’ll approve each additional tab before it’s shared.")}</span></label>
         <button className="primary" disabled={busy || !state} type="submit">{busy ? t("Preparing…") : t("Share this tab")}</button>

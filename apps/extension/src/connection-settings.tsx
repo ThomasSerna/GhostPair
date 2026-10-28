@@ -18,6 +18,7 @@ export function ConnectionSettings({ state, busy = false, onState, onError, onSa
   const [mode, setMode] = useState(() => getConnectionServerMode(state.settings));
   const [url, setUrl] = useState(state.settings.signalingUrl);
   const [stun, setStun] = useState(state.settings.stunUrls.join('\n'));
+  const [legacyCompatibility, setLegacyCompatibility] = useState(state.settings.legacyCompatibility === true);
   const [saving, setSaving] = useState(false);
   const savingRef = useRef(false);
   const mounted = useRef(true);
@@ -32,14 +33,16 @@ export function ConnectionSettings({ state, busy = false, onState, onError, onSa
     setMode(getConnectionServerMode(state.settings));
     setUrl(state.settings.signalingUrl);
     setStun(savedStun);
-  }, [state.settings.signalingUrl, savedStun]);
+    setLegacyCompatibility(state.settings.legacyCompatibility === true);
+  }, [state.settings.signalingUrl, savedStun, state.settings.legacyCompatibility]);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
 
   async function save() {
     if (disabled || savingRef.current) return;
     onError('');
     try {
-      const settings = mode === 'ghostpair' ? { ...GHOSTPAIR_SERVER_SETTINGS, stunUrls: [...GHOSTPAIR_SERVER_SETTINGS.stunUrls] } : parseCustomConnectionSettings(url, stun);
+      const connection = mode === 'ghostpair' ? { ...GHOSTPAIR_SERVER_SETTINGS, stunUrls: [...GHOSTPAIR_SERVER_SETTINGS.stunUrls] } : parseCustomConnectionSettings(url, stun);
+      const settings = legacyCompatibility ? { ...connection, legacyCompatibility: true } : connection;
       savingRef.current = true;
       setSaving(true);
       onBusyChange?.(true);
@@ -81,6 +84,7 @@ export function ConnectionSettings({ state, busy = false, onState, onError, onSa
       <label>{t("STUN servers")}<textarea required rows={3} value={stun} onChange={event => setStun(event.target.value)} placeholder="stun:stun.example.com:3478"/></label>
       <p className="helper">{t("One to five addresses, separated by commas or new lines. Both people must use the same connection server.")}</p>
     </fieldset>}
+    <label className="check"><input type="checkbox" checked={legacyCompatibility} disabled={disabled} onChange={event => setLegacyCompatibility(event.target.checked)}/><span>{t("Connect with GhostPair 0.6.6")}<small>{t("Enable when the other person uses 0.6.6. Uses its older authentication: the server receives the session password and peer identity is not verified end to end.")}</small></span></label>
     {active && <p className="helper">{t("End the session before changing connection settings.")}</p>}
     <button className="primary" type="submit" disabled={disabled}>{saving ? t("Saving…") : t("Save")}</button>
   </form>;

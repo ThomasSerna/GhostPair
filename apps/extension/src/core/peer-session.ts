@@ -91,6 +91,7 @@ export function createPeerSession(notify: (type: string, payload?: Record<string
 let role: Role | undefined;
 let sessionId: string | undefined;
 let macKey: CryptoKey | undefined;
+let legacyCompatibility = false;
 let offerSdp: string | undefined;
 let socket: WebSocket | undefined;
 let peer: RTCPeerConnection | undefined;
@@ -151,7 +152,7 @@ function cleanup(reason = 'Session ended.', inform = false, failed = false) {
   const previous = peer; peer = undefined;
   previous?.close(); socket?.close(); socket = undefined;
   controlChannel = undefined; clipboardChannel = undefined; media?.stop(); media = undefined; mediaKey = ''; pendingMedia = [];
-  connected = false; direct = false; greeted = false; role = undefined; sessionId = undefined; macKey = undefined; offerSdp = undefined;
+  connected = false; direct = false; greeted = false; role = undefined; sessionId = undefined; macKey = undefined; offerSdp = undefined; legacyCompatibility = false;
   clipboardEnabled = false; remoteClipboardEnabled = false; paused = false;
   latestSnapshot = undefined; pendingIce = [];
   commandsPerSecond = 0; commandWindow = 0;
@@ -199,7 +200,7 @@ async function establish() {
 
 async function receiveControl(message: z.infer<typeof PeerMessageSchema>) {
   if (message.type === 'hello') {
-    if (!isCompatibleProtocol(message.protocol)) { fail('These extensions use incompatible connection protocols. Update the older extension.'); return; }
+    if (legacyCompatibility ? message.protocol !== 4 : !isCompatibleProtocol(message.protocol)) { fail('These extensions use incompatible connection protocols. Update the older extension.'); return; }
     if (message.sessionId !== sessionId || message.role === role) { fail('The session identity does not match.'); return; }
     greeted = true; await establish(); return;
   }
@@ -295,7 +296,7 @@ function attachChannel(channel: RTCDataChannel, current: number) {
         if (message) await receiveControl(message);
       }).catch(() => undefined).finally(() => { --pendingControls; });
     }, () => { if (epoch === current && !ending) fail('The control connection could not send input. Start a new session.'); });
-    channel.onopen = () => { if (epoch !== current) return; sendPeer({ type: 'hello', protocol: MIN_SUPPORTED_PROTOCOL_VERSION, sessionId, role }); };
+    channel.onopen = () => { if (epoch !== current) return; sendPeer({ type: 'hello', protocol: legacyCompatibility ? 4 : MIN_SUPPORTED_PROTOCOL_VERSION, sessionId, role }); };
     channel.onclose = () => { if (epoch === current && !ending && role) cleanup('The other participant disconnected.', true); };
   } else if (channel.label === 'clipboard') {
     if (clipboardChannel) { channel.close(); return; }
@@ -333,7 +334,7 @@ async function createPeer(settings: Settings, current: number) {
     if (epoch !== current) return;
     const sdp = pc.localDescription?.sdp ?? offer.sdp!;
     offerSdp = sdp;
-    const mac = await sessionCrypto.signSdp(macKey!, sessionId!, 'host', sdp);
+    const mac = legacyCompatibility ? undefined : await sessionCrypto.signSdp(macKey!, sessionId!, 'host', sdp);
     if (epoch !== current) return;
     sendSignal({ type: 'offer', sdp, mac });
   }
@@ -348,7 +349,7 @@ async function signal(payload: SignalPayload, current: number) {
     await pc.addIceCandidate(payload.candidate); return;
   }
   if ((payload.type === 'offer' && role !== 'guest') || (payload.type === 'answer' && role !== 'host')) throw new Error('The connection details do not match this session.');
-  const verified = await sessionCrypto.verifySdp(
+  const verified = legacyCompatibility || await sessionCrypto.verifySdp(
     macKey!,
     sessionId!,
     payload.type === 'offer' ? 'host' : 'guest',
@@ -372,7 +373,7 @@ async function signal(payload: SignalPayload, current: number) {
     await pc.setLocalDescription(answer);
     if (epoch !== current) return;
     const sdp = pc.localDescription?.sdp ?? answer.sdp!;
-    const mac = await sessionCrypto.signSdp(macKey!, sessionId!, 'guest', sdp, offerSdp);
+    const mac = legacyCompatibility ? undefined : await sessionCrypto.signSdp(macKey!, sessionId!, 'guest', sdp, offerSdp);
     if (epoch !== current) return;
     sendSignal({ type: 'answer', sdp, mac });
   }
@@ -385,12 +386,13 @@ async function start(message: Record<string, any>) {
   message.password = ''; message.ownerToken = undefined;
   cleanup();
   const settings = SettingsSchema.parse(message.settings);
+  legacyCompatibility = settings.legacyCompatibility === true;
   if (!['host', 'guest'].includes(message.role)) { password = ''; ownerToken = undefined; throw new Error('Invalid settings.'); }
   const current = ++epoch;
   role = message.role; clipboardEnabled = message.clipboard === true; paused = false;
   let hostSalt: string | undefined;
   let authToken: string | undefined;
-  if (role === 'host') {
+  if (role === 'host' && !legacyCompatibility) {
     hostSalt = sessionCrypto.generateSalt();
     try {
       const keys = await sessionCrypto.deriveKeys(password, deviceId, hostSalt);
@@ -407,6 +409,12 @@ async function start(message: Record<string, any>) {
   timer = setTimeout(() => { password = ''; if (epoch === current) fail('Could not reach the connection server. Check your network and try again.'); }, 12000);
   ws.onopen = () => {
     if (epoch !== current) return;
+    // Compatibility is an explicit local choice; server errors must never enable it.
+    if (legacyCompatibility) {
+      ws.send(JSON.stringify(role === 'host' ? { type: 'host.open', deviceId, ownerToken, password } : { type: 'guest.join', deviceId, password }));
+      password = ''; ownerToken = undefined;
+      return;
+    }
     if (role === 'host') {
       ws.send(JSON.stringify({ type: 'host.open', protocol: MIN_SUPPORTED_PROTOCOL_VERSION, deviceId, ownerToken, salt: hostSalt, password: authToken }));
       // Do not retain derived or owner credentials after dispatch.
@@ -426,7 +434,7 @@ async function start(message: Record<string, any>) {
       notify('transport.status', { status: 'waiting', sessionId }); return;
     }
     if (message.type === 'guest.salt') {
-      if (role !== 'guest' || !password || message.deviceId !== deviceId) return;
+      if (legacyCompatibility || role !== 'guest' || !password || message.deviceId !== deviceId) return;
       const guestPassword = password;
       password = '';
       void sessionCrypto.deriveKeys(guestPassword, deviceId, message.salt).then(keys => {

@@ -79,9 +79,9 @@ const snapshot = { controlMode: 'live', controlRevision: 0, presentation, genera
 function harness(cryptoImpl: SessionCrypto = testCrypto) {
   const notify = vi.fn(), dispatch = vi.fn(async (_message: any): Promise<any> => ({ ok: true }));
   const session = createPeerSession(notify, dispatch, { read: async () => '', write: async () => {} }, {}, cryptoImpl);
-  async function start(sessionId = id) {
+  async function start(sessionId = id, legacyCompatibility = false) {
     await session.handle({ type: 'session.start', role: 'host', deviceId: id, ownerToken: 'b'.repeat(64), password: 'Eight-42', clipboard: false,
-      settings: { signalingUrl: 'http://127.0.0.1:8787', stunUrls: ['stun:example.com:3478'] } });
+      settings: { signalingUrl: 'http://127.0.0.1:8787', stunUrls: ['stun:example.com:3478'], legacyCompatibility } });
     const socket = Socket.instances.at(-1)!; socket.onopen?.();
     socket.receive({ type: 'paired', sessionId, role: 'host' }); await settled();
     const pc = Peer.instances.at(-1)!, control = pc.channels[0];
@@ -108,6 +108,46 @@ describe('peer session lifetime', () => {
     await first.greet(protocol); first.pc.connect(); await settled();
     expect(h.notify).toHaveBeenCalledWith('transport.connected', { sessionId: id });
     h.session.stop();
+  });
+
+  it('hosts an explicitly selected legacy session without deriving keys or sending MAC fields to 0.6.6', async () => {
+    const crypto = { ...testCrypto, deriveKeys: vi.fn(testCrypto.deriveKeys), signSdp: vi.fn(testCrypto.signSdp), verifySdp: vi.fn(testCrypto.verifySdp) };
+    const h = harness(crypto), first = await h.start(id, true);
+    const sent = first.socket.send.mock.calls.map(([value]) => JSON.parse(value));
+    expect(sent[0]).toEqual({ type: 'host.open', deviceId: id, ownerToken: 'b'.repeat(64), password: 'Eight-42' });
+    expect(sent.find(message => message.type === 'signal').payload).toEqual({ type: 'offer', sdp: syntheticOfferSdp });
+    expect(first.control.send.mock.calls.map(([value]) => JSON.parse(value))).toContainEqual({ type: 'hello', protocol: 4, sessionId: id, role: 'host' });
+    first.socket.receive({ type: 'signal', sessionId: id, payload: { type: 'answer', sdp: syntheticAnswerSdp } });
+    await first.greet(4); first.pc.connect(); await settled();
+    expect(h.notify).toHaveBeenCalledWith('transport.connected', { sessionId: id });
+    expect(crypto.deriveKeys).not.toHaveBeenCalled(); expect(crypto.signSdp).not.toHaveBeenCalled(); expect(crypto.verifySdp).not.toHaveBeenCalled();
+    h.session.stop();
+    const modern = await h.start(); await modern.greet(4);
+    expect(h.notify).toHaveBeenLastCalledWith('transport.ended', expect.objectContaining({ failed: true }));
+    expect(crypto.deriveKeys).toHaveBeenCalledTimes(1);
+  });
+
+  it('joins a 0.6.6 host only in explicit compatibility mode and answers without a MAC', async () => {
+    const h = harness();
+    await h.session.handle({ type: 'session.start', role: 'guest', deviceId: id, password: 'Eight-42', clipboard: false,
+      settings: { signalingUrl: 'http://127.0.0.1:8787', stunUrls: ['stun:example.com:3478'], legacyCompatibility: true } });
+    const socket = Socket.instances.at(-1)!; socket.onopen?.();
+    expect(socket.send.mock.calls.map(([value]) => JSON.parse(value))).toEqual([{ type: 'guest.join', deviceId: id, password: 'Eight-42' }]);
+    socket.receive({ type: 'paired', sessionId: id, role: 'guest' }); await settled();
+    socket.receive({ type: 'signal', sessionId: id, payload: { type: 'offer', sdp: syntheticOfferSdp } }); await settled();
+    expect(socket.send.mock.calls.map(([value]) => JSON.parse(value))).toContainEqual({ type: 'signal', sessionId: id, payload: { type: 'answer', sdp: syntheticAnswerSdp } });
+    h.session.stop();
+  });
+
+  it('never falls back to legacy authentication or accepts an unsigned answer in the default mode', async () => {
+    const h = harness(), first = await h.start();
+    first.socket.receive({ type: 'signal', sessionId: id, payload: { type: 'answer', sdp: syntheticAnswerSdp } }); await settled();
+    expect(first.pc.setRemoteDescription).not.toHaveBeenCalled();
+    expect(h.notify).toHaveBeenCalledWith('transport.ended', expect.objectContaining({ reason: 'Could not verify the peer security fingerprint. Start a new session.' }));
+    const second = await h.start();
+    second.socket.receive({ type: 'error', code: 'INCOMPATIBLE_PROTOCOL', message: 'The extension and signaling server use incompatible connection protocols. Update the extension or server.' }); await settled();
+    expect(Socket.instances).toHaveLength(2);
+    expect(second.socket.send.mock.calls.map(([value]) => JSON.parse(value)).every(message => message.type !== 'host.open' || message.protocol === MIN_SUPPORTED_PROTOCOL_VERSION)).toBe(true);
   });
 
   it('keeps compatibility ping replies and the background keepalive without RTT telemetry', async () => {

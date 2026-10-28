@@ -51,6 +51,7 @@ export type SignalPayload = z.infer<typeof SignalPayloadSchema>;
 export const SettingsSchema = z.object({
   signalingUrl: z.string().url().refine(validateSignalingUrl, 'Use HTTPS for signaling, or HTTP on localhost.'),
   stunUrls: z.array(z.string().regex(/^stuns?:[^\s]+$/i, 'Only STUN servers are supported.')).min(1).max(5),
+  legacyCompatibility: z.boolean().optional(),
 }).strict();
 export type Settings = z.infer<typeof SettingsSchema>;
 export const VisualSecondsSchema = z.number().finite().min(0.1).max(10).multipleOf(0.1);

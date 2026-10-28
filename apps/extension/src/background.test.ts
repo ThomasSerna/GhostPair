@@ -259,6 +259,17 @@ describe('background connection ownership and settings', () => {
     expect((await restarted.send('ui.status')).state).toMatchObject({ settings: GHOSTPAIR_SERVER_SETTINGS, deviceId: officialId });
     expect((await restarted.send('ui.settings.save', { settings: custom })).state.deviceId).toBe(customId);
   });
+  it('persists explicit 0.6.6 compatibility without changing the saved identity', async () => {
+    const h = await harness();
+    const before = (await h.send('ui.status')).state;
+    const settings = { ...before.settings, legacyCompatibility: true };
+    expect((await h.send('ui.settings.save', { settings })).state).toMatchObject({ settings, deviceId: before.deviceId });
+    const restarted = await harness(h.stored);
+    expect((await restarted.send('ui.status')).state).toMatchObject({ settings });
+    await restarted.send('ui.host.start', { password: 'Eight-42' });
+    expect((await restarted.send('ui.settings.save', { settings: before.settings })).ok).toBe(false);
+  });
+
   it('rejects connection settings changes throughout an active session', async () => {
     const h = await harness();
     const original = (await h.send('ui.status')).state.settings;
