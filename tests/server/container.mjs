@@ -31,7 +31,7 @@ try {
   socket = new WebSocket(base.replace('http:', 'ws:') + '/v1/connect', { origin: `chrome-extension://${'p'.repeat(32)}` });
   await new Promise((done, fail) => { socket.once('open', done); socket.once('error', fail); });
   const result = new Promise((done, fail) => { const timer = setTimeout(() => fail(new Error('Container authentication timeout')), 10000); socket.once('message', data => { clearTimeout(timer); done(JSON.parse(data)); }); });
-  socket.send(JSON.stringify({ type: 'host.open', ...identity, password: 'Synthetic container password' }));
+  socket.send(JSON.stringify({ type: 'host.open', protocol: 6, ...identity, salt: '0'.repeat(32), password: 'a'.repeat(64) }));
   assert.equal((await result).type, 'host.ready');
   console.log(JSON.stringify({ container: true, configuredPortHealthcheck: true, privacy: true, originChecks: true, restartIdentity: true }));
 } finally {

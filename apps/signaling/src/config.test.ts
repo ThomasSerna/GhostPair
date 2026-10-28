@@ -19,10 +19,13 @@ describe('production configuration', () => {
     }
   });
 
-  it('rejects invalid ports and requires explicit proxy trust', () => {
+  it('rejects invalid ports, accepts MAX_AUTH_QUEUE=0, and requires explicit proxy trust', () => {
     for (const PORT of ['-1', '0', 'abc', '65536', '1.5']) {
       expect(() => configFromEnv({ PORT })).toThrow();
     }
+    expect(configFromEnv({ MAX_AUTH_QUEUE: '0', MAX_AUTH_CONCURRENCY: '2' })).toMatchObject({ maxAuthQueue: 0, maxAuthConcurrency: 2 });
+    expect(() => configFromEnv({ MAX_AUTH_QUEUE: '-1' })).toThrow();
+    expect(() => configFromEnv({ MAX_AUTH_CONCURRENCY: '0' })).toThrow();
     expect(configFromEnv({}).trustProxy).toBe(false);
     expect(configFromEnv({ TRUST_PROXY: 'true' }).trustProxy).toBe(true);
   });

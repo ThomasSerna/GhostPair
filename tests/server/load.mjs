@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
 import { performance } from 'node:perf_hooks';
 import { WebSocket } from 'ws';
-import { deriveSessionKeys, signSdpFingerprint, verifySdpFingerprint } from '@ghostpair/protocol';
+import { PROTOCOL_VERSION, deriveSessionKeys, generateSessionSalt, signSdpFingerprint, verifySdpFingerprint } from '@ghostpair/protocol';
 import { createServer } from '../../apps/signaling/dist/server.js';
 
 const PAIRS = Number(process.env.GHOSTPAIR_LOAD_PAIRS ?? 20);
-const SCRYPT_N = Number(process.env.GHOSTPAIR_LOAD_SCRYPT_N ?? 16_384);
+const KDF_ITERATIONS = Number(process.env.GHOSTPAIR_LOAD_KDF_ITERATIONS ?? 10_000);
 const origin = `chrome-extension://${'a'.repeat(32)}`;
 const hostSdp = `v=0\r\na=fingerprint:sha-256 ${'AA:'.repeat(31)}01\r\n`;
 const guestSdp = `v=0\r\na=fingerprint:sha-256 ${'BB:'.repeat(31)}02\r\n`;
@@ -46,13 +46,18 @@ const server = createServer({
   databasePath: ':memory:',
   port: 0,
   trustProxy: true,
-  scryptN: SCRYPT_N,
   maxAuthConcurrency: 4,
   maxAuthQueue: PAIRS * 2,
   pairedRoomTimeoutMs: 200,
 });
 
 const sockets = [];
+const baselineRss = process.memoryUsage().rss;
+let peakRss = baselineRss;
+const rssSampler = setInterval(() => {
+  const current = process.memoryUsage().rss;
+  if (current > peakRss) peakRss = current;
+}, 10);
 try {
   const address = await server.listen(0);
   const baseUrl = `http://127.0.0.1:${address.port}`;
@@ -76,24 +81,28 @@ try {
     const hostIp = `198.51.100.${i + 1}`;
     const guestIp = `203.0.113.${i + 1}`;
     const password = `LoadTest-Pass-${i}-9876!`;
-    const keys = deriveSessionKeys(password, identity.deviceId);
+    const salt = generateSessionSalt();
+    const hostKeys = await deriveSessionKeys(password, identity.deviceId, salt, KDF_ITERATIONS);
     const [host, guest] = await Promise.all([connectSocket(wsUrl, hostIp), connectSocket(wsUrl, guestIp)]);
     sockets.push(host.ws, guest.ws);
 
-    host.send({ type: 'host.open', deviceId: identity.deviceId, ownerToken: identity.ownerToken, password: keys.authToken });
+    host.send({ type: 'host.open', protocol: PROTOCOL_VERSION, deviceId: identity.deviceId, ownerToken: identity.ownerToken, salt, password: hostKeys.authToken });
     const ready = await host.next('host.ready');
-    guest.send({ type: 'guest.join', deviceId: identity.deviceId, password: keys.authToken });
+    guest.send({ type: 'guest.challenge', protocol: PROTOCOL_VERSION, deviceId: identity.deviceId });
+    const challenge = await guest.next('guest.salt');
+    const guestKeys = await deriveSessionKeys(password, identity.deviceId, challenge.salt, KDF_ITERATIONS);
+    guest.send({ type: 'guest.join', protocol: PROTOCOL_VERSION, deviceId: identity.deviceId, password: guestKeys.authToken });
     await Promise.all([host.next('paired'), guest.next('paired')]);
 
-    const offerMac = signSdpFingerprint(keys.macKey, ready.sessionId, 'host', hostSdp);
+    const offerMac = await signSdpFingerprint(hostKeys.macKey, ready.sessionId, 'host', hostSdp);
     host.send({ type: 'signal', sessionId: ready.sessionId, payload: { type: 'offer', sdp: hostSdp, mac: offerMac } });
     const receivedOffer = await guest.next('signal');
-    assert.equal(verifySdpFingerprint(keys.macKey, ready.sessionId, 'host', receivedOffer.payload.sdp, receivedOffer.payload.mac), true);
+    assert.equal(await verifySdpFingerprint(guestKeys.macKey, ready.sessionId, 'host', receivedOffer.payload.sdp, receivedOffer.payload.mac), true);
 
-    const answerMac = signSdpFingerprint(keys.macKey, ready.sessionId, 'guest', guestSdp);
+    const answerMac = await signSdpFingerprint(guestKeys.macKey, ready.sessionId, 'guest', guestSdp, receivedOffer.payload.sdp);
     guest.send({ type: 'signal', sessionId: ready.sessionId, payload: { type: 'answer', sdp: guestSdp, mac: answerMac } });
     const receivedAnswer = await host.next('signal');
-    assert.equal(verifySdpFingerprint(keys.macKey, ready.sessionId, 'guest', receivedAnswer.payload.sdp, receivedAnswer.payload.mac), true);
+    assert.equal(await verifySdpFingerprint(hostKeys.macKey, ready.sessionId, 'guest', receivedAnswer.payload.sdp, receivedAnswer.payload.mac, hostSdp), true);
 
     pairLatencies.push(performance.now() - start);
   }));
@@ -105,25 +114,29 @@ try {
   }
 
   const mem = process.memoryUsage();
+  if (mem.rss > peakRss) peakRss = mem.rss;
   const heapUsedMb = Math.round((mem.heapUsed / (1024 * 1024)) * 100) / 100;
   const rssMb = Math.round((mem.rss / (1024 * 1024)) * 100) / 100;
+  const peakRssDeltaMb = Math.round(((peakRss - baselineRss) / (1024 * 1024)) * 100) / 100;
   const p95PairingMs = percentile(pairLatencies, 0.95);
 
   assert.equal(server.stats.sessionsPaired, PAIRS);
   assert.equal(server.stats.activeRooms, 0, 'Paired rooms must be reclaimed after signaling window');
   assert.equal(server.stats.internalErrors, 0);
+  assert.ok(peakRssDeltaMb < 100, `Expected signaling RSS delta below 100 MiB, got ${peakRssDeltaMb} MiB`);
 
   const report = {
     concurrentPairs: PAIRS,
-    scryptN: SCRYPT_N,
+    kdfIterations: KDF_ITERATIONS,
     registrationMs: { p50: percentile(regLatencies, 0.5), p95: percentile(regLatencies, 0.95), p99: percentile(regLatencies, 0.99) },
     pairingAndSignalingMs: { p50: percentile(pairLatencies, 0.5), p95: p95PairingMs, p99: percentile(pairLatencies, 0.99) },
-    memory: { heapUsedMb, rssMb },
+    memory: { heapUsedMb, rssMb, peakRssDeltaMb },
     stats: server.stats,
     horizontalScalingNeeded: p95PairingMs > 5000 || heapUsedMb > 384,
   };
   console.log(JSON.stringify(report));
 } finally {
+  clearInterval(rssSampler);
   for (const ws of sockets) ws.terminate();
   await server.close();
 }

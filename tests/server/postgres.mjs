@@ -84,13 +84,13 @@ try {
   assert.equal((await store.pool.query('SELECT * FROM devices WHERE device_id=$1', ['0'.repeat(32)])).rowCount, 0);
   assert.equal(await store.authenticate(original.deviceId, original.ownerToken), true);
   const origin = `chrome-extension://${'a'.repeat(32)}`;
-  server = createServer({ ...config, port: 0, scryptN: 1024 });
+  server = createServer({ ...config, port: 0 });
   const address = await server.listen();
   assert.equal((await fetch(`http://127.0.0.1:${address.port}/ready`)).status, 200);
   socket = new WebSocket(`ws://127.0.0.1:${address.port}/v1/connect`, { origin });
   await new Promise((done, fail) => { socket.once('open', done); socket.once('error', fail); });
   const response = new Promise((done, fail) => { const timer = setTimeout(() => fail(new Error('Authentication timeout')), 5000); socket.once('message', data => { clearTimeout(timer); done(JSON.parse(data)); }); });
-  socket.send(JSON.stringify({ type: 'host.open', ...original, password: 'Synthetic test password' }));
+  socket.send(JSON.stringify({ type: 'host.open', protocol: 6, ...original, salt: '0'.repeat(32), password: 'a'.repeat(64) }));
   assert.equal((await response).type, 'host.ready');
   console.log(JSON.stringify({ postgres: true, runtime: nativeBin ? 'native' : 'docker', sharedContract: true, persistence: true, restart: true, migration: true, dryRun: true, conflictRollback: true, originalCredentials: true }));
 } finally {

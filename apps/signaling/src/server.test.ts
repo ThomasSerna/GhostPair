@@ -4,13 +4,20 @@ import { join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { WebSocket } from 'ws';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { ServerSignalMessageSchema, type ClientSignalMessage, type ServerSignalMessage } from '@ghostpair/protocol';
+import { PROTOCOL_VERSION, ServerSignalMessageSchema, type ClientSignalMessage, type ServerSignalMessage } from '@ghostpair/protocol';
 import { createServer, type SignalingServer } from './server.js';
 import type { ServerConfig } from './config.js';
 import { Devices, type DeviceStore } from './devices.js';
 
 const origin = `chrome-extension://${'a'.repeat(32)}`;
-const password = 'GhostPair test password 937!';
+// Signaling only ever sees the client-derived authentication token and the public session salt.
+const password = 'a1'.repeat(32);
+const wrongPassword = 'e2'.repeat(32);
+const salt = '0123456789abcdef0123456789abcdef';
+type Identity = { deviceId: string; ownerToken: string };
+const hostOpen = (identity: Identity, overrides: Partial<Extract<ClientSignalMessage, { type: 'host.open' }>> = {}): ClientSignalMessage => ({ type: 'host.open', protocol: PROTOCOL_VERSION, ...identity, salt, password, ...overrides });
+const guestChallenge = (deviceId: string): ClientSignalMessage => ({ type: 'guest.challenge', protocol: PROTOCOL_VERSION, deviceId });
+const guestJoin = (deviceId: string, token = password): ClientSignalMessage => ({ type: 'guest.join', protocol: PROTOCOL_VERSION, deviceId, password: token });
 const offerSdp = `v=0\r\na=fingerprint:sha-256 ${'AA:'.repeat(31)}01\r\n`;
 const answerSdp = `v=0\r\na=fingerprint:sha-256 ${'BB:'.repeat(31)}02\r\n`;
 const servers: SignalingServer[] = [];
@@ -55,7 +62,7 @@ class Peer {
 }
 
 async function start(overrides: Partial<ServerConfig> = {}, store?: DeviceStore) {
-  const server = createServer({ databasePath: ':memory:', port: 0, scryptN: 1024, ...overrides }, store);
+  const server = createServer({ databasePath: ':memory:', port: 0, ...overrides }, store);
   servers.push(server);
   const address = await server.listen();
   const base = `http://127.0.0.1:${address.port}`;
@@ -67,8 +74,8 @@ async function start(overrides: Partial<ServerConfig> = {}, store?: DeviceStore)
       expect(response.status).toBe(201);
       return await response.json() as { deviceId: string; ownerToken: string };
     },
-    async connect(requestOrigin = origin) {
-      const socket = new WebSocket(`${base.replace('http:', 'ws:')}/v1/connect`, { origin: requestOrigin });
+    async connect(requestOrigin = origin, headers: Record<string, string> = {}) {
+      const socket = new WebSocket(`${base.replace('http:', 'ws:')}/v1/connect`, { origin: requestOrigin, headers });
       sockets.push(socket);
       const peer = new Peer(socket);
       await new Promise<void>((resolve, reject) => { socket.once('open', resolve); socket.once('error', reject); });
@@ -101,7 +108,7 @@ describe('signaling security and lifecycle', () => {
       expect(response.headers.get('vary')).toBe('Origin');
       const identity = await response.json() as { deviceId: string; ownerToken: string };
       const peer = await app.connect(accepted);
-      peer.send({ type: 'host.open', ...identity, password });
+      peer.send(hostOpen(identity));
       expect((await peer.next('host.ready')).deviceId).toBe(identity.deviceId);
     }
     expect(await (await fetch(`${app.base}/health`)).json()).toEqual({ status: 'ok' });
@@ -137,7 +144,7 @@ describe('signaling security and lifecycle', () => {
       expect(preflight.status).toBe(204);
       expect(preflight.headers.get('access-control-allow-origin')).toBe(accepted);
       const peer = await app.connect(accepted);
-      peer.send({ type: 'host.open', ...identity, password });
+      peer.send(hostOpen(identity));
       expect((await peer.next('host.ready')).deviceId).toBe(identity.deviceId);
     }
     for (const rejected of ['http://localhost.evil:8787', 'http://localhost:8787/path', 'https://localhost:8787', 'http://user@localhost:8787']) {
@@ -162,26 +169,25 @@ describe('signaling security and lifecycle', () => {
     db.close();
     const second = await start({ databasePath });
     const host = await second.connect();
-    host.send({ type: 'host.open', ...identity, password });
+    host.send(hostOpen(identity));
     expect((await host.next('host.ready')).deviceId).toBe(identity.deviceId);
   });
 
   it('authenticates both roles before forwarding signaling and permits only the host to end', async () => {
-    const password = 'Eight-42';
-    const app = await start();
+      const app = await start();
     const identity = await app.register();
     const host = await app.connect();
-    host.send({ type: 'host.open', ...identity, ownerToken: 'incorrect', password });
+    host.send(hostOpen(identity, { ownerToken: 'f'.repeat(64) }));
     expect((await host.next('error')).code).toBe('AUTH_FAILED');
-    host.send({ type: 'host.open', ...identity, password });
+    host.send(hostOpen(identity));
     const ready = await host.next('host.ready');
     const guest = await app.connect();
     guest.send({ type: 'signal', sessionId: ready.sessionId, payload: { type: 'offer', sdp: 'unauthenticated' } });
     expect((await guest.next('error')).code).toBe('FORBIDDEN');
-    guest.send({ type: 'guest.join', deviceId: identity.deviceId, password: 'incorrect password' });
+    guest.send(guestJoin(identity.deviceId, wrongPassword));
     expect((await guest.next('error')).code).toBe('AUTH_FAILED');
     expect(host.history.some((message) => message.type === 'paired' || message.type === 'signal')).toBe(false);
-    guest.send({ type: 'guest.join', deviceId: identity.deviceId, password });
+    guest.send(guestJoin(identity.deviceId));
     expect(await guest.next('paired')).toEqual({ type: 'paired', role: 'guest', sessionId: ready.sessionId });
     expect((await host.next('paired')).role).toBe('host');
     host.send({ type: 'signal', sessionId: ready.sessionId, payload: { type: 'offer', sdp: offerSdp } });
@@ -200,11 +206,11 @@ describe('signaling security and lifecycle', () => {
     const app = await start();
     const [firstIdentity, secondIdentity] = await Promise.all([app.register(), app.register()]);
     const [host, guest, otherHost] = await Promise.all([app.connect(), app.connect(), app.connect()]);
-    host.send({ type: 'host.open', ...firstIdentity, password });
+    host.send(hostOpen(firstIdentity));
     const ready = await host.next('host.ready');
-    otherHost.send({ type: 'host.open', ...secondIdentity, password });
+    otherHost.send(hostOpen(secondIdentity));
     const otherReady = await otherHost.next('host.ready');
-    guest.send({ type: 'guest.join', deviceId: firstIdentity.deviceId, password });
+    guest.send(guestJoin(firstIdentity.deviceId));
     await guest.next('paired'); await host.next('paired');
     host.send({ type: 'signal', sessionId: otherReady.sessionId, payload: { type: 'offer', sdp: 'v=0' } });
     expect((await host.next('error')).code).toBe('FORBIDDEN');
@@ -224,9 +230,9 @@ describe('signaling security and lifecycle', () => {
     const app = await start();
     const identity = await app.register();
     const [host, firstGuest, secondGuest] = await Promise.all([app.connect(), app.connect(), app.connect()]);
-    host.send({ type: 'host.open', ...identity, password }); await host.next('host.ready');
-    firstGuest.send({ type: 'guest.join', deviceId: identity.deviceId, password });
-    secondGuest.send({ type: 'guest.join', deviceId: identity.deviceId, password });
+    host.send(hostOpen(identity)); await host.next('host.ready');
+    firstGuest.send(guestJoin(identity.deviceId));
+    secondGuest.send(guestJoin(identity.deviceId));
     await vi.waitUntil(() => firstGuest.history.length > 0 && secondGuest.history.length > 0, { timeout: 5000, interval: 2 });
     const both = [...firstGuest.history, ...secondGuest.history];
     expect(both.filter((message) => message.type === 'paired')).toHaveLength(1);
@@ -238,8 +244,8 @@ describe('signaling security and lifecycle', () => {
     const app = await start();
     const identity = await app.register();
     const [host, guest] = await Promise.all([app.connect(), app.connect()]);
-    host.send({ type: 'host.open', ...identity, password }); const ready = await host.next('host.ready');
-    guest.send({ type: 'guest.join', deviceId: identity.deviceId, password });
+    host.send(hostOpen(identity)); const ready = await host.next('host.ready');
+    guest.send(guestJoin(identity.deviceId));
     await guest.next('paired'); await host.next('paired');
     guest.socket.close();
     await vi.waitUntil(() => app.server.stats.activeRooms === 0, { timeout: 5000, interval: 2 });
@@ -251,33 +257,40 @@ describe('signaling security and lifecycle', () => {
     expect((await host.next('ended')).sessionId).toBe(ready.sessionId);
   });
 
-  it('rejects stale password work if the host closes while the guest authenticates', async () => {
-    const app = await start({ scryptN: 131_072 });
+  it('returns the per-session salt on guest.challenge and rejects guest.join if the host closes before it arrives', async () => {
+    const app = await start();
     const identity = await app.register();
     const [host, guest] = await Promise.all([app.connect(), app.connect()]);
-    host.send({ type: 'host.open', ...identity, password }); const ready = await host.next('host.ready');
-    guest.send({ type: 'guest.join', deviceId: identity.deviceId, password });
-    await vi.waitUntil(() => app.server.stats.activeAuth === 1, { timeout: 5000, interval: 2 });
+    guest.send(guestChallenge(identity.deviceId));
+    expect((await guest.next('error')).code).toBe('SESSION_UNAVAILABLE');
+    host.send(hostOpen(identity)); const ready = await host.next('host.ready');
+    guest.send(guestChallenge(identity.deviceId));
+    expect(await guest.next('guest.salt')).toEqual({ type: 'guest.salt', deviceId: identity.deviceId, salt });
     host.send({ type: 'host.close', sessionId: ready.sessionId });
     await host.next('ended');
+    guest.send(guestJoin(identity.deviceId));
     expect((await guest.next('error')).code).toBe('SESSION_UNAVAILABLE');
-    await vi.waitUntil(() => app.server.stats.activeAuth === 0, { timeout: 5000, interval: 2 });
     expect(app.server.stats.activeRooms).toBe(0);
     expect(app.server.stats.sessionsPaired).toBe(0);
     expect(guest.history.some((message) => message.type === 'paired')).toBe(false);
   });
 
   it('cannot create a room after its opening host disconnects', async () => {
-    const app = await start({ scryptN: 131_072 });
+    const store = new Devices(':memory:'), lookup = Promise.withResolvers<boolean>();
+    const originalAuth = store.authenticate.bind(store);
+    store.authenticate = vi.fn().mockImplementationOnce(() => lookup.promise).mockImplementation(originalAuth);
+    const app = await start({}, store);
     const identity = await app.register();
     const host = await app.connect();
-    host.send({ type: 'host.open', ...identity, password });
+    host.send(hostOpen(identity));
     await vi.waitUntil(() => app.server.stats.activeAuth === 1, { timeout: 5000, interval: 2 });
     host.socket.terminate();
-    await vi.waitUntil(() => app.server.stats.activeConnections === 0 && app.server.stats.activeAuth === 0, { timeout: 5000, interval: 2 });
+    await vi.waitUntil(() => app.server.stats.activeConnections === 0, { timeout: 5000, interval: 2 });
+    lookup.resolve(true);
+    await vi.waitUntil(() => app.server.stats.activeAuth === 0, { timeout: 5000, interval: 2 });
     expect(app.server.stats.activeRooms).toBe(0);
     const replacement = await app.connect();
-    replacement.send({ type: 'host.open', ...identity, password });
+    replacement.send(hostOpen(identity));
     expect((await replacement.next('host.ready')).deviceId).toBe(identity.deviceId);
   });
 
@@ -287,11 +300,11 @@ describe('signaling security and lifecycle', () => {
     expect((await fetch(`${app.base}/v1/devices`, { method: 'POST', headers: { Origin: origin } })).status).toBe(429);
     const peer = await app.connect();
     for (let i = 0; i < 2; i += 1) {
-      peer.send({ type: 'guest.join', deviceId: identity.deviceId, password });
+      peer.send(guestJoin(identity.deviceId));
       expect((await peer.next('error')).code).toBe('SESSION_UNAVAILABLE');
     }
     const another = await app.connect();
-    another.send({ type: 'guest.join', deviceId: identity.deviceId, password });
+    another.send(guestJoin(identity.deviceId));
     expect((await another.next('error')).code).toBe('RATE_LIMITED');
     peer.send({ type: 'ping', id: 'over-limit' });
     expect((await peer.next('error')).code).toBe('RATE_LIMITED');
@@ -303,22 +316,26 @@ describe('signaling security and lifecycle', () => {
     const app = await start({ waitingRoomTimeoutMs: 50 });
     const identity = await app.register();
     const host = await app.connect();
-    host.send({ type: 'host.open', ...identity, password }); const first = await host.next('host.ready');
+    host.send(hostOpen(identity)); const first = await host.next('host.ready');
     expect((await host.next('ended')).sessionId).toBe(first.sessionId);
-    host.send({ type: 'host.open', ...identity, password });
+    host.send(hostOpen(identity));
     expect((await host.next('host.ready')).sessionId).not.toBe(first.sessionId);
   });
 
-  it('caps expensive password work globally and releases capacity after completion', async () => {
-    const app = await start({ scryptN: 131_072, maxAuthConcurrency: 1 });
+  it('caps concurrent host authentications globally and releases capacity after completion', async () => {
+    const store = new Devices(':memory:'), lookup = Promise.withResolvers<boolean>();
+    const originalAuth = store.authenticate.bind(store);
+    store.authenticate = vi.fn().mockImplementationOnce(() => lookup.promise).mockImplementation(originalAuth);
+    const app = await start({ maxAuthConcurrency: 1, maxAuthQueue: 0 }, store);
     const [one, two] = await Promise.all([app.register(), app.register()]);
     const [first, second] = await Promise.all([app.connect(), app.connect()]);
-    first.send({ type: 'host.open', ...one, password });
+    first.send(hostOpen(one));
     await vi.waitUntil(() => app.server.stats.activeAuth === 1, { timeout: 5000, interval: 2 });
-    second.send({ type: 'host.open', ...two, password });
+    second.send(hostOpen(two));
     expect((await second.next('error')).code).toBe('SERVER_BUSY');
+    lookup.resolve(true);
     await first.next('host.ready');
-    second.send({ type: 'host.open', ...two, password });
+    second.send(hostOpen(two));
     expect((await second.next('host.ready')).deviceId).toBe(two.deviceId);
     expect(app.server.stats.activeAuth).toBe(0);
   });
@@ -328,10 +345,10 @@ describe('signaling security and lifecycle', () => {
     const [one, two] = await Promise.all([app.register(), app.register()]);
     expect((await fetch(`${app.base}/v1/devices`, { method: 'POST', headers: { Origin: origin } })).status).toBe(503);
     const [first, second] = await Promise.all([app.connect(), app.connect()]);
-    first.send({ type: 'host.open', ...one, password }); await first.next('host.ready');
-    second.send({ type: 'host.open', ...one, password });
+    first.send(hostOpen(one)); await first.next('host.ready');
+    second.send(hostOpen(one));
     expect((await second.next('error')).code).toBe('HOST_ALREADY_ACTIVE');
-    second.send({ type: 'host.open', ...two, password });
+    second.send(hostOpen(two));
     expect((await second.next('error')).code).toBe('SERVER_BUSY');
     expect(app.server.stats.activeRooms).toBe(1);
   });
@@ -347,11 +364,11 @@ describe('signaling security and lifecycle', () => {
 it('reserves authentication capacity before asynchronous identity lookup and rejects disconnected completions', async () => {
   const store = new Devices(':memory:'), lookup = Promise.withResolvers<boolean>();
   store.authenticate = vi.fn(() => lookup.promise);
-  const app = await start({ maxAuthConcurrency: 1 }, store);
+  const app = await start({ maxAuthConcurrency: 1, maxAuthQueue: 0 }, store);
   const identity = await app.register(), first = await app.connect(), second = await app.connect();
-  first.send({ type: 'host.open', ...identity, password });
+  first.send(hostOpen(identity));
   await vi.waitUntil(() => app.server.stats.activeAuth === 1, { timeout: 5000, interval: 2 });
-  second.send({ type: 'host.open', ...identity, password });
+  second.send(hostOpen(identity));
   expect((await second.next('error')).code).toBe('SERVER_BUSY');
   expect(store.authenticate).toHaveBeenCalledTimes(1);
   first.socket.close(); await vi.waitUntil(() => first.socket.readyState === WebSocket.CLOSED, { timeout: 5000, interval: 2 });
@@ -362,7 +379,7 @@ it('reserves authentication capacity before asynchronous identity lookup and rej
 it('does not resurrect authentication after the socket timeout', async () => {
   const store = new Devices(':memory:'), lookup = Promise.withResolvers<boolean>(); store.authenticate = () => lookup.promise;
   const app = await start({ authTimeoutMs: 75 }, store), identity = await app.register(), peer = await app.connect();
-  peer.send({ type: 'host.open', ...identity, password });
+  peer.send(hostOpen(identity));
   await vi.waitUntil(() => peer.socket.readyState === WebSocket.CLOSED, { timeout: 5000, interval: 2 });
   lookup.resolve(true); await vi.waitUntil(() => app.server.stats.activeAuth === 0, { timeout: 5000, interval: 2 });
   expect(app.server.stats.activeRooms).toBe(0);
@@ -372,7 +389,7 @@ it('drains pending identity work before closing storage on shutdown', async () =
   const store = new Devices(':memory:'), lookup = Promise.withResolvers<boolean>(); store.authenticate = () => lookup.promise;
   const close = vi.spyOn(store, 'close');
   const app = await start({}, store), identity = await app.register(), peer = await app.connect();
-  peer.send({ type: 'host.open', ...identity, password }); await vi.waitUntil(() => app.server.stats.activeAuth === 1, { timeout: 5000, interval: 2 });
+  peer.send(hostOpen(identity)); await vi.waitUntil(() => app.server.stats.activeAuth === 1, { timeout: 5000, interval: 2 });
   const stopping = app.server.close(); expect(close).not.toHaveBeenCalled();
   lookup.resolve(true); await stopping;
   expect(close).toHaveBeenCalledOnce(); expect(app.server.stats.activeRooms).toBe(0);
@@ -391,9 +408,9 @@ it('reports storage outages without leaking errors and recovers registration and
   check.mockRestore(); register.mockRestore();
   const identity = await app.register();
   const auth = vi.spyOn(store, 'authenticate').mockRejectedValueOnce(new Error('private credentials'));
-  const peer = await app.connect(); peer.send({ type: 'host.open', ...identity, password });
+  const peer = await app.connect(); peer.send(hostOpen(identity));
   expect((await peer.next('error')).code).toBe('SERVER_BUSY');
-  peer.send({ type: 'host.open', ...identity, password }); expect((await peer.next('host.ready')).deviceId).toBe(identity.deviceId);
+  peer.send(hostOpen(identity)); expect((await peer.next('host.ready')).deviceId).toBe(identity.deviceId);
   expect(auth).toHaveBeenCalledTimes(2);
   await new Promise(done => setTimeout(done, 1050)); expect((await fetch(app.base + '/ready')).status).toBe(200);
 });
@@ -418,9 +435,9 @@ it('enforces DTLS fingerprint presence, prevents fingerprint reflection, and cap
   const app = await start({ maxIceCandidatesPerPeer: 2 });
   const identity = await app.register();
   const [host, guest] = await Promise.all([app.connect(), app.connect()]);
-  host.send({ type: 'host.open', ...identity, password });
+  host.send(hostOpen(identity));
   const ready = await host.next('host.ready');
-  guest.send({ type: 'guest.join', deviceId: identity.deviceId, password });
+  guest.send(guestJoin(identity.deviceId));
   await guest.next('paired'); await host.next('paired');
 
   // Reject answer before offer and offer without a valid DTLS fingerprint.
@@ -453,34 +470,92 @@ it('enforces DTLS fingerprint presence, prevents fingerprint reflection, and cap
 });
 
 it('queues burst authentications in FIFO order and drops disconnected queued clients', async () => {
-  const app = await start({ scryptN: 32_768, maxAuthConcurrency: 1, maxAuthQueue: 2 });
+  const store = new Devices(':memory:'), gate = Promise.withResolvers<void>();
+  const originalAuth = store.authenticate.bind(store);
+  store.authenticate = vi.fn(async (deviceId: string, ownerToken: string) => {
+    await gate.promise;
+    return originalAuth(deviceId, ownerToken);
+  });
+  const app = await start({ maxAuthConcurrency: 1, maxAuthQueue: 2 }, store);
   const [one, two, three, four] = await Promise.all([app.register(), app.register(), app.register(), app.register()]);
   const [c1, c2, c3, c4] = await Promise.all([app.connect(), app.connect(), app.connect(), app.connect()]);
-  c1.send({ type: 'host.open', ...one, password });
+  c1.send(hostOpen(one));
   await vi.waitUntil(() => app.server.stats.activeAuth === 1, { timeout: 5000, interval: 2 });
-  c2.send({ type: 'host.open', ...two, password });
-  c3.send({ type: 'host.open', ...three, password });
-  c4.send({ type: 'host.open', ...four, password });
+  c2.send(hostOpen(two));
+  c3.send(hostOpen(three));
+  c4.send(hostOpen(four));
   expect((await c4.next('error')).code).toBe('SERVER_BUSY');
   c2.socket.terminate();
+  await vi.waitUntil(() => c2.socket.readyState === WebSocket.CLOSED, { timeout: 5000, interval: 2 });
+  gate.resolve();
   expect((await c1.next('host.ready')).deviceId).toBe(one.deviceId);
   expect((await c3.next('host.ready')).deviceId).toBe(three.deviceId);
   await vi.waitUntil(() => app.server.stats.activeAuth === 0, { timeout: 5000, interval: 2 });
   expect(app.server.stats.activeRooms).toBe(2);
 });
 
+it('rejects outdated or missing handshake protocol versions with INCOMPATIBLE_PROTOCOL without closing the socket', async () => {
+  const app = await start({ maxProtocolErrorsPerSocket: 1 });
+  const identity = await app.register();
+  const peer = await app.connect();
+  for (const outdated of [
+    { type: 'host.open', deviceId: identity.deviceId, ownerToken: identity.ownerToken, password: 'Eight-42' },
+    { type: 'host.open', protocol: PROTOCOL_VERSION - 1, ...identity, salt, password },
+    { type: 'guest.challenge', protocol: PROTOCOL_VERSION - 1, deviceId: identity.deviceId },
+    { type: 'guest.join', protocol: PROTOCOL_VERSION + 1, deviceId: identity.deviceId, password },
+  ]) {
+    peer.socket.send(JSON.stringify(outdated));
+    const err = await peer.next('error');
+    expect(err.code).toBe('INCOMPATIBLE_PROTOCOL');
+    expect(err.message).toContain('Update the extension');
+  }
+  expect(app.server.stats.protocolErrors).toBe(0);
+  peer.send(hostOpen(identity));
+  expect((await peer.next('host.ready')).deviceId).toBe(identity.deviceId);
+});
+
+it('scopes guest rate limits per IP+device so third parties cannot lock out the host or other guests', async () => {
+  const app = await start({ trustProxy: true, authDeviceLimit: 2, authIpLimit: 10 });
+  const identity = await app.register();
+  const host = await app.connect(origin, { 'X-Forwarded-For': '192.0.2.10' });
+  host.send(hostOpen(identity));
+  const ready = await host.next('host.ready');
+
+  const attacker = await app.connect(origin, { 'X-Forwarded-For': '203.0.113.99' });
+  for (let i = 0; i < 2; i++) {
+    attacker.send(guestJoin(identity.deviceId, wrongPassword));
+    expect((await attacker.next('error')).code).toBe('AUTH_FAILED');
+  }
+  attacker.send(guestJoin(identity.deviceId, wrongPassword));
+  expect((await attacker.next('error')).code).toBe('RATE_LIMITED');
+
+  // Another guest IP can still fetch the salt and pair immediately.
+  const legitimateGuest = await app.connect(origin, { 'X-Forwarded-For': '198.51.100.42' });
+  legitimateGuest.send(guestChallenge(identity.deviceId));
+  expect((await legitimateGuest.next('guest.salt')).salt).toBe(salt);
+  legitimateGuest.send(guestJoin(identity.deviceId));
+  expect((await legitimateGuest.next('paired')).sessionId).toBe(ready.sessionId);
+  await host.next('paired');
+
+  // The host can also close and reopen its room without being throttled by the attacker's attempts.
+  host.send({ type: 'host.close', sessionId: ready.sessionId });
+  await host.next('ended');
+  host.send(hostOpen(identity));
+  expect((await host.next('host.ready')).deviceId).toBe(identity.deviceId);
+});
+
 it('releases paired rooms after the signaling window without ending the direct session', async () => {
   const app = await start({ pairedRoomTimeoutMs: 60, maxRooms: 1 });
   const [one, two] = await Promise.all([app.register(), app.register()]);
   const [host, guest, nextHost] = await Promise.all([app.connect(), app.connect(), app.connect()]);
-  host.send({ type: 'host.open', ...one, password });
+  host.send(hostOpen(one));
   const ready = await host.next('host.ready');
-  guest.send({ type: 'guest.join', deviceId: one.deviceId, password });
+  guest.send(guestJoin(one.deviceId));
   await guest.next('paired'); await host.next('paired');
   await vi.waitUntil(() => app.server.stats.activeRooms === 0, { timeout: 5000, interval: 5 });
   expect(host.history.some(m => m.type === 'ended')).toBe(false);
   expect(guest.history.some(m => m.type === 'ended')).toBe(false);
-  nextHost.send({ type: 'host.open', ...two, password });
+  nextHost.send(hostOpen(two));
   expect((await nextHost.next('host.ready')).deviceId).toBe(two.deviceId);
   host.send({ type: 'host.close', sessionId: ready.sessionId });
   expect((await host.next('ended')).sessionId).toBe(ready.sessionId);

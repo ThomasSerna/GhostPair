@@ -1,17 +1,15 @@
-import { randomBytes, scrypt, timingSafeEqual, type ScryptOptions } from 'node:crypto';
+import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { createServer as createHttpServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { isIP, type AddressInfo } from 'node:net';
-import { promisify } from 'node:util';
 import { WebSocket, WebSocketServer, type RawData } from 'ws';
-import { ClientSignalMessageSchema, extractSdpFingerprints, isRelaySignal, type ClientSignalMessage, type ServerSignalMessage } from '@ghostpair/protocol';
+import { ClientSignalMessageSchema, PROTOCOL_VERSION, extractSdpFingerprints, isRelaySignal, type ClientSignalMessage, type ServerSignalMessage } from '@ghostpair/protocol';
 import { defaultConfig, type ServerConfig } from './config.js';
 import { Devices, type DeviceStore } from './devices.js';
 import { PostgresDevices } from './postgres-devices.js';
 import { RateLimit } from './rate-limit.js';
 
 type Phase = 'idle' | 'authenticating' | 'hosting' | 'paired' | 'detached';
-const scryptAsync = promisify<string, Buffer, number, ScryptOptions, Buffer>(scrypt);
 interface Client {
   socket: WebSocket;
   ip: string;
@@ -19,7 +17,6 @@ interface Client {
   role?: 'host' | 'guest';
   sessionId?: string;
   room?: Room;
-  pendingDevice?: string;
   authTimer?: NodeJS.Timeout;
   alive: boolean;
   authAttempt?: symbol;
@@ -31,9 +28,11 @@ interface Room {
   sessionId: string;
   host: Client;
   guest?: Client;
-  pendingGuest?: Client;
-  salt: Buffer;
-  passwordHash: Buffer;
+  /** Public per-session value used by both peers to derive their keys. */
+  kdfSalt: string;
+  verifierSalt: Buffer;
+  /** Keyed hash of the client-derived authentication token. */
+  verifier: Buffer;
   paired: boolean;
   timer: NodeJS.Timeout;
   hostFingerprints?: string[];
@@ -50,20 +49,17 @@ interface QueuedAuth {
 }
 
 export function createServer(overrides: Partial<ServerConfig> = {}, store?: DeviceStore) {
-  const config: ServerConfig = {
-    ...defaultConfig,
-    ...overrides,
-    maxAuthQueue: overrides.maxAuthQueue ?? (overrides.maxAuthConcurrency !== undefined ? 0 : defaultConfig.maxAuthQueue),
-  };
+  const config: ServerConfig = { ...defaultConfig, ...overrides };
   const devices = store ?? (config.databaseUrl !== undefined ? new PostgresDevices({ ...config, databaseUrl: config.databaseUrl }) : new Devices(config.databasePath));
   const clients = new Set<Client>();
   const rooms = new Map<string, Room>();
-  const openingHosts = new Map<string, Client>();
   const authQueue: QueuedAuth[] = [];
   const registrationRate = new RateLimit(config.registrationLimit, config.registrationWindowMs);
   const upgradeIpRate = new RateLimit(config.upgradeIpLimit, config.upgradeWindowMs);
   const authIpRate = new RateLimit(config.authIpLimit, config.authWindowMs);
-  const authDeviceRate = new RateLimit(config.authDeviceLimit, config.authWindowMs);
+  // Guests are limited per source and target so a third party cannot lock out the public code for everyone.
+  const guestAttemptRate = new RateLimit(config.authDeviceLimit, config.authWindowMs);
+  const hostDeviceRate = new RateLimit(config.authDeviceLimit, config.authWindowMs);
   const counters = { registrations: 0, connections: 0, authFailures: 0, rateLimited: 0, protocolErrors: 0, sessionsPaired: 0, signalingMessages: 0, internalErrors: 0 };
   let activeAuth = 0;
   let stopping = false;
@@ -229,7 +225,6 @@ export function createServer(overrides: Partial<ServerConfig> = {}, store?: Devi
     client.room = undefined;
     client.role = undefined;
     client.sessionId = undefined;
-    client.pendingDevice = undefined;
     if (clients.has(client) && client.socket.readyState === WebSocket.OPEN) startAuthTimer(client);
   }
 
@@ -237,14 +232,8 @@ export function createServer(overrides: Partial<ServerConfig> = {}, store?: Devi
     if (rooms.get(room.deviceId) !== room) return;
     rooms.delete(room.deviceId);
     clearTimeout(room.timer);
-    room.passwordHash.fill(0);
-    room.salt.fill(0);
-    const pending = room.pendingGuest;
-    room.pendingGuest = undefined;
-    if (pending) {
-      resetClient(pending);
-      error(pending, 'SESSION_UNAVAILABLE', 'The session is no longer available.');
-    }
+    room.verifier.fill(0);
+    room.verifierSalt.fill(0);
     for (const member of [room.host, room.guest]) {
       if (!member) continue;
       if (notify) {
@@ -263,21 +252,21 @@ export function createServer(overrides: Partial<ServerConfig> = {}, store?: Devi
     client.authAttempt = undefined;
     clients.delete(client);
     clearTimeout(client.authTimer);
-    if (client.pendingDevice && openingHosts.get(client.pendingDevice) === client) openingHosts.delete(client.pendingDevice);
     const room = client.room;
-    if (room?.pendingGuest === client) room.pendingGuest = undefined;
     if (room && (room.host === client || room.guest === client)) removeRoom(room, false, 'Signaling disconnected.');
     client.room = undefined;
   }
 
-  function hashPassword(password: string, salt: Buffer): Promise<Buffer> {
-    return scryptAsync(password, salt, 32, { N: config.scryptN, r: config.scryptR, p: config.scryptP, maxmem: 256 * 1024 * 1024 });
+  /** The token is already a 256-bit KDF output, so a keyed fast hash is enough and uses no memory. */
+  function verifierOf(token: string, salt: Buffer): Buffer {
+    return createHmac('sha256', salt).update(token, 'utf8').digest();
   }
 
-  async function beginAuth(client: Client, deviceId: string): Promise<symbol | undefined> {
+  /** Reserves a slot for the only asynchronous, database-backed flow: host registration lookup. */
+  async function beginAuth(client: Client): Promise<symbol | undefined> {
     if (stopping || !clients.has(client) || client.socket.readyState !== WebSocket.OPEN) return;
     if (client.phase !== 'idle') { error(client, 'INVALID_STATE', 'This connection already participates in a session.'); return; }
-    if (!authIpRate.allow(client.ip) || !authDeviceRate.allow(deviceId)) {
+    if (!authIpRate.allow(client.ip)) {
       counters.rateLimited += 1;
       error(client, 'RATE_LIMITED', 'Too many attempts. Try again later.'); return;
     }
@@ -302,7 +291,7 @@ export function createServer(overrides: Partial<ServerConfig> = {}, store?: Devi
     return !stopping && clients.has(client) && client.socket.readyState === WebSocket.OPEN && client.phase === 'authenticating' && client.authAttempt === attempt;
   }
   async function openHost(client: Client, message: Extract<ClientSignalMessage, { type: 'host.open' }>): Promise<void> {
-    const attempt = await beginAuth(client, message.deviceId); if (!attempt) return;
+    const attempt = await beginAuth(client); if (!attempt) return;
     try {
       const authenticated = await devices.authenticate(message.deviceId, message.ownerToken);
       if (!currentAttempt(client, attempt)) return;
@@ -310,34 +299,22 @@ export function createServer(overrides: Partial<ServerConfig> = {}, store?: Devi
         counters.authFailures += 1; client.phase = 'idle';
         error(client, 'AUTH_FAILED', 'Could not authenticate the device.'); return;
       }
-      if (rooms.has(message.deviceId) || openingHosts.has(message.deviceId)) {
+      // Only the authenticated owner is limited per device, so third parties cannot lock the host out.
+      if (!hostDeviceRate.allow(message.deviceId)) {
+        counters.rateLimited += 1; client.phase = 'idle';
+        error(client, 'RATE_LIMITED', 'Too many attempts. Try again later.'); return;
+      }
+      // Nothing below awaits, so the room check and insertion are atomic.
+      if (rooms.has(message.deviceId)) {
         client.phase = 'idle'; error(client, 'HOST_ALREADY_ACTIVE', 'This device already has a session.'); return;
       }
-      if (rooms.size + openingHosts.size >= config.maxRooms) {
+      if (rooms.size >= config.maxRooms) {
         client.phase = 'idle'; error(client, 'SERVER_BUSY', 'There is no capacity for another session.'); return;
       }
-      client.pendingDevice = message.deviceId;
-      openingHosts.set(message.deviceId, client);
-      const salt = randomBytes(16);
-      let passwordHash: Buffer;
-      try { passwordHash = await hashPassword(message.password, salt); }
-      catch {
-        salt.fill(0);
-        if (currentAttempt(client, attempt)) {
-          if (openingHosts.get(message.deviceId) === client) openingHosts.delete(message.deviceId);
-          client.pendingDevice = undefined; client.phase = 'idle';
-          error(client, 'SERVER_BUSY', 'Could not start the session.');
-        }
-        counters.internalErrors += 1; return;
-      }
-      if (!currentAttempt(client, attempt) || openingHosts.get(message.deviceId) !== client) {
-        passwordHash.fill(0); salt.fill(0); return;
-      }
-      openingHosts.delete(message.deviceId);
-      client.pendingDevice = undefined;
+      const verifierSalt = randomBytes(16);
       const sessionId = randomBytes(16).toString('hex');
       const room: Room = {
-        deviceId: message.deviceId, sessionId, host: client, salt, passwordHash, paired: false,
+        deviceId: message.deviceId, sessionId, host: client, kdfSalt: message.salt, verifierSalt, verifier: verifierOf(message.password, verifierSalt), paired: false,
         offerSent: false, answerSent: false, hostIceCount: 0, guestIceCount: 0,
         timer: setTimeout(() => removeRoom(room, true, 'The connection waiting period expired.'), config.waitingRoomTimeoutMs),
       };
@@ -355,52 +332,57 @@ export function createServer(overrides: Partial<ServerConfig> = {}, store?: Devi
     }
   }
 
-  async function joinGuest(client: Client, message: Extract<ClientSignalMessage, { type: 'guest.join' }>): Promise<void> {
-    const attempt = await beginAuth(client, message.deviceId); if (!attempt) return;
-    try {
-      const room = rooms.get(message.deviceId);
-      if (!room || room.paired || room.pendingGuest) {
-        client.phase = 'idle'; error(client, 'SESSION_UNAVAILABLE', 'The session is unavailable.'); return;
-      }
-      room.pendingGuest = client;
-      client.room = room;
-      let hash: Buffer;
-      try { hash = await hashPassword(message.password, room.salt); }
-      catch {
-        if (room.pendingGuest === client) room.pendingGuest = undefined;
-        if (currentAttempt(client, attempt) && client.room === room) { client.room = undefined; client.phase = 'idle'; }
-        counters.internalErrors += 1;
-        error(client, 'SERVER_BUSY', 'Could not verify the password.'); return;
-      }
-      const current = currentAttempt(client, attempt) && rooms.get(message.deviceId) === room && room.pendingGuest === client && room.host.socket.readyState === WebSocket.OPEN;
-      if (!current) { hash.fill(0); return; }
-      room.pendingGuest = undefined;
-      const matches = timingSafeEqual(hash, room.passwordHash);
-      hash.fill(0);
-      if (!matches) {
-        client.room = undefined; client.phase = 'idle'; counters.authFailures += 1;
-        error(client, 'AUTH_FAILED', 'Could not authenticate the connection.'); return;
-      }
-      room.paired = true;
-      room.guest = client;
-      room.passwordHash.fill(0); room.salt.fill(0);
-      clearTimeout(room.timer); clearTimeout(client.authTimer);
-      room.timer = setTimeout(() => removeRoom(room, false, 'Signaling window completed.'), config.pairedRoomTimeoutMs);
-      room.timer.unref();
-      client.phase = 'paired'; client.role = 'guest'; client.sessionId = room.sessionId;
-      room.host.phase = 'paired';
-      counters.sessionsPaired += 1;
-      send(client, { type: 'paired', role: 'guest', sessionId: room.sessionId });
-      send(room.host, { type: 'paired', role: 'host', sessionId: room.sessionId });
-    } catch {
-      counters.internalErrors++;
-      if (currentAttempt(client, attempt)) { client.phase = 'idle'; error(client, 'SERVER_BUSY', 'Identity storage is unavailable. Try again later.'); }
-    } finally {
-      releaseAuthSlot();
-      if (client.authAttempt === attempt) client.authAttempt = undefined;
-    }
+  /** A guest handshake is only valid on a live, idle connection. */
+  function canStartGuestFlow(client: Client): boolean {
+    if (stopping || !clients.has(client) || client.socket.readyState !== WebSocket.OPEN) return false;
+    if (client.phase !== 'idle') { error(client, 'INVALID_STATE', 'This connection already participates in a session.'); return false; }
+    return true;
   }
 
+  /** Returns the public per-session salt so the guest can derive its keys before joining. */
+  function challengeGuest(client: Client, message: Extract<ClientSignalMessage, { type: 'guest.challenge' }>): void {
+    if (!canStartGuestFlow(client)) return;
+    if (!authIpRate.allow(client.ip)) {
+      counters.rateLimited += 1;
+      error(client, 'RATE_LIMITED', 'Too many attempts. Try again later.'); return;
+    }
+    const room = rooms.get(message.deviceId);
+    if (!room || room.paired || room.host.socket.readyState !== WebSocket.OPEN) {
+      error(client, 'SESSION_UNAVAILABLE', 'The session is unavailable.'); return;
+    }
+    send(client, { type: 'guest.salt', deviceId: message.deviceId, salt: room.kdfSalt });
+  }
+
+  /** Synchronous: no await separates the room check from pairing, so no stale-room races exist. */
+  function joinGuest(client: Client, message: Extract<ClientSignalMessage, { type: 'guest.join' }>): void {
+    if (!canStartGuestFlow(client)) return;
+    if (!guestAttemptRate.allow(`${client.ip}|${message.deviceId}`)) {
+      counters.rateLimited += 1;
+      error(client, 'RATE_LIMITED', 'Too many attempts. Try again later.'); return;
+    }
+    const room = rooms.get(message.deviceId);
+    if (!room || room.paired || room.host.socket.readyState !== WebSocket.OPEN) {
+      error(client, 'SESSION_UNAVAILABLE', 'The session is unavailable.'); return;
+    }
+    const candidate = verifierOf(message.password, room.verifierSalt);
+    const matches = timingSafeEqual(candidate, room.verifier);
+    candidate.fill(0);
+    if (!matches) {
+      counters.authFailures += 1;
+      error(client, 'AUTH_FAILED', 'Could not authenticate the connection.'); return;
+    }
+    room.paired = true;
+    room.guest = client;
+    room.verifier.fill(0); room.verifierSalt.fill(0);
+    clearTimeout(room.timer); clearTimeout(client.authTimer);
+    room.timer = setTimeout(() => removeRoom(room, false, 'Signaling window completed.'), config.pairedRoomTimeoutMs);
+    room.timer.unref();
+    client.phase = 'paired'; client.role = 'guest'; client.sessionId = room.sessionId; client.room = room;
+    room.host.phase = 'paired';
+    counters.sessionsPaired += 1;
+    send(client, { type: 'paired', role: 'guest', sessionId: room.sessionId });
+    send(room.host, { type: 'paired', role: 'host', sessionId: room.sessionId });
+  }
   async function handleMessage(client: Client, data: RawData, binary: boolean): Promise<void> {
     if (!client.messages.allow('messages')) {
       counters.rateLimited += 1;
@@ -409,6 +391,11 @@ export function createServer(overrides: Partial<ServerConfig> = {}, store?: Devi
     let input: unknown;
     try { if (binary) throw new Error('Binary signaling'); input = JSON.parse(data.toString()); }
     catch { counters.protocolErrors += 1; error(client, 'INVALID_MESSAGE', 'Invalid message.'); client.socket.close(1008, 'Invalid message'); return; }
+    // Older clients cannot parse the v6 handshake; tell them to update instead of failing validation or authentication.
+    const opening = input !== null && typeof input === 'object' ? input as { type?: unknown; protocol?: unknown } : undefined;
+    if (opening && ['host.open', 'guest.challenge', 'guest.join'].includes(String(opening.type)) && opening.protocol !== PROTOCOL_VERSION) {
+      error(client, 'INCOMPATIBLE_PROTOCOL', 'This GhostPair version is outdated. Update the extension on both devices.'); return;
+    }
     const parsed = ClientSignalMessageSchema.safeParse(input);
     if (!parsed.success) {
       counters.protocolErrors += 1;
@@ -419,7 +406,8 @@ export function createServer(overrides: Partial<ServerConfig> = {}, store?: Devi
     const message = parsed.data;
     if (message.type === 'ping') { send(client, { type: 'pong', id: message.id }); return; }
     if (message.type === 'host.open') { await openHost(client, message); return; }
-    if (message.type === 'guest.join') { await joinGuest(client, message); return; }
+    if (message.type === 'guest.challenge') { challengeGuest(client, message); return; }
+    if (message.type === 'guest.join') { joinGuest(client, message); return; }
     if (message.sessionId !== client.sessionId) { error(client, 'FORBIDDEN', 'The session does not belong to this connection.'); return; }
     if (message.type === 'host.close') {
       if (client.role !== 'host') { error(client, 'FORBIDDEN', 'Only the host can end the session.'); return; }

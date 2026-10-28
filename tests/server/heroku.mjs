@@ -75,7 +75,7 @@ async function authenticate(identity, requestedPort) {
     const timer = setTimeout(() => fail(new Error('Authentication timed out')), 10000);
     socket.once('message', data => { clearTimeout(timer); done(JSON.parse(data)); });
   });
-  socket.send(JSON.stringify({ type: 'host.open', ...identity, password: 'Synthetic smoke password' }));
+  socket.send(JSON.stringify({ type: 'host.open', protocol: 6, ...identity, salt: '0'.repeat(32), password: 'a'.repeat(64) }));
   assert.equal((await response).type, 'host.ready');
   socket.terminate(); socket = undefined;
 }

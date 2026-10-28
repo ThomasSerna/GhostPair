@@ -31,9 +31,6 @@ export interface ServerConfig {
   authWindowMs: number;
   socketMessageLimit: number;
   socketMessageWindowMs: number;
-  scryptN: number;
-  scryptR: number;
-  scryptP: number;
 }
 
 export const defaultConfig: ServerConfig = {
@@ -65,10 +62,16 @@ export const defaultConfig: ServerConfig = {
   authWindowMs: 60_000,
   socketMessageLimit: 120,
   socketMessageWindowMs: 10_000,
-  scryptN: 131_072,
-  scryptR: 8,
-  scryptP: 1,
 };
+
+function nonNegativeInt(value: string | undefined, fallback: number, name: string): number {
+  if (value === undefined) return fallback;
+  const number = Number(value);
+  if (!Number.isSafeInteger(number) || number < 0 || number > 2_147_483_647) {
+    throw new Error(`Invalid non-negative integer for ${name}`);
+  }
+  return number;
+}
 
 function positiveInt(value: string | undefined, fallback: number, name: string): number {
   if (value === undefined) return fallback;
@@ -95,7 +98,7 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): ServerConfi
     maxRooms: positiveInt(env.MAX_ROOMS, defaultConfig.maxRooms, 'MAX_ROOMS'),
     maxRegisteredDevices: positiveInt(env.MAX_REGISTERED_DEVICES, defaultConfig.maxRegisteredDevices, 'MAX_REGISTERED_DEVICES'),
     maxAuthConcurrency: positiveInt(env.MAX_AUTH_CONCURRENCY, defaultConfig.maxAuthConcurrency, 'MAX_AUTH_CONCURRENCY'),
-    maxAuthQueue: positiveInt(env.MAX_AUTH_QUEUE, defaultConfig.maxAuthQueue, 'MAX_AUTH_QUEUE'),
+    maxAuthQueue: nonNegativeInt(env.MAX_AUTH_QUEUE, defaultConfig.maxAuthQueue, 'MAX_AUTH_QUEUE'),
     pairedRoomTimeoutMs: positiveInt(env.PAIRED_ROOM_TIMEOUT_MS, defaultConfig.pairedRoomTimeoutMs, 'PAIRED_ROOM_TIMEOUT_MS'),
   };
   if (config.databaseUrl !== undefined) validatePostgresConfig({ ...config, databaseUrl: config.databaseUrl });
