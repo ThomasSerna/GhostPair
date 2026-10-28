@@ -507,7 +507,7 @@ it('rejects outdated or missing handshake protocol versions with INCOMPATIBLE_PR
     peer.socket.send(JSON.stringify(outdated));
     const err = await peer.next('error');
     expect(err.code).toBe('INCOMPATIBLE_PROTOCOL');
-    expect(err.message).toContain('Update the extension');
+    expect(err.message).toBe('Incompatible GhostPair versions. Update both extensions.');
   }
   expect(app.server.stats.protocolErrors).toBe(0);
   peer.send(hostOpen(identity));

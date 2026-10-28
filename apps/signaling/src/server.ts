@@ -394,7 +394,7 @@ export function createServer(overrides: Partial<ServerConfig> = {}, store?: Devi
     // Older clients cannot parse the v6 handshake; tell them to update instead of failing validation or authentication.
     const opening = input !== null && typeof input === 'object' ? input as { type?: unknown; protocol?: unknown } : undefined;
     if (opening && ['host.open', 'guest.challenge', 'guest.join'].includes(String(opening.type)) && opening.protocol !== PROTOCOL_VERSION) {
-      error(client, 'INCOMPATIBLE_PROTOCOL', 'This GhostPair version is outdated. Update the extension on both devices.'); return;
+      error(client, 'INCOMPATIBLE_PROTOCOL', 'Incompatible GhostPair versions. Update both extensions.'); return;
     }
     const parsed = ClientSignalMessageSchema.safeParse(input);
     if (!parsed.success) {

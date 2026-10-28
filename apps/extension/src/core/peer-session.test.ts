@@ -1,6 +1,33 @@
+import { createHmac, hkdfSync, pbkdf2Sync } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { PROTOCOL_VERSION, deriveSessionKeys, signSdpFingerprint } from '@ghostpair/protocol';
-import { createPeerSession, JsonChannel } from './peer-session';
+import { PROTOCOL_VERSION, deriveSessionKeys, extractSdpFingerprints, generateSessionSalt, signSdpFingerprint, verifySdpFingerprint } from '@ghostpair/protocol';
+import { createPeerSession, JsonChannel, type SessionCrypto } from './peer-session';
+
+const testSalt = '0123456789abcdef0123456789abcdef';
+const rawKeys = new WeakMap<CryptoKey, Buffer>();
+const testCrypto: SessionCrypto = {
+  generateSalt: () => testSalt,
+  async deriveKeys(password, deviceId, salt) {
+    const normalized = deviceId.trim().toLowerCase();
+    const master = pbkdf2Sync(Buffer.from(password.normalize('NFKC')), `ghostpair:kdf:v2|${normalized}|${salt}`, 1_000, 32, 'sha256');
+    const authToken = Buffer.from(hkdfSync('sha256', master, Buffer.alloc(0), `ghostpair:signaling-auth:v2|${normalized}`, 32)).toString('hex');
+    const rawMac = Buffer.from(hkdfSync('sha256', master, Buffer.alloc(0), `ghostpair:e2e-sdp-mac:v2|${normalized}`, 32));
+    const macKey = { type: 'secret', extractable: false, algorithm: { name: 'HMAC' }, usages: ['sign', 'verify'] } as CryptoKey;
+    rawKeys.set(macKey, rawMac);
+    return { authToken, macKey };
+  },
+  async signSdp(macKey, sessionId, role, sdp, offerSdp) {
+    const fps = extractSdpFingerprints(sdp);
+    let transcript = `ghostpair:sdp-fp:v2|${sessionId}|${role}|${fps.join(',')}`;
+    if (role === 'guest') transcript += `|${extractSdpFingerprints(offerSdp ?? '').join(',')}`;
+    return createHmac('sha256', rawKeys.get(macKey)!).update(transcript).digest('hex');
+  },
+  async verifySdp(macKey, sessionId, role, sdp, mac, offerSdp) {
+    if (!mac || !/^[a-f0-9]{64}$/.test(mac)) return false;
+    const expected = await this.signSdp(macKey, sessionId, role, sdp, offerSdp);
+    return expected === mac;
+  },
+};
 
 async function settled() { for (let i = 0; i < 30; i++) await Promise.resolve(); }
 class Socket {
@@ -49,9 +76,9 @@ const id = 'a'.repeat(32);
 const presentation = { tabId: 1, captureId: 'capture', documentId: 'document', generation: 3, viewportWidth: 800, viewportHeight: 600, offsetLeft: 0, offsetTop: 0, scale: 1 };
 const target = { tabId: 1, captureId: 'capture', documentId: 'document', generation: 3 };
 const snapshot = { controlMode: 'live', controlRevision: 0, presentation, generation: 3, activeTabId: 1, tabs: [], paused: false, controlEnabled: true, clipboardEnabled: false };
-function harness() {
+function harness(cryptoImpl: SessionCrypto = testCrypto) {
   const notify = vi.fn(), dispatch = vi.fn(async (_message: any): Promise<any> => ({ ok: true }));
-  const session = createPeerSession(notify, dispatch, { read: async () => '', write: async () => {} });
+  const session = createPeerSession(notify, dispatch, { read: async () => '', write: async () => {} }, {}, cryptoImpl);
   async function start(sessionId = id) {
     await session.handle({ type: 'session.start', role: 'host', deviceId: id, ownerToken: 'b'.repeat(64), password: 'Eight-42', clipboard: false,
       settings: { signalingUrl: 'http://127.0.0.1:8787', stunUrls: ['stun:example.com:3478'] } });
@@ -256,7 +283,7 @@ describe('peer session lifetime', () => {
     const events: string[] = [];
     const notify = vi.fn((type: string) => events.push(type));
     const read = vi.fn(async () => { events.push('clipboard.read'); return 'initial'; });
-    const session = createPeerSession(notify, vi.fn(async () => ({ ok: true })), { read, write: async () => {} });
+    const session = createPeerSession(notify, vi.fn(async () => ({ ok: true })), { read, write: async () => {} }, {}, testCrypto);
     await session.handle({ type: 'session.start', role: 'host', deviceId: id, ownerToken: 'b'.repeat(64), password: 'Eight-42', clipboard: true, settings: { signalingUrl: 'http://127.0.0.1:8787', stunUrls: ['stun:example.com:3478'] } });
     const socket = Socket.instances.at(-1)!; socket.onopen?.();
     socket.receive({ type: 'paired', sessionId: id, role: 'host' }); await settled();
@@ -272,25 +299,119 @@ describe('peer session lifetime', () => {
     session.stop();
   });
 
-  it('blinds the human password from signaling and rejects tampered DTLS fingerprints before setRemoteDescription', async () => {
+  it('blinds the human password from signaling, binds the answer MAC to the offer, and rejects tampered or unbound fingerprints before setRemoteDescription', async () => {
     const h = harness(), first = await h.start();
     const sentMessages = first.socket.send.mock.calls.map(([raw]) => JSON.parse(raw));
     const openMsg = sentMessages.find(m => m.type === 'host.open');
-    const keys = deriveSessionKeys('Eight-42', id);
-    expect(openMsg.password).toBe(keys.authToken);
+    const keys = await testCrypto.deriveKeys('Eight-42', id, testSalt);
+    expect(openMsg).toEqual({
+      type: 'host.open',
+      protocol: PROTOCOL_VERSION,
+      deviceId: id,
+      ownerToken: 'b'.repeat(64),
+      salt: testSalt,
+      password: keys.authToken,
+    });
     expect(openMsg.password).not.toBe('Eight-42');
     const offerMsg = sentMessages.find(m => m.type === 'signal');
-    expect(offerMsg.payload.mac).toBe(signSdpFingerprint(keys.macKey, id, 'host', syntheticOfferSdp));
+    expect(offerMsg.payload.mac).toBe(await testCrypto.signSdp(keys.macKey, id, 'host', syntheticOfferSdp));
 
-    // Tampered answer fingerprint or wrong MAC must abort before setRemoteDescription.
+    // Answer signed against a different offer must be rejected before setRemoteDescription.
+    const otherOfferSdp = `v=0\r\na=fingerprint:sha-256 ${'DD:'.repeat(31)}04\r\n`;
     first.socket.receive({
       type: 'signal',
       sessionId: id,
-      payload: { type: 'answer', sdp: `v=0\r\na=fingerprint:sha-256 ${'CC:'.repeat(31)}03\r\n`, mac: signSdpFingerprint(keys.macKey, id, 'guest', syntheticAnswerSdp) },
+      payload: { type: 'answer', sdp: syntheticAnswerSdp, mac: await testCrypto.signSdp(keys.macKey, id, 'guest', syntheticAnswerSdp, otherOfferSdp) },
     });
     await settled();
     expect(first.pc.setRemoteDescription).not.toHaveBeenCalled();
     expect(h.notify).toHaveBeenCalledWith('transport.ended', expect.objectContaining({ failed: true, reason: 'Could not verify the peer security fingerprint. Start a new session.' }));
+
+    // Tampered answer fingerprint with a MAC for another SDP must also abort before setRemoteDescription.
+    const second = await h.start('c'.repeat(32));
+    second.socket.receive({
+      type: 'signal',
+      sessionId: 'c'.repeat(32),
+      payload: { type: 'answer', sdp: `v=0\r\na=fingerprint:sha-256 ${'CC:'.repeat(31)}03\r\n`, mac: await testCrypto.signSdp(keys.macKey, 'c'.repeat(32), 'guest', syntheticAnswerSdp, syntheticOfferSdp) },
+    });
+    await settled();
+    expect(second.pc.setRemoteDescription).not.toHaveBeenCalled();
+  });
+
+  it('requests the session salt on guest.challenge, derives keys before guest.join, and discards stale derivations', async () => {
+    const gate = Promise.withResolvers<void>();
+    let paused = true;
+    const gatedCrypto: SessionCrypto = {
+      ...testCrypto,
+      async deriveKeys(password, deviceId, salt) {
+        if (paused) await gate.promise;
+        return testCrypto.deriveKeys(password, deviceId, salt);
+      },
+    };
+    const h = harness(gatedCrypto);
+    const startMessage: Record<string, any> = {
+      type: 'session.start', role: 'guest', deviceId: id, password: 'Eight-42', clipboard: false,
+      settings: { signalingUrl: 'http://127.0.0.1:8787', stunUrls: ['stun:example.com:3478'] },
+    };
+    await h.session.handle(startMessage);
+    expect(startMessage.password).toBe('');
+    const firstSocket = Socket.instances.at(-1)!;
+    firstSocket.onopen?.();
+    expect(firstSocket.send.mock.calls.map(([raw]) => JSON.parse(raw))).toEqual([
+      { type: 'guest.challenge', protocol: PROTOCOL_VERSION, deviceId: id },
+    ]);
+    firstSocket.receive({ type: 'guest.salt', deviceId: id, salt: testSalt });
+    // Stopping the session before key derivation finishes must discard the result.
+    h.session.stop();
+    paused = false;
+    gate.resolve();
+    await settled();
+    expect(firstSocket.send).toHaveBeenCalledTimes(1);
+
+    // Fresh guest session completes the challenge -> salt -> join -> offer -> answer flow.
+    await h.session.handle({
+      type: 'session.start', role: 'guest', deviceId: id, password: 'Eight-42', clipboard: false,
+      settings: { signalingUrl: 'http://127.0.0.1:8787', stunUrls: ['stun:example.com:3478'] },
+    });
+    const secondSocket = Socket.instances.at(-1)!;
+    secondSocket.onopen?.();
+    secondSocket.receive({ type: 'guest.salt', deviceId: id, salt: testSalt });
+    await settled();
+    const keys = await testCrypto.deriveKeys('Eight-42', id, testSalt);
+    expect(secondSocket.send.mock.calls.map(([raw]) => JSON.parse(raw))).toEqual([
+      { type: 'guest.challenge', protocol: PROTOCOL_VERSION, deviceId: id },
+      { type: 'guest.join', protocol: PROTOCOL_VERSION, deviceId: id, password: keys.authToken },
+    ]);
+    secondSocket.receive({ type: 'paired', sessionId: id, role: 'guest' });
+    await settled();
+    secondSocket.receive({
+      type: 'signal',
+      sessionId: id,
+      payload: { type: 'offer', sdp: syntheticOfferSdp, mac: await testCrypto.signSdp(keys.macKey, id, 'host', syntheticOfferSdp) },
+    });
+    await settled();
+    const answerMsg = secondSocket.send.mock.calls.map(([raw]) => JSON.parse(raw)).find(m => m.type === 'signal');
+    expect(answerMsg.payload).toEqual({
+      type: 'answer',
+      sdp: syntheticAnswerSdp,
+      mac: await testCrypto.signSdp(keys.macKey, id, 'guest', syntheticAnswerSdp, syntheticOfferSdp),
+    });
+    h.session.stop();
+  });
+
+  it('surfaces INCOMPATIBLE_PROTOCOL server errors to the user', async () => {
+    const h = harness();
+    await h.session.handle({
+      type: 'session.start', role: 'guest', deviceId: id, password: 'Eight-42', clipboard: false,
+      settings: { signalingUrl: 'http://127.0.0.1:8787', stunUrls: ['stun:example.com:3478'] },
+    });
+    const socket = Socket.instances.at(-1)!;
+    socket.onopen?.();
+    socket.receive({ type: 'error', code: 'INCOMPATIBLE_PROTOCOL', message: 'Incompatible GhostPair versions. Update both extensions.' });
+    expect(h.notify).toHaveBeenCalledWith('transport.ended', {
+      failed: true,
+      reason: 'Incompatible GhostPair versions. Update both extensions.',
+    });
   });
 });
 
@@ -313,4 +434,55 @@ it('refuses enqueueing beyond the bounded channel buffer', () => {
   expect(pipe.send({ text: 'x'.repeat(800_000) })).toBe(true);
   expect(pipe.send({ text: 'x'.repeat(300_000) })).toBe(false);
   expect(channel.send).not.toHaveBeenCalled(); pipe.clear();
+});
+
+it('completes a real WebCrypto host-to-guest offer/answer handshake end to end', async () => {
+  Socket.instances = []; Peer.instances = [];
+  vi.stubGlobal('WebSocket', Socket); vi.stubGlobal('RTCPeerConnection', Peer);
+  try {
+    const fastRealCrypto: SessionCrypto = {
+      generateSalt: generateSessionSalt,
+      deriveKeys: (password, deviceId, salt) => deriveSessionKeys(password, deviceId, salt, 1_000),
+      signSdp: signSdpFingerprint,
+      verifySdp: verifySdpFingerprint,
+    };
+    const hostNotify = vi.fn(), guestNotify = vi.fn();
+    const hostSession = createPeerSession(hostNotify, async () => ({ ok: true }), { read: async () => '', write: async () => {} }, {}, fastRealCrypto);
+    const guestSession = createPeerSession(guestNotify, async () => ({ ok: true }), { read: async () => '', write: async () => {} }, {}, fastRealCrypto);
+    const settings = { signalingUrl: 'http://127.0.0.1:8787', stunUrls: ['stun:example.com:3478'] };
+
+    await hostSession.handle({ type: 'session.start', role: 'host', deviceId: id, ownerToken: 'b'.repeat(64), password: 'Eight-42', clipboard: false, settings });
+    const hostSocket = Socket.instances.at(-1)!;
+    hostSocket.onopen?.();
+    const hostOpen = JSON.parse(hostSocket.send.mock.calls[0]![0]);
+    expect(hostOpen.type).toBe('host.open');
+
+    await guestSession.handle({ type: 'session.start', role: 'guest', deviceId: id, password: 'Eight-42', clipboard: false, settings });
+    const guestSocket = Socket.instances.at(-1)!;
+    guestSocket.onopen?.();
+    expect(JSON.parse(guestSocket.send.mock.calls[0]![0]).type).toBe('guest.challenge');
+
+    guestSocket.receive({ type: 'guest.salt', deviceId: id, salt: hostOpen.salt });
+    await vi.waitUntil(() => guestSocket.send.mock.calls.length === 2, { timeout: 5000, interval: 5 });
+    const guestJoin = JSON.parse(guestSocket.send.mock.calls[1]![0]);
+    expect(guestJoin.password).toBe(hostOpen.password);
+
+    const sessionId = 'e'.repeat(32);
+    hostSocket.receive({ type: 'paired', sessionId, role: 'host' });
+    guestSocket.receive({ type: 'paired', sessionId, role: 'guest' });
+    await vi.waitUntil(() => hostSocket.send.mock.calls.length === 2, { timeout: 5000, interval: 5 });
+    const offerSignal = JSON.parse(hostSocket.send.mock.calls[1]![0]);
+
+    guestSocket.receive(offerSignal);
+    await vi.waitUntil(() => guestSocket.send.mock.calls.length === 3, { timeout: 5000, interval: 5 });
+    const answerSignal = JSON.parse(guestSocket.send.mock.calls[2]![0]);
+
+    hostSocket.receive(answerSignal);
+    await vi.waitUntil(() => Peer.instances[0]!.setRemoteDescription.mock.calls.length === 1, { timeout: 5000, interval: 5 });
+    expect(Peer.instances[1]!.setRemoteDescription).toHaveBeenCalledWith({ type: 'offer', sdp: syntheticOfferSdp });
+    expect(Peer.instances[0]!.setRemoteDescription).toHaveBeenCalledWith({ type: 'answer', sdp: syntheticAnswerSdp });
+    hostSession.stop(); guestSession.stop();
+  } finally {
+    vi.unstubAllGlobals();
+  }
 });

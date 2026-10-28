@@ -1,7 +1,21 @@
 import { z } from 'zod';
-import { ControlModeSchema, ControlCommandSchema, PresentationSchema, MediaSignalSchema, SettingsSchema, ServerSignalMessageSchema, deriveSessionKeys, isRelaySignal, signSdpFingerprint, verifySdpFingerprint, PROTOCOL_VERSION, MAX_CLIPBOARD_BYTES, type ControlCommand, type Settings, type SignalPayload, type Presentation, type MediaSignal } from '@ghostpair/protocol';
+import { ControlModeSchema, ControlCommandSchema, PresentationSchema, MediaSignalSchema, SettingsSchema, ServerSignalMessageSchema, deriveSessionKeys, generateSessionSalt, isRelaySignal, signSdpFingerprint, verifySdpFingerprint, PROTOCOL_VERSION, MAX_CLIPBOARD_BYTES, type ControlCommand, type Settings, type SignalPayload, type Presentation, type MediaSignal, type SessionKeys } from '@ghostpair/protocol';
 import { MediaSession } from './media-session';
 import { ClipboardSync, type ClipboardAdapter, type ClipboardUpdate } from './clipboard';
+
+export interface SessionCrypto {
+  generateSalt: () => string;
+  deriveKeys: (password: string, deviceId: string, salt: string) => Promise<SessionKeys>;
+  signSdp: (macKey: CryptoKey, sessionId: string, role: 'host' | 'guest', sdp: string, offerSdp?: string) => Promise<string>;
+  verifySdp: (macKey: CryptoKey, sessionId: string, role: 'host' | 'guest', sdp: string, mac?: string, offerSdp?: string) => Promise<boolean>;
+}
+
+const defaultSessionCrypto: SessionCrypto = {
+  generateSalt: generateSessionSalt,
+  deriveKeys: (password, deviceId, salt) => deriveSessionKeys(password, deviceId, salt),
+  signSdp: signSdpFingerprint,
+  verifySdp: verifySdpFingerprint,
+};
 
 
 type Role = 'host' | 'guest';
@@ -73,10 +87,11 @@ export class JsonChannel {
   }
 }
 
-export function createPeerSession(notify: (type: string, payload?: Record<string, any>) => void, dispatch: (message: Record<string, any>) => Promise<any>, clipboardAdapter: ClipboardAdapter, mediaHooks: { stream?: (stream: MediaStream | undefined, meta: Presentation | undefined) => void; source?: (captureId: string) => MediaStream | undefined } = {}) {
+export function createPeerSession(notify: (type: string, payload?: Record<string, any>) => void, dispatch: (message: Record<string, any>) => Promise<any>, clipboardAdapter: ClipboardAdapter, mediaHooks: { stream?: (stream: MediaStream | undefined, meta: Presentation | undefined) => void; source?: (captureId: string) => MediaStream | undefined } = {}, sessionCrypto: SessionCrypto = defaultSessionCrypto) {
 let role: Role | undefined;
 let sessionId: string | undefined;
-let macKey = '';
+let macKey: CryptoKey | undefined;
+let offerSdp: string | undefined;
 let socket: WebSocket | undefined;
 let peer: RTCPeerConnection | undefined;
 let controlChannel: RTCDataChannel | undefined;
@@ -136,7 +151,7 @@ function cleanup(reason = 'Session ended.', inform = false, failed = false) {
   const previous = peer; peer = undefined;
   previous?.close(); socket?.close(); socket = undefined;
   controlChannel = undefined; clipboardChannel = undefined; media?.stop(); media = undefined; mediaKey = ''; pendingMedia = [];
-  connected = false; direct = false; greeted = false; role = undefined; sessionId = undefined; macKey = '';
+  connected = false; direct = false; greeted = false; role = undefined; sessionId = undefined; macKey = undefined; offerSdp = undefined;
   clipboardEnabled = false; remoteClipboardEnabled = false; paused = false;
   latestSnapshot = undefined; pendingIce = [];
   commandsPerSecond = 0; commandWindow = 0;
@@ -317,7 +332,10 @@ async function createPeer(settings: Settings, current: number) {
     await pc.setLocalDescription(offer);
     if (epoch !== current) return;
     const sdp = pc.localDescription?.sdp ?? offer.sdp!;
-    sendSignal({ type: 'offer', sdp, mac: signSdpFingerprint(macKey, sessionId!, 'host', sdp) });
+    offerSdp = sdp;
+    const mac = await sessionCrypto.signSdp(macKey!, sessionId!, 'host', sdp);
+    if (epoch !== current) return;
+    sendSignal({ type: 'offer', sdp, mac });
   }
 }
 
@@ -330,9 +348,19 @@ async function signal(payload: SignalPayload, current: number) {
     await pc.addIceCandidate(payload.candidate); return;
   }
   if ((payload.type === 'offer' && role !== 'guest') || (payload.type === 'answer' && role !== 'host')) throw new Error('The connection details do not match this session.');
-  if (!verifySdpFingerprint(macKey, sessionId!, payload.type === 'offer' ? 'host' : 'guest', payload.sdp, payload.mac)) {
+  const verified = await sessionCrypto.verifySdp(
+    macKey!,
+    sessionId!,
+    payload.type === 'offer' ? 'host' : 'guest',
+    payload.sdp,
+    payload.mac,
+    payload.type === 'answer' ? offerSdp : undefined,
+  );
+  if (epoch !== current) return;
+  if (!verified) {
     fail('Could not verify the peer security fingerprint. Start a new session.'); return;
   }
+  if (payload.type === 'offer') offerSdp = payload.sdp;
   await pc.setRemoteDescription({ type: payload.type, sdp: payload.sdp });
   if (epoch !== current) return;
   const queuedIce = pendingIce; pendingIce = [];
@@ -344,29 +372,48 @@ async function signal(payload: SignalPayload, current: number) {
     await pc.setLocalDescription(answer);
     if (epoch !== current) return;
     const sdp = pc.localDescription?.sdp ?? answer.sdp!;
-    sendSignal({ type: 'answer', sdp, mac: signSdpFingerprint(macKey, sessionId!, 'guest', sdp) });
+    const mac = await sessionCrypto.signSdp(macKey!, sessionId!, 'guest', sdp, offerSdp);
+    if (epoch !== current) return;
+    sendSignal({ type: 'answer', sdp, mac });
   }
 }
 
 async function start(message: Record<string, any>) {
+  let password = String(message.password ?? '');
+  const deviceId = String(message.deviceId ?? '').trim().toLowerCase();
+  let ownerToken: string | undefined = message.ownerToken;
+  message.password = ''; message.ownerToken = undefined;
   cleanup();
   const settings = SettingsSchema.parse(message.settings);
-  if (!['host', 'guest'].includes(message.role)) throw new Error('Invalid settings.');
+  if (!['host', 'guest'].includes(message.role)) { password = ''; ownerToken = undefined; throw new Error('Invalid settings.'); }
   const current = ++epoch;
   role = message.role; clipboardEnabled = message.clipboard === true; paused = false;
-  const keys = deriveSessionKeys(String(message.password ?? ''), String(message.deviceId ?? ''));
-  macKey = keys.macKey;
-  let authToken: string | undefined = keys.authToken;
-  message.password = '';
+  let hostSalt: string | undefined;
+  let authToken: string | undefined;
+  if (role === 'host') {
+    hostSalt = sessionCrypto.generateSalt();
+    try {
+      const keys = await sessionCrypto.deriveKeys(password, deviceId, hostSalt);
+      if (epoch !== current) return;
+      macKey = keys.macKey;
+      authToken = keys.authToken;
+    } finally {
+      password = '';
+    }
+  }
   pulse = setInterval(() => notify('transport.pulse'), 20000);
   const url = new URL('/v1/connect', settings.signalingUrl); url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
   const ws = new WebSocket(url); socket = ws;
-  timer = setTimeout(() => { if (epoch === current) fail('Could not reach the connection server. Check your network and try again.'); }, 12000);
+  timer = setTimeout(() => { password = ''; if (epoch === current) fail('Could not reach the connection server. Check your network and try again.'); }, 12000);
   ws.onopen = () => {
     if (epoch !== current) return;
-    ws.send(JSON.stringify(role === 'host' ? { type: 'host.open', deviceId: message.deviceId, ownerToken: message.ownerToken, password: authToken } : { type: 'guest.join', deviceId: message.deviceId, password: authToken }));
-    // Do not retain derived or owner credentials after dispatch.
-    authToken = undefined; message.ownerToken = undefined;
+    if (role === 'host') {
+      ws.send(JSON.stringify({ type: 'host.open', protocol: PROTOCOL_VERSION, deviceId, ownerToken, salt: hostSalt, password: authToken }));
+      // Do not retain derived or owner credentials after dispatch.
+      authToken = undefined; ownerToken = undefined; hostSalt = undefined;
+    } else {
+      ws.send(JSON.stringify({ type: 'guest.challenge', protocol: PROTOCOL_VERSION, deviceId }));
+    }
   };
   ws.onmessage = event => {
     if (epoch !== current || typeof event.data !== 'string' || event.data.length > 65536) return;
@@ -378,7 +425,21 @@ async function start(message: Record<string, any>) {
       sessionId = message.sessionId; clearTimeout(timer);
       notify('transport.status', { status: 'waiting', sessionId }); return;
     }
+    if (message.type === 'guest.salt') {
+      if (role !== 'guest' || !password || message.deviceId !== deviceId) return;
+      const guestPassword = password;
+      password = '';
+      void sessionCrypto.deriveKeys(guestPassword, deviceId, message.salt).then(keys => {
+        if (epoch !== current || ws.readyState !== WebSocket.OPEN) return;
+        macKey = keys.macKey;
+        ws.send(JSON.stringify({ type: 'guest.join', protocol: PROTOCOL_VERSION, deviceId, password: keys.authToken }));
+      }).catch(() => {
+        if (epoch === current) fail('Could not prepare the connection. Start a new session.');
+      });
+      return;
+    }
     if (message.type === 'paired') {
+      password = '';
       if (message.role !== role || peer) { fail('The received session does not match.'); return; }
       sessionId = message.sessionId; clearTimeout(timer);
       notify('transport.status', { status: 'connecting', sessionId });
@@ -387,18 +448,20 @@ async function start(message: Record<string, any>) {
     if (message.type === 'signal' && message.sessionId === sessionId) {
       negotiation = negotiation.then(() => signal(message.payload, current)).catch(() => { if (epoch === current) fail('Could not connect the devices. Try again or use another network.'); }); return;
     }
-    if (message.type === 'ended' && message.sessionId === sessionId) { cleanup(message.reason, true); return; }
+    if (message.type === 'ended' && message.sessionId === sessionId) { password = ''; cleanup(message.reason, true); return; }
     if (message.type === 'error') {
+      password = '';
       if (!connected) fail(message.message);
       else notify('transport.notice', { message: message.message });
     }
   };
   ws.onclose = () => {
+    password = '';
     if (epoch !== current || ending) return;
     if (connected) notify('transport.notice', { message: 'The connection server is unavailable. Your session is still connected.' });
     else fail('The server closed the connection. Check settings or start a new session.');
   };
-  ws.onerror = () => { if (epoch === current && !connected) fail('Could not reach the connection server. Check your network and connection settings.'); };
+  ws.onerror = () => { password = ''; if (epoch === current && !connected) fail('Could not reach the connection server. Check your network and connection settings.'); };
 }
 
 async function onMessage(message: Record<string, any>) {
