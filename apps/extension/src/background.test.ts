@@ -1,13 +1,15 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { GHOSTPAIR_SERVER_SETTINGS } from './connection-presets';
+import { SIGNALING_ORIGIN_ERROR } from '@ghostpair/protocol';
 
 const capture = vi.hoisted(() => ({
   start: vi.fn(async (_windowId: number) => {}), stop: vi.fn(async () => {}),
   authorize: vi.fn(async (_tabId: number) => {}), release: vi.fn(async (_tabId: number) => {}),
   configure: vi.fn(async () => {}), setLanguage: vi.fn(async () => {}), setControl: vi.fn(async () => {}), setPaused: vi.fn(async () => {}), execute: vi.fn(async () => {}), geometry: vi.fn(),
   validateHostPage: vi.fn(),
+  hooks: undefined as any,
 }));
-vi.mock('./core/tab-capture', () => ({ TabCapture: class { constructor() { return capture; } } }));
+vi.mock('./core/tab-capture', () => ({ TabCapture: class { constructor(hooks: any) { capture.hooks = hooks; return capture; } } }));
 
 function event() {
   const addListener = vi.fn();
@@ -120,6 +122,71 @@ describe('local language preferences', () => {
 });
 
 describe('background connection ownership and settings', () => {
+  it('retains saved signaling paths and identities while blocking session side effects', async () => {
+    const settings = { ...GHOSTPAIR_SERVER_SETTINGS, signalingUrl: 'https://example.com/prefix' };
+    const identity = { deviceId: 'c'.repeat(32), ownerToken: 'd'.repeat(64) };
+    const h = await harness({ settings, identities: { [settings.signalingUrl]: identity } });
+    expect((await h.send('ui.status')).state).toMatchObject({ settings, deviceId: identity.deviceId, error: SIGNALING_ORIGIN_ERROR });
+    for (const type of ['ui.host.start', 'ui.guest.start']) {
+      expect(await h.send(type, { password: 'Eight-42', requestPermissions: true })).toEqual({ ok: false, error: SIGNALING_ORIGIN_ERROR });
+    }
+    expect(h.browser.permissions.request).not.toHaveBeenCalled(); expect(capture.start).not.toHaveBeenCalled();
+    expect(h.hasOffscreenMessage('identity.register')).toBe(false); expect(h.hasOffscreenMessage('session.start')).toBe(false);
+    expect(h.stored.settings).toEqual(settings); expect(h.stored.identities).toEqual({ [settings.signalingUrl]: identity });
+    expect(await h.send('ui.settings.save', { settings })).toEqual({ ok: false, error: SIGNALING_ORIGIN_ERROR });
+  });
+
+  it.each([false, true])('preserves identities when correcting an old signaling path (collision=%s)', async collision => {
+    const settings = { ...GHOSTPAIR_SERVER_SETTINGS, signalingUrl: 'https://example.com/prefix' };
+    const root = { ...settings, signalingUrl: 'https://example.com' };
+    const previous = { deviceId: 'c'.repeat(32), ownerToken: 'd'.repeat(64) }, existing = { deviceId: 'e'.repeat(32), ownerToken: 'f'.repeat(64) };
+    const identities = { [settings.signalingUrl]: previous, ...(collision ? { [root.signalingUrl]: existing } : {}) };
+    const h = await harness({ settings, identities });
+    const result = await h.send('ui.settings.save', { settings: root });
+    expect(result.ok).toBe(true); expect(result.state.deviceId).toBe(collision ? existing.deviceId : previous.deviceId);
+    expect(h.stored.identities).toEqual({ [settings.signalingUrl]: previous, [root.signalingUrl]: collision ? existing : previous });
+    if (collision) expect(result.state.notification.message).toContain('Your previous identity was kept.');
+    else expect(result.state.notification).toBeUndefined();
+    const restarted = await harness(h.stored);
+    expect((await restarted.send('ui.status')).state).toMatchObject({ settings: root, deviceId: result.state.deviceId });
+  });
+
+  it('sanitizes only the outgoing snapshot and preserves host metadata', async () => {
+    const h = await harness(); await h.send('ui.host.start', { password: 'Eight-42' });
+    await h.send('transport.connected', { sessionId: 'session' }, 'offscreen');
+    const tabs = [{ id: 12, title: 't'.repeat(4097), url: 'data:text/html,' + 'x'.repeat(8192), active: true, supported: false, authorized: false }];
+    capture.hooks.state(tabs, 12, 1, undefined); await settled();
+    const sent = h.runtime.sendMessage.mock.calls.map(([message]) => message).filter(message => message.type === 'session.state').at(-1)! as any;
+    expect(sent.snapshot.tabs).toEqual([{ ...tabs[0], title: 't'.repeat(4096), url: '' }]);
+    expect((await h.send('ui.status')).state.tabs).toEqual(tabs);
+    await h.send('ui.stop');
+  });
+
+  it.each(['rejected', 'exception'])('ends a host session when publishing its state fails (%s)', async failure => {
+    const h = await harness(); await h.send('ui.host.start', { password: 'Eight-42' });
+    await h.send('transport.connected', { sessionId: 'session' }, 'offscreen'); await settled();
+    const original = h.runtime.sendMessage.getMockImplementation()!;
+    h.runtime.sendMessage.mockImplementation(async message => {
+      if (message.type === 'session.state') { if (failure === 'exception') throw new Error('transport failed'); return { ok: false, error: 'snapshot rejected' }; }
+      return original(message);
+    });
+    capture.hooks.state([], undefined, 2, undefined); await settled();
+    expect((await h.send('ui.status')).state).toMatchObject({ role: null, status: 'error', error: 'Could not update the shared session. Start a new session.' });
+    expect(capture.stop).toHaveBeenCalled();
+  });
+
+  it('ignores a delayed snapshot rejection after the host has started another session', async () => {
+    const h = await harness(); await h.send('ui.host.start', { password: 'Eight-42' });
+    await h.send('transport.connected', { sessionId: 'old' }, 'offscreen'); await settled();
+    const gate = Promise.withResolvers<any>(), original = h.runtime.sendMessage.getMockImplementation()!;
+    h.runtime.sendMessage.mockImplementation(async message => message.type === 'session.state' ? gate.promise : original(message));
+    capture.hooks.state([], undefined, 1, undefined); await h.send('ui.stop');
+    await h.send('ui.host.start', { password: 'Eight-42' });
+    gate.resolve({ ok: false }); await settled();
+    expect((await h.send('ui.status')).state).toMatchObject({ role: 'host', status: 'starting' });
+    await h.send('ui.stop');
+  });
+
   it('preserves saved Render settings and registers a separate identity when switching to Heroku', async () => {
     const settings = { ...GHOSTPAIR_SERVER_SETTINGS, signalingUrl: 'https://ghostpair.onrender.com' };
     const oldIdentity = { deviceId: 'c'.repeat(32), ownerToken: 'd'.repeat(64) };

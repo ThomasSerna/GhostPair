@@ -44,6 +44,7 @@ export const spanishRuntimeMessages = {
   'Could not start the session.': 'No se pudo iniciar la sesión.',
   'Could not start the shared video.': 'No se pudo iniciar el video compartido.',
   'Could not update page controls. Try again.': 'No se pudieron actualizar los controles de página. Inténtalo de nuevo.',
+  'Could not update the shared session. Start a new session.': 'No se pudo actualizar la sesión compartida. Inicia una sesión nueva.',
   'Could not verify a direct video connection.': 'No se pudo verificar una conexión directa de video.',
   'Could not verify the connection between the devices. Try another network.': 'No se pudo verificar la conexión entre los dispositivos. Prueba con otra red.',
   'Could not verify the connection.': 'No se pudo verificar la conexión.',
@@ -190,6 +191,9 @@ export const spanishRuntimeMessages = {
   'Use at least 8 characters.': 'Usa al menos 8 caracteres.',
   'Use at most 256 characters.': 'Usa como máximo 256 caracteres.',
   'Use HTTPS for signaling, or HTTP on localhost.': 'Usa HTTPS para la señalización o HTTP en localhost.',
+  'Use a connection server origin without a path. Edit Connection settings before starting a session.': 'Usa el origen del servidor de conexión sin una ruta. Edita la configuración de conexión antes de iniciar una sesión.',
+  'The connection code changed to the identity already saved for this server. Your previous identity was kept.': 'El código de conexión cambió a la identidad ya guardada para este servidor. Se conservó tu identidad anterior.',
+  'The copied text could not be sent. Update both extensions to share larger text.': 'No se pudo enviar el texto copiado. Actualiza ambas extensiones para compartir textos más grandes.',
   'Video connections only support STUN servers.': 'Las conexiones de video solo admiten servidores STUN.',
 } as const;
 

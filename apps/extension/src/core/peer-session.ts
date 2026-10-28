@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { ControlModeSchema, ControlCommandSchema, PresentationSchema, MediaSignalSchema, SettingsSchema, ServerSignalMessageSchema, deriveSessionKeys, generateSessionSalt, isRelaySignal, signSdpFingerprint, verifySdpFingerprint, isCompatibleProtocol, MIN_SUPPORTED_PROTOCOL_VERSION, MAX_CLIPBOARD_BYTES, type ControlCommand, type Settings, type SignalPayload, type Presentation, type MediaSignal, type SessionKeys } from '@ghostpair/protocol';
+import { ControlModeSchema, ControlCommandSchema, PresentationSchema, MediaSignalSchema, SettingsSchema, ServerSignalMessageSchema, validateSignalingOrigin, SIGNALING_ORIGIN_ERROR, deriveSessionKeys, generateSessionSalt, isRelaySignal, signSdpFingerprint, verifySdpFingerprint, isCompatibleProtocol, MIN_SUPPORTED_PROTOCOL_VERSION, type Settings, type SignalPayload, type Presentation, type MediaSignal, type SessionKeys } from '@ghostpair/protocol';
 import { MediaSession } from './media-session';
 import { ClipboardSync, type ClipboardAdapter, type ClipboardUpdate } from './clipboard';
 
@@ -28,6 +28,7 @@ export const SnapshotSchema = z.object({
 type Snapshot = z.infer<typeof SnapshotSchema>;
 const PeerMessageSchema = z.discriminatedUnion('type', [...MediaSignalSchema.options,
   z.object({ type: z.literal('hello'), protocol: z.number().int(), sessionId: z.string().max(128), role: z.enum(['host', 'guest']) }).strict(),
+  z.object({ type: z.literal('capabilities'), largeClipboard: z.literal(true) }).strict(),
   z.object({ type: z.literal('snapshot'), snapshot: SnapshotSchema }).strict(),
   z.object({ type: z.literal('command'), command: ControlCommandSchema, requestId: z.string().max(64).optional() }).strict(),
   z.object({ type: z.literal('command.result'), requestId: z.string().max(64), ok: z.boolean(), error: z.string().max(512).optional() }).strict(),
@@ -38,50 +39,61 @@ const PeerMessageSchema = z.discriminatedUnion('type', [...MediaSignalSchema.opt
   z.object({ type: z.literal('pong'), time: z.number().finite() }).strict(),
 ]);
 
-const FragmentSchema = z.object({ transfer: z.string().max(64), index: z.number().int().nonnegative(), count: z.number().int().min(1).max(256), data: z.string().max(4000) }).strict();
+const FragmentSchema = z.object({ transfer: z.string().max(64), index: z.number().int().nonnegative(), count: z.number().int().min(1).max(400), data: z.string().max(4000) }).strict();
 export class JsonChannel {
   private queue: string[] = [];
   private bytes = 0;
-  private partial = new Map<string, { count: number; parts: Map<number, string>; size: number; until: number }>();
+  private partial = new Map<string, { count: number; parts: Map<number, string>; size: number; timer?: ReturnType<typeof setTimeout> }>();
   private sequence = 0;
   private failed = false;
-  constructor(private channel: RTCDataChannel, private receive: (value: unknown) => void, private failure: () => void) {
+  private largeMessages = false;
+  private upgradeRequired = false;
+  constructor(private channel: RTCDataChannel, private receive: (value: unknown) => void, private failure: () => void, private clipboard = false) {
     channel.bufferedAmountLowThreshold = 32 * 1024;
     channel.onbufferedamountlow = () => this.flush();
     channel.onmessage = event => this.message(event.data);
   }
+  allowLargeClipboard() { if (this.clipboard) this.largeMessages = true; }
+  get needsLargeClipboard() { return this.upgradeRequired; }
   send(value: unknown): boolean {
     const text = JSON.stringify(value);
-    if (this.failed || text.length > 900_000 || this.bytes + text.length > 1_000_000 || this.channel.readyState !== 'open') return false;
+    const maxText = this.largeMessages ? 1_600_000 : 900_000, maxQueue = this.largeMessages ? 2_000_000 : 1_000_000;
+    this.upgradeRequired = this.clipboard && !this.largeMessages && text.length > maxText;
+    if (this.failed || text.length > maxText || this.bytes + text.length > maxQueue || this.channel.readyState !== 'open') return false;
     const transfer = String(++this.sequence);
     const count = Math.ceil(text.length / 4000);
     const packets = text.length <= 4000 ? [text] : Array.from({ length: count }, (_, index) => JSON.stringify({ transfer, index, count, data: text.slice(index * 4000, (index + 1) * 4000) }));
-    if (this.bytes + packets.reduce((size, packet) => size + packet.length, 0) > 1_000_000) return false;
+    const packetSize = packets.reduce((size, packet) => size + packet.length, 0);
+    this.upgradeRequired = this.clipboard && !this.largeMessages && (count > 256 || packetSize > maxQueue);
+    if (count > (this.largeMessages ? 400 : 256) || this.bytes + packetSize > maxQueue) return false;
     for (const packet of packets) { this.queue.push(packet); this.bytes += packet.length; }
     this.flush(); return !this.failed;
   }
   private flush() {
     while (this.queue.length && this.channel.readyState === 'open' && this.channel.bufferedAmount < 64 * 1024) {
       const packet = this.queue.shift()!; this.bytes -= packet.length;
-      try { this.channel.send(packet); } catch { this.failed = true; this.clear(); this.failure(); break; }
+      try { this.channel.send(packet); } catch { this.fail(); break; }
     }
   }
-  clear() { this.queue = []; this.bytes = 0; this.partial.clear(); }
+  private fail() { if (this.failed) return; this.failed = true; this.clear(); this.failure(); }
+  clear() { this.queue = []; this.bytes = 0; for (const item of this.partial.values()) clearTimeout(item.timer); this.partial.clear(); }
   private message(data: unknown) {
-    if (typeof data !== 'string' || data.length > 20_000) return;
+    if (this.failed || typeof data !== 'string' || data.length > 20_000) return;
     let value: unknown; try { value = JSON.parse(data); } catch { return; }
     if (typeof value !== 'object' || !value) return;
     if (!('transfer' in value)) { this.receive(value); return; }
     const result = FragmentSchema.safeParse(value); if (!result.success) return;
-    const f = result.data; if (f.index >= f.count) return;
-    for (const [id, item] of this.partial) if (item.until < Date.now()) this.partial.delete(id);
+    const f = result.data; if (f.index >= f.count || f.count > (this.clipboard ? 400 : 256)) return;
     let entry = this.partial.get(f.transfer);
-    if (!entry) { if (this.partial.size >= 2) return; entry = { count: f.count, parts: new Map(), size: 0, until: Date.now() + 5000 }; this.partial.set(f.transfer, entry); }
+    if (!entry) { if (this.partial.size >= 2) return; entry = { count: f.count, parts: new Map(), size: 0 }; this.partial.set(f.transfer, entry); }
     if (entry.count !== f.count || entry.parts.has(f.index)) return;
     entry.size += f.data.length;
-    if (entry.size > 900_000) { this.partial.delete(f.transfer); return; }
+    if (entry.size > (this.clipboard ? 1_600_000 : 900_000)) { this.fail(); return; }
     entry.parts.set(f.index, f.data);
+    clearTimeout(entry.timer);
+    entry.timer = setTimeout(() => this.fail(), 5000);
     if (entry.parts.size !== f.count) return;
+    clearTimeout(entry.timer);
     this.partial.delete(f.transfer);
     try { this.receive(JSON.parse(Array.from({ length: f.count }, (_, i) => entry!.parts.get(i)!).join(''))); } catch { /* invalid peer message */ }
   }
@@ -103,6 +115,7 @@ let clipboardPipe: JsonChannel | undefined;
 let clipboardSync: ClipboardSync | undefined;
 let clipboardEnabled = false;
 let remoteClipboardEnabled = false;
+let remoteLargeClipboard = false;
 let paused = false;
 let connected = false;
 let direct = false;
@@ -153,7 +166,7 @@ function cleanup(reason = 'Session ended.', inform = false, failed = false) {
   previous?.close(); socket?.close(); socket = undefined;
   controlChannel = undefined; clipboardChannel = undefined; media?.stop(); media = undefined; mediaKey = ''; pendingMedia = [];
   connected = false; direct = false; greeted = false; role = undefined; sessionId = undefined; macKey = undefined; offerSdp = undefined; legacyCompatibility = false;
-  clipboardEnabled = false; remoteClipboardEnabled = false; paused = false;
+  clipboardEnabled = false; remoteClipboardEnabled = false; remoteLargeClipboard = false; paused = false;
   latestSnapshot = undefined; pendingIce = [];
   commandsPerSecond = 0; commandWindow = 0;
   ++inputRevision;
@@ -184,7 +197,7 @@ async function establish() {
   connected = true; clearTimeout(timer);
   const current = epoch;
   clipboardSync = new ClipboardSync(role, clipboardAdapter, update => {
-    if (!clipboardPipe?.send(update)) notify('transport.notice', { message: 'Clipboard sharing is busy. The latest copied text was not sent.' });
+    if (!clipboardPipe?.send(update)) notify('transport.notice', { message: clipboardPipe?.needsLargeClipboard ? 'The copied text could not be sent. Update both extensions to share larger text.' : 'Clipboard sharing is busy. The latest copied text was not sent.' });
   }, message => {
     if (!clipboardSync?.isActive) { clipboardEnabled = false; sendPeer({ type: 'clipboard.enabled', enabled: false }); notify('transport.clipboard', { remoteEnabled: remoteClipboardEnabled, disabled: true }); }
     notify('transport.notice', { message });
@@ -205,6 +218,7 @@ async function receiveControl(message: z.infer<typeof PeerMessageSchema>) {
     greeted = true; await establish(); return;
   }
   if (!greeted) return;
+  if (message.type === 'capabilities') { remoteLargeClipboard = true; clipboardPipe?.allowLargeClipboard(); return; }
   if (!connected) {
     if (message.type === 'media.reset' || message.type === 'media.signal') { if (pendingMedia.length < 100) pendingMedia.push(message); return; }
     // Data channels can open before getStats verifies the candidate pair.
@@ -296,7 +310,11 @@ function attachChannel(channel: RTCDataChannel, current: number) {
         if (message) await receiveControl(message);
       }).catch(() => undefined).finally(() => { --pendingControls; });
     }, () => { if (epoch === current && !ending) fail('The control connection could not send input. Start a new session.'); });
-    channel.onopen = () => { if (epoch !== current) return; sendPeer({ type: 'hello', protocol: legacyCompatibility ? 4 : MIN_SUPPORTED_PROTOCOL_VERSION, sessionId, role }); };
+    channel.onopen = () => {
+      if (epoch !== current) return;
+      sendPeer({ type: 'hello', protocol: legacyCompatibility ? 4 : MIN_SUPPORTED_PROTOCOL_VERSION, sessionId, role });
+      sendPeer({ type: 'capabilities', largeClipboard: true });
+    };
     channel.onclose = () => { if (epoch === current && !ending && role) cleanup('The other participant disconnected.', true); };
   } else if (channel.label === 'clipboard') {
     if (clipboardChannel) { channel.close(); return; }
@@ -306,7 +324,8 @@ function attachChannel(channel: RTCDataChannel, current: number) {
       const update = value as ClipboardUpdate;
       if (update.origin !== (role === 'host' ? 'guest' : 'host') || typeof update.text !== 'string') return;
       void clipboardSync?.receive(update);
-    }, () => { if (epoch === current && !ending) fail('The clipboard connection failed. Start a new session.'); });
+    }, () => { if (epoch === current && !ending) fail('The clipboard connection failed. Start a new session.'); }, true);
+    if (remoteLargeClipboard) clipboardPipe.allowLargeClipboard();
     channel.onopen = syncClipboard;
     channel.onclose = () => { clipboardSync?.stop(); };
   } else channel.close();
@@ -386,6 +405,7 @@ async function start(message: Record<string, any>) {
   message.password = ''; message.ownerToken = undefined;
   cleanup();
   const settings = SettingsSchema.parse(message.settings);
+  if (!validateSignalingOrigin(settings.signalingUrl)) throw new Error(SIGNALING_ORIGIN_ERROR);
   legacyCompatibility = settings.legacyCompatibility === true;
   if (!['host', 'guest'].includes(message.role)) { password = ''; ownerToken = undefined; throw new Error('Invalid settings.'); }
   const current = ++epoch;
@@ -476,6 +496,7 @@ async function onMessage(message: Record<string, any>) {
   switch (message.type) {
     case 'identity.register': {
       const settings = SettingsSchema.parse(message.settings);
+      if (!validateSignalingOrigin(settings.signalingUrl)) throw new Error(SIGNALING_ORIGIN_ERROR);
       const response = await fetch(new URL('/v1/devices', settings.signalingUrl), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}', credentials: 'omit', redirect: 'error', signal: AbortSignal.timeout(10000) });
       if (!response.ok) throw new Error(`The connection server could not set up GhostPair (${response.status}). Check the connection settings and try again.`);
       return { ok: true, identity: await response.json() };
@@ -487,7 +508,8 @@ async function onMessage(message: Record<string, any>) {
       const snapshot = SnapshotSchema.parse(message.snapshot);
       if (snapshot.controlRevision !== latestSnapshot?.controlRevision || snapshot.paused || !snapshot.controlEnabled || JSON.stringify(snapshot.presentation) !== JSON.stringify(latestSnapshot?.presentation)) ++inputRevision;
       paused = snapshot.paused; latestSnapshot = snapshot;
-      sendPeer({ type: 'snapshot', snapshot }); syncClipboard();
+      if (!sendPeer({ type: 'snapshot', snapshot })) return { ok: false, error: 'The control connection is congested. Start a new session.' };
+      syncClipboard();
       const key = JSON.stringify([snapshot.generation, snapshot.presentation, snapshot.paused]);
       if (key !== mediaKey) { mediaKey = key; void media?.present(snapshot.paused ? undefined : snapshot.presentation, snapshot.presentation ? mediaHooks.source?.(snapshot.presentation.captureId) : undefined, snapshot.generation); }
       break;

@@ -1,4 +1,4 @@
-import { ControlModeSchema, VisualPreferencesSchema, PasswordSchema, SettingsSchema, type AppState, type Settings, type LanguagePreference } from '@ghostpair/protocol';
+import { ControlModeSchema, VisualPreferencesSchema, PasswordSchema, SettingsSchema, validateSignalingOrigin, SIGNALING_ORIGIN_ERROR, type AppState, type Settings, type LanguagePreference } from '@ghostpair/protocol';
 import { TabCapture } from './core/tab-capture';
 import { dismissNotification, patchState } from './core/notifications';
 import { pageMessages } from './core/page-messages';
@@ -59,7 +59,15 @@ function update(patch: Partial<AppState>) { state = patchState(state, patch); br
 function hostState() {
   if (state.role !== 'host' || !['connected', 'paused'].includes(state.status)) return;
   const { paused, controlEnabled, controlMode, controlRevision, clipboardEnabled, tabs, activeTabId, generation, presentation } = state;
-  void transport('session.state', { snapshot: { paused, controlEnabled, controlMode, controlRevision, clipboardEnabled, tabs, activeTabId, generation, presentation } }).catch(() => undefined);
+  const epoch = sessionEpoch;
+  const remoteTabs = tabs.map(tab => ({ ...tab, title: tab.title.slice(0, 4096), url: tab.url.length > 8192 ? '' : tab.url }));
+  void transport('session.state', { snapshot: { paused, controlEnabled, controlMode, controlRevision, clipboardEnabled, tabs: remoteTabs, activeTabId, generation, presentation } }).then(reply => {
+    if (!reply?.ok) throw new Error('Could not update the shared session. Start a new session.');
+  }).catch(async () => {
+    if (epoch !== sessionEpoch || state.role !== 'host') return;
+    await stop();
+    if (sessionEpoch === epoch + 1) update({ status: 'error', error: 'Could not update the shared session. Start a new session.' });
+  });
 }
 const capture = new TabCapture({
   state: (tabs, activeTabId, generation, presentation) => { if (state.role === 'host') { update({ tabs, activeTabId, generation, presentation }); hostState(); } },
@@ -96,6 +104,7 @@ const ready = (async () => {
   const identity = (saved.identities as Record<string, { deviceId: string }> | undefined)?.[settings.signalingUrl];
   const previous = (await chrome.storage.session.get('appState')).appState as AppState | undefined;
   state = idle(settings, identity?.deviceId);
+  if (!validateSignalingOrigin(settings.signalingUrl)) state = patchState(state, { error: SIGNALING_ORIGIN_ERROR });
   if (previous?.role && !['idle', 'error'].includes(previous.status)) {
     if (await hasOffscreen()) await toOffscreen('session.stop').catch(() => undefined);
     state = patchState(state, { notice: 'The extension restarted. Start a new session.' });
@@ -156,13 +165,28 @@ async function action(message: Record<string, any>, sender: chrome.runtime.Messa
     case 'ui.settings.reset': case 'ui.settings.save': {
       if (!['idle', 'error'].includes(state.status)) throw new Error('End the session before changing settings.');
       const settings = message.type === 'ui.settings.reset' ? defaults : SettingsSchema.parse(message.settings);
+      if (!validateSignalingOrigin(settings.signalingUrl)) throw new Error(SIGNALING_ORIGIN_ERROR);
+      const saved = await chrome.storage.local.get('identities');
+      const identities = (saved.identities ?? {}) as Record<string, { deviceId: string; ownerToken: string }>;
+      const previousUrl = state.settings.signalingUrl, previousIdentity = identities[previousUrl];
+      let notice: string | undefined;
+      if (!validateSignalingOrigin(previousUrl) && new URL(previousUrl).origin === new URL(settings.signalingUrl).origin && previousIdentity) {
+        if (!identities[settings.signalingUrl]) {
+          identities[settings.signalingUrl] = previousIdentity;
+          await chrome.storage.local.set({ identities });
+        } else if (identities[settings.signalingUrl]!.deviceId !== previousIdentity.deviceId) {
+          notice = 'The connection code changed to the identity already saved for this server. Your previous identity was kept.';
+        }
+      }
       if (message.type === 'ui.settings.reset') await chrome.storage.local.remove('settings'); else await chrome.storage.local.set({ settings });
-      const identities = (await chrome.storage.local.get('identities')).identities as Record<string, { deviceId: string }> | undefined;
-      state = idle(settings, identities?.[settings.signalingUrl]?.deviceId); broadcast(); return state;
+      state = idle(settings, identities[settings.signalingUrl]?.deviceId);
+      if (notice) state = patchState(state, { notice });
+      broadcast(); return state;
     }
     case 'ui.host.start': case 'ui.guest.start': {
       if (terminating) await terminating;
       if (!['idle', 'error'].includes(state.status)) throw new Error('A session is already active.');
+      if (!validateSignalingOrigin(state.settings.signalingUrl)) throw new Error(SIGNALING_ORIGIN_ERROR);
       const epoch = ++sessionEpoch, current = () => epoch === sessionEpoch;
       const host = message.type === 'ui.host.start';
       if (!host && (!isViewer(sender) || sender.tab?.id !== viewerTabId || !ownerPort)) throw new Error('Join from the connection page.');
@@ -276,7 +300,7 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
   void (async () => {
     const requestedEpoch = sessionEpoch;
     // Keep the gesture and continuation in the worker: the permission prompt can close the popup.
-    const authorization = fromPopup && message.type === 'ui.host.start' && message.requestPermissions === true && PasswordSchema.safeParse(message.password).success
+    const authorization = fromPopup && message.type === 'ui.host.start' && message.requestPermissions === true && PasswordSchema.safeParse(message.password).success && validateSignalingOrigin(state.settings.signalingUrl)
       ? Promise.all([
         chrome.tabs.query({ active: true, lastFocusedWindow: true }),
         chrome.permissions.request({ origins: ['http://*/*', 'https://*/*'], ...(message.clipboard === true ? { permissions: ['clipboardRead', 'clipboardWrite'] } : {}) }),

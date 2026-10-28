@@ -1,6 +1,6 @@
 import { createHmac, hkdfSync, pbkdf2Sync } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { PROTOCOL_VERSION, MIN_SUPPORTED_PROTOCOL_VERSION, deriveSessionKeys, extractSdpFingerprints, generateSessionSalt, signSdpFingerprint, verifySdpFingerprint } from '@ghostpair/protocol';
+import { PROTOCOL_VERSION, MIN_SUPPORTED_PROTOCOL_VERSION, MAX_CLIPBOARD_BYTES, deriveSessionKeys, extractSdpFingerprints, generateSessionSalt, signSdpFingerprint, verifySdpFingerprint } from '@ghostpair/protocol';
 import { createPeerSession, JsonChannel, type SessionCrypto } from './peer-session';
 
 const testSalt = '0123456789abcdef0123456789abcdef';
@@ -93,6 +93,59 @@ function harness(cryptoImpl: SessionCrypto = testCrypto) {
 describe('peer session lifetime', () => {
   beforeEach(() => { vi.useFakeTimers(); Socket.instances = []; Peer.instances = []; Peer.nextLocal = undefined; vi.stubGlobal('WebSocket', Socket); vi.stubGlobal('RTCPeerConnection', Peer); });
   afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); vi.unstubAllGlobals(); });
+
+  it.each([false, true])('negotiates large clipboard text without changing protocol (legacy=%s)', async legacy => {
+    let text = '';
+    const notify = vi.fn();
+    const session = createPeerSession(notify, async () => ({ ok: true }), { read: async () => text, write: async () => {} }, {}, testCrypto);
+    await session.handle({ type: 'session.start', role: 'host', deviceId: id, ownerToken: 'b'.repeat(64), password: 'Eight-42', clipboard: true,
+      settings: { signalingUrl: 'http://127.0.0.1:8787', stunUrls: ['stun:example.com:3478'], legacyCompatibility: legacy } });
+    const socket = Socket.instances.at(-1)!; socket.onopen?.(); socket.receive({ type: 'paired', sessionId: id, role: 'host' }); await settled();
+    const pc = Peer.instances.at(-1)!, control = pc.channels[0]!, clipboard = pc.channels[1]!;
+    control.onopen?.(); clipboard.onopen?.();
+    expect(control.send.mock.calls.slice(0, 2).map(([raw]) => JSON.parse(raw).type)).toEqual(['hello', 'capabilities']);
+    control.receive({ type: 'hello', protocol: legacy ? 4 : MIN_SUPPORTED_PROTOCOL_VERSION, sessionId: id, role: 'guest' });
+    control.receive({ type: 'clipboard.enabled', enabled: true }); await settled(); pc.connect(); await settled();
+    text = '\\'.repeat(MAX_CLIPBOARD_BYTES); await vi.advanceTimersByTimeAsync(500);
+    expect(clipboard.send).not.toHaveBeenCalled();
+    expect(notify).toHaveBeenCalledWith('transport.notice', { message: 'The copied text could not be sent. Update both extensions to share larger text.' });
+    control.receive({ type: 'capabilities', largeClipboard: true }); await settled();
+    text = '\0'.repeat(MAX_CLIPBOARD_BYTES); await vi.advanceTimersByTimeAsync(500);
+    const delivered = vi.fn(), receiveFailure = vi.fn();
+    const receiver = new Channel('clipboard');
+    const pipe = new JsonChannel(receiver as unknown as RTCDataChannel, delivered, receiveFailure, true);
+    for (const [packet] of clipboard.send.mock.calls) receiver.receive(JSON.parse(packet));
+    expect(delivered).toHaveBeenCalledWith(expect.objectContaining({ text }));
+    expect(receiveFailure).not.toHaveBeenCalled();
+    pipe.clear(); session.stop(); expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it.each(['control', 'clipboard'])('ends the session on an incomplete %s transfer', async label => {
+    const h = harness(), first = await h.start(); await first.greet(); first.pc.connect(); await settled();
+    const channel = first.pc.channels.find(channel => channel.label === label)!;
+    channel.receive({ transfer: 'stuck', index: 0, count: 2, data: '{' });
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(h.notify).toHaveBeenCalledWith('transport.ended', expect.objectContaining({ failed: true }));
+    expect(first.pc.close).toHaveBeenCalled(); expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('rejects too many tabs and ends the session when an otherwise valid snapshot exceeds the control budget', async () => {
+    const h = harness(), first = await h.start(); await first.greet(); first.pc.connect(); await settled();
+    const tabs = Array.from({ length: 501 }, (_, id) => ({ id, title: 'tab', url: 'https://example.com', active: id === 0, supported: true }));
+    await expect(h.session.handle({ type: 'session.state', snapshot: { ...snapshot, tabs } })).rejects.toThrow();
+    const oversized = tabs.slice(0, 200).map(tab => ({ ...tab, url: 'https://example.com/' + 'x'.repeat(8000) }));
+    expect(await h.session.handle({ type: 'session.state', snapshot: { ...snapshot, tabs: oversized } })).toMatchObject({ ok: false });
+    expect(h.notify).toHaveBeenCalledWith('transport.ended', expect.objectContaining({ failed: true }));
+    expect(first.pc.close).toHaveBeenCalled(); expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('rejects signaling paths before opening a socket or registering an identity', async () => {
+    const h = harness(), settings = { signalingUrl: 'https://example.com/prefix', stunUrls: ['stun:example.com:3478'] };
+    const fetchSpy = vi.fn(); vi.stubGlobal('fetch', fetchSpy);
+    await expect(h.session.handle({ type: 'identity.register', settings })).rejects.toThrow('without a path');
+    await expect(h.session.handle({ type: 'session.start', role: 'guest', deviceId: id, password: 'Eight-42', settings })).rejects.toThrow('without a path');
+    expect(fetchSpy).not.toHaveBeenCalled(); expect(Socket.instances).toHaveLength(0); expect(vi.getTimerCount()).toBe(0);
+  });
 
   it.each([MIN_SUPPORTED_PROTOCOL_VERSION - 1, PROTOCOL_VERSION + 1])('rejects unsupported peer protocol %i without enabling a session', async protocol => {
     const h = harness(), first = await h.start(); await first.greet(protocol);
@@ -486,6 +539,78 @@ it('refuses enqueueing beyond the bounded channel buffer', () => {
   expect(pipe.send({ text: 'x'.repeat(800_000) })).toBe(true);
   expect(pipe.send({ text: 'x'.repeat(300_000) })).toBe(false);
   expect(channel.send).not.toHaveBeenCalled(); pipe.clear();
+});
+
+describe('fragmented JSON channels', () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); });
+
+  it('keeps receiving while valid fragments make progress for more than five seconds', async () => {
+    const channel = new Channel('control'), delivered = vi.fn(), failure = vi.fn();
+    const pipe = new JsonChannel(channel as unknown as RTCDataChannel, delivered, failure);
+    const value = { text: 'x'.repeat(15_000) }, text = JSON.stringify(value), count = Math.ceil(text.length / 4000);
+    for (let index = 0; index < count; index++) {
+      channel.receive({ transfer: 'slow', index, count, data: text.slice(index * 4000, (index + 1) * 4000) });
+      await vi.advanceTimersByTimeAsync(2501);
+    }
+    expect(delivered).toHaveBeenCalledExactlyOnceWith(value); expect(failure).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0); pipe.clear();
+  });
+
+  it('expires without another packet and ignores duplicates as progress', async () => {
+    const channel = new Channel('control'), failure = vi.fn(), delivered = vi.fn();
+    const pipe = new JsonChannel(channel as unknown as RTCDataChannel, delivered, failure);
+    const fragment = { transfer: 'stuck', index: 0, count: 2, data: '{"text":' };
+    channel.receive(fragment); await vi.advanceTimersByTimeAsync(4000); channel.receive(fragment);
+    channel.receive({ ...fragment, index: 1, count: 3 });
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(failure).toHaveBeenCalledTimes(1); expect(pipe.send({ text: 'later' })).toBe(false);
+    channel.receive({ ...fragment, index: 1, data: '"late"}' });
+    expect(delivered).not.toHaveBeenCalled(); expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('cancels every incomplete transfer on cleanup', async () => {
+    const channel = new Channel('control'), failure = vi.fn();
+    const pipe = new JsonChannel(channel as unknown as RTCDataChannel, vi.fn(), failure);
+    for (const transfer of ['one', 'two']) channel.receive({ transfer, index: 0, count: 2, data: '{' });
+    expect(vi.getTimerCount()).toBe(2); pipe.clear();
+    await vi.advanceTimersByTimeAsync(5000); expect(failure).not.toHaveBeenCalled(); expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it.each(['x', '"', '\\', '\0'])('round-trips 256 KiB of %j only within the negotiated clipboard budget', character => {
+    const outbound = new Channel('clipboard'), inbound = new Channel('clipboard'), delivered = vi.fn(), failure = vi.fn();
+    const sender = new JsonChannel(outbound as unknown as RTCDataChannel, vi.fn(), failure, true);
+    const receiver = new JsonChannel(inbound as unknown as RTCDataChannel, delivered, failure, true);
+    const value = { counter: 1, origin: 'host', text: character.repeat(MAX_CLIPBOARD_BYTES) };
+    if (character !== 'x') { expect(sender.send(value)).toBe(false); expect(sender.needsLargeClipboard).toBe(true); expect(outbound.send).not.toHaveBeenCalled(); }
+    sender.allowLargeClipboard(); expect(sender.send(value)).toBe(true);
+    for (const [packet] of outbound.send.mock.calls) inbound.receive(JSON.parse(packet));
+    expect(delivered).toHaveBeenCalledWith(value); expect(failure).not.toHaveBeenCalled(); expect(vi.getTimerCount()).toBe(0);
+    sender.clear(); receiver.clear();
+  });
+
+  it('keeps control limits and bounds clipboard queues and malformed input', () => {
+    const control = new Channel('control'), controlPipe = new JsonChannel(control as unknown as RTCDataChannel, vi.fn(), vi.fn());
+    controlPipe.allowLargeClipboard(); expect(controlPipe.send({ text: '\0'.repeat(MAX_CLIPBOARD_BYTES) })).toBe(false);
+    const channel = new Channel('clipboard'); channel.bufferedAmount = 100_000;
+    const failure = vi.fn(), pipe = new JsonChannel(channel as unknown as RTCDataChannel, vi.fn(), failure, true);
+    pipe.allowLargeClipboard(); expect(pipe.send({ text: '\0'.repeat(MAX_CLIPBOARD_BYTES) })).toBe(true);
+    expect(pipe.send({ text: 'x'.repeat(300_000) })).toBe(false);
+    channel.receive({ transfer: 'invalid', index: 0, count: 401, data: 'x' });
+    channel.receive({ transfer: 'invalid', index: 2, count: 2, data: 'x' });
+    expect(vi.getTimerCount()).toBe(0); expect(failure).not.toHaveBeenCalled();
+    pipe.clear(); controlPipe.clear();
+  });
+
+  it('distinguishes congestion from text that needs an updated clipboard peer', () => {
+    const channel = new Channel('clipboard'); channel.bufferedAmount = 100_000;
+    const pipe = new JsonChannel(channel as unknown as RTCDataChannel, vi.fn(), vi.fn(), true);
+    expect(pipe.send({ text: 'x'.repeat(800_000) })).toBe(true);
+    expect(pipe.send({ text: 'x'.repeat(300_000) })).toBe(false); expect(pipe.needsLargeClipboard).toBe(false);
+    pipe.clear(); expect(pipe.send({ text: '\0'.repeat(MAX_CLIPBOARD_BYTES) })).toBe(false); expect(pipe.needsLargeClipboard).toBe(true);
+    pipe.allowLargeClipboard(); expect(pipe.send({ text: '\0'.repeat(MAX_CLIPBOARD_BYTES) })).toBe(true); expect(pipe.needsLargeClipboard).toBe(false);
+    pipe.clear();
+  });
 });
 
 it('completes a real WebCrypto host-to-guest offer/answer handshake end to end', async () => {
