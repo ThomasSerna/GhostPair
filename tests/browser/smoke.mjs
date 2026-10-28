@@ -11,6 +11,7 @@ import { visualWorkflow } from './visual-workflow.mjs';
 
 const fixture = httpServer((request, response) => {
   response.setHeader('Content-Type', 'text/html; charset=utf-8');
+  if (request.url.startsWith('/long-metadata')) { response.end(`<!doctype html><title>${'x'.repeat(4097)}</title><p>Unshared metadata fixture</p>`); return; }
   if (request.url === '/questionnaire') { response.end(questionnaireHtml); return; }
   if (request.url === '/questionnaire-frame') { response.end(`<!doctype html><title>Embedded questionnaire</title><style>body{margin:0}iframe{width:100%;height:720px;border:0}</style><iframe id="questionnaire" src="http://localhost:${fixture.address().port}/questionnaire"></iframe>`); return; }
   response.end(`<!doctype html><html><head><meta charset="utf-8"><title>Fixture ${request.url}</title><style>body{font:20px sans-serif;margin:30px;background:#f6f0df;color:#123638}input,textarea,button{display:block;font:inherit;padding:10px;margin:10px 0}#nested{height:90px;width:250px;overflow:auto}#nested>div{height:700px}#space{height:1800px}</style></head><body><h1>GhostPair video fixture</h1><button id="target" onclick="count.textContent=String(++window.clicks)">Click target</button><output id="count">0</output><input id="text"><textarea id="multiline"></textarea><div id="nested"><div>Scroll area</div></div><p id="clock"></p><div id="space"></div><script>window.clicks=0;setInterval(()=>clock.textContent=String(Date.now()),100)</script></body></html>`);
@@ -54,6 +55,11 @@ try {
     try {
       const [hostName, guestName] = pair.split(':');
       host = await launchExtension(hostName, extensionPath); guest = await launchExtension(guestName, guestExtensionPath, { nativeVisibility: true });
+      const normalizationHosts = ['127.0.0.1', 'localhost', 'ghostpair.test'];
+      for (const hostname of normalizationHosts) await host.context.route(`https://${hostname}:${fixture.address().port}/**`, async route => {
+        const url = new URL(route.request().url());
+        await route.fulfill({ response: await route.fetch({ url: `${base}${url.pathname}${url.search}` }) });
+      });
       assert.notEqual(host.id, guest.id, 'session must work with independently assigned extension IDs');
       const errors = [];
       for (const browser of [host, guest]) browser.context.on('page', page => page.on('pageerror', error => errors.push(error.message)));
@@ -80,6 +86,16 @@ try {
       await join(viewer, waiting.deviceId, 'Eight-42');
       await waitState(viewer, s => s.status === 'connected', 'direct session connected'); await videoReady(viewer);
       assert.equal((await state(viewer)).controlMode, 'visual');
+      const metadataUrl = `${base}/long-metadata?${'x'.repeat(8300)}`;
+      const metadataTab = await host.worker.evaluate(url => chrome.tabs.create({ url, active: false }), metadataUrl);
+      // Chromium already caps tab titles at 4096; the URL exercises the outgoing metadata bound.
+      const metadataHost = await waitState(hostUi, s => s.tabs.some(tab => tab.id === metadataTab.id && tab.title.length === 4096), 'unshared long metadata loaded');
+      assert.equal(metadataHost.tabs.find(tab => tab.id === metadataTab.id).url, metadataUrl, 'local metadata stays complete');
+      const metadataGuest = await waitState(viewer, s => s.tabs.some(tab => tab.id === metadataTab.id && tab.title.length === 4096 && tab.url === ''), 'remote metadata is bounded');
+      assert.equal(metadataGuest.tabs.find(tab => tab.id === metadataTab.id).authorized, false);
+      assert.equal(metadataGuest.status, 'connected'); await videoReady(viewer, page.url());
+      await host.worker.evaluate(tabId => chrome.tabs.remove(tabId), metadataTab.id);
+      await waitState(viewer, s => !s.tabs.some(tab => tab.id === metadataTab.id), 'unshared metadata tab closed');
       const beforeLanguage = await state(hostUi);
       await call(hostUi, 'ui.language.set', { preference: 'es' });
       await hostUi.waitForFunction(() => document.documentElement.lang === 'es');
@@ -152,6 +168,16 @@ try {
       await page.bringToFront();
       await page.goto(`${base}/one`); await videoReady(viewer, page.url());
       assert.equal(await page.locator('[data-ghostpair-panel]').isVisible(), false, 'panel stays hidden after navigation');
+      for (const hostname of normalizationHosts) {
+        const url = `https://${hostname}:${fixture.address().port}/normalized-navigation`;
+        await viewer.bringToFront();
+        await viewer.getByLabel('Remote page address').fill(` ${hostname}:${fixture.address().port}/normalized-navigation `);
+        await viewer.getByLabel('Remote page address').press('Enter');
+        await page.waitForURL(url); await videoReady(viewer, url);
+      }
+      await viewer.getByLabel('Remote page address').fill(`${base}/one`);
+      await viewer.getByLabel('Remote page address').press('Enter');
+      await page.waitForURL(`${base}/one`); await videoReady(viewer, page.url());
       await click(page, viewer, '#target'); await poll(() => page.evaluate(() => window.clicks === 1), 'remote click');
       await click(page, viewer, '#text'); await viewer.keyboard.insertText('GhostPair á漢🙂'); await viewer.keyboard.press('Backspace');
       await poll(() => page.locator('#text').inputValue().then(v => v === 'GhostPair á漢'), 'Unicode text and codepoint deletion');
@@ -178,16 +204,28 @@ try {
       await viewer.getByRole('button', { name: 'Open tab', exact: true }).click();
       const dialog = viewer.getByRole('dialog'); await dialog.getByLabel('Page address').fill('javascript:alert(1)'); await dialog.getByRole('button', { name: 'Open', exact: true }).click();
       assert.equal(await dialog.getByRole('alert').count(), 1);
-      await dialog.getByLabel('Page address').fill(`${base}/two`); await dialog.getByRole('button', { name: 'Open', exact: true }).click(); await dialog.waitFor({ state: 'hidden' });
-      const pending = await waitState(viewer, s => s.tabs.some(t => t.url === `${base}/two` && !t.authorized), 'new tab waits for approval');
+      for (const hostname of normalizationHosts) {
+        const url = `https://${hostname}:${fixture.address().port}/normalized-new-tab`;
+        await dialog.getByLabel('Page address').fill(`${hostname}:${fixture.address().port}/normalized-new-tab`);
+        await dialog.getByRole('button', { name: 'Open', exact: true }).click(); await dialog.waitFor({ state: 'hidden' });
+        const created = await waitState(viewer, s => s.tabs.some(tab => tab.url === url && !tab.authorized), 'port address opens a pending tab');
+        assert.equal(created.presentation, undefined);
+        const temporaryTab = created.tabs.find(tab => tab.url === url);
+        await host.worker.evaluate(tabId => chrome.tabs.remove(tabId), temporaryTab.id);
+        await page.bringToFront(); await videoReady(viewer, page.url());
+        await viewer.bringToFront(); await viewer.getByRole('button', { name: 'Open tab', exact: true }).click();
+      }
+      const secondUrl = `${base}/two`;
+      await dialog.getByLabel('Page address').fill(secondUrl); await dialog.getByRole('button', { name: 'Open', exact: true }).click(); await dialog.waitFor({ state: 'hidden' });
+      const pending = await waitState(viewer, s => s.tabs.some(t => t.url === secondUrl && !t.authorized), 'new tab waits for approval');
       assert.equal(pending.presentation, undefined);
-      const second = await poll(() => host.context.pages().find(p => p.url() === `${base}/two`), 'new host page');
+      const second = await poll(() => host.context.pages().find(p => p.url() === secondUrl), 'new host page');
       await authorize(host, second); await call(hostUi, 'ui.host.authorize'); await videoReady(viewer, second.url());
       assert.equal(await second.locator('[data-ghostpair-panel]').isVisible(), false, 'panel stays hidden in another authorized tab');
       await click(second, viewer, '#target'); await poll(() => second.evaluate(() => window.clicks === 1), 'second authorized tab');
       await call(viewer, 'ui.command', { command: { controlRevision: (await state(viewer)).controlRevision, type: 'tab.activate', tabId: original.tabId } }); await videoReady(viewer, page.url());
       await click(page, viewer, '#target'); await poll(() => page.evaluate(() => window.clicks === 3), 'return to first authorized tab');
-      const secondId = pending.tabs.find(t => t.url === `${base}/two`).id;
+      const secondId = pending.tabs.find(t => t.url === secondUrl).id;
       await call(viewer, 'ui.command', { command: { controlRevision: (await state(viewer)).controlRevision, type: 'tab.activate', tabId: secondId } }); await videoReady(viewer, second.url());
       await call(hostUi, 'ui.host.release', { tabId: original.tabId });
       await poll(async () => !(await host.worker.evaluate(() => chrome.tabCapture.getCapturedTabs())).some(t => t.tabId === original.tabId && ['active', 'pending'].includes(t.status)), 'released inactive source');
@@ -239,7 +277,7 @@ try {
       await poll(async () => !(await host.worker.evaluate(() => chrome.tabCapture.getCapturedTabs())).some(t => ['active', 'pending'].includes(t.status)), 'capture tracks released');
       assert.equal(guest.context.pages().filter(p => p.url() === `chrome-extension://${guest.id}/viewer.html`).length, 1);
       assert.deepEqual(errors, []);
-      results.push({ pair, host: host.version, guest: guest.version, independentExtensionIds: true, nativeVideo: true, questionnaire: true, embeddedQuestionnaire: true, cancellation: true, toolbar: appearance, renderedFramesInThreeSeconds: renderedFrames, passed: true }); console.log(JSON.stringify(results.at(-1)));
+      results.push({ pair, host: host.version, guest: guest.version, independentExtensionIds: true, nativeVideo: true, boundedUnsharedMetadata: true, pageAddressNormalization: true, questionnaire: true, embeddedQuestionnaire: true, cancellation: true, toolbar: appearance, renderedFramesInThreeSeconds: renderedFrames, passed: true }); console.log(JSON.stringify(results.at(-1)));
     } finally { await signal?.close(); await closeBrowser(guest); await closeBrowser(host); }
   }
   await writeFile(resolve(artifactRoot, 'native-smoke-results.json'), JSON.stringify(results, null, 2));
