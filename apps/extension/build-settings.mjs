@@ -1,8 +1,11 @@
 import { isIP } from 'node:net';
+import { SIGNALING_ORIGIN_ERROR, validateSignalingOrigin } from '@ghostpair/protocol';
 
 export function buildSettings(env) {
+  const signalingUrl = env.VITE_SIGNALING_URL || 'http://127.0.0.1:8787';
+  if (!validateSignalingOrigin(signalingUrl)) throw new Error(SIGNALING_ORIGIN_ERROR);
   return {
-    signalingUrl: env.VITE_SIGNALING_URL || 'http://127.0.0.1:8787',
+    signalingUrl,
     stunUrls: (env.VITE_STUN_URLS || 'stun:stun.l.google.com:19302').split(',').map(s => s.trim()).filter(Boolean),
   };
 }

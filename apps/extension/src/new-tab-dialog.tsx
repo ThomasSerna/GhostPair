@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { isSupportedUrl } from '@ghostpair/protocol';
+import { normalizePageUrl } from '@ghostpair/protocol';
 import { request } from './ui';
 import { useLocale, useTranslation } from './language';
 import { translateRuntimeMessage } from './runtime-messages';
@@ -14,9 +14,9 @@ export function NewTabDialog({ onClose, controlRevision }: { onClose: () => void
   useEffect(() => { const element = dialog.current; element?.showModal(); return () => element?.close(); }, []);
   async function open() {
     if (busy) return;
-    const value = url.trim();
-    const normalized = /^[a-z][a-z\d+.-]*:/i.test(value) ? value : `https://${value}`;
-    if (!value || !isSupportedUrl(normalized)) { setError('Enter an HTTP or HTTPS page address.'); return; }
+    let normalized: string;
+    try { normalized = normalizePageUrl(url); }
+    catch (error) { setError((error as Error).message); return; }
     setBusy(true); setError('');
     try { await request('ui.command', { command: { type: 'tab.create', url: normalized, controlRevision } }); onClose(); }
     catch (error) { setError((error as Error).message); setBusy(false); }

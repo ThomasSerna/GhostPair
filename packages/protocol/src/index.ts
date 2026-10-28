@@ -148,11 +148,24 @@ export function isSupportedUrl(url: string): boolean {
   catch { return false; }
 }
 
+export function normalizePageUrl(value: string): string {
+  const address = value.trim();
+  const hostWithPort = /^(?:localhost|[^/?#:@]+\.[^/?#:@]+|\[[\da-f:.]+\]):\d+(?:[/?#]|$)/i.test(address);
+  const url = /^[a-z][a-z\d+.-]*:/i.test(address) && !hostWithPort ? address : `https://${address}`;
+  if (!address || url.length > 8192 || !isSupportedUrl(url)) throw new Error('Enter an HTTP or HTTPS page address.');
+  return url;
+}
+
 export function validateSignalingUrl(value: string): boolean {
   try {
     const url = new URL(value);
     return !url.username && !url.password && !url.search && !url.hash && (url.protocol === 'https:' || (url.protocol === 'http:' && ['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname)));
   } catch { return false; }
+}
+
+export const SIGNALING_ORIGIN_ERROR = 'Use a connection server origin without a path. Edit Connection settings before starting a session.';
+export function validateSignalingOrigin(value: string): boolean {
+  return validateSignalingUrl(value) && new URL(value).pathname === '/';
 }
 
 const FINGERPRINT_BYTES: Record<string, number> = { 'sha-256': 32, 'sha-384': 48, 'sha-512': 64 };

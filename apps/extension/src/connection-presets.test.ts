@@ -1,5 +1,9 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { GHOSTPAIR_SERVER_SETTINGS, getConnectionServerMode, parseCustomConnectionSettings } from './connection-presets';
+import { SIGNALING_ORIGIN_ERROR } from '@ghostpair/protocol';
+import { requestSessionPermissions } from './ui';
+
+afterEach(() => vi.unstubAllGlobals());
 
 describe('connection server selection', () => {
   it('recognizes the official preset without treating local or modified settings as official', () => {
@@ -21,6 +25,18 @@ describe('connection server selection', () => {
     for (const url of ['invalid', 'http://connect.example.com', 'https://name:secret@connect.example.com', 'https://connect.example.com?secret=value', 'https://connect.example.com#secret']) {
       expect(() => parseCustomConnectionSettings(url, 'stun:first.example.com:3478')).toThrow();
     }
+  });
+
+  it('rejects signaling paths before saving or requesting permissions', async () => {
+    const request = vi.fn(async () => true);
+    vi.stubGlobal('chrome', { permissions: { request } });
+    for (const url of ['https://connect.example.com/ghostpair', 'https://connect.example.com/ghostpair/', 'https://connect.example.com//']) {
+      expect(() => parseCustomConnectionSettings(url, 'stun:first.example.com:3478')).toThrow(SIGNALING_ORIGIN_ERROR);
+      await expect(requestSessionPermissions(url, true, true)).rejects.toThrow(SIGNALING_ORIGIN_ERROR);
+    }
+    expect(request).not.toHaveBeenCalled();
+    await requestSessionPermissions('https://connect.example.com:8443/', false);
+    expect(request).toHaveBeenCalledWith({ origins: ['https://connect.example.com:8443/*'] });
   });
 
   it('preserves STUN-only validation and the one-to-five limit', () => {

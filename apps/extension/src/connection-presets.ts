@@ -1,4 +1,4 @@
-import { SettingsSchema, type Settings } from '@ghostpair/protocol';
+import { SettingsSchema, SIGNALING_ORIGIN_ERROR, validateSignalingOrigin, type Settings } from '@ghostpair/protocol';
 
 export const GHOSTPAIR_SERVER_SETTINGS: Settings = {
   signalingUrl: 'https://ghostpair-3c9f3903aad3.herokuapp.com',
@@ -12,12 +12,13 @@ export function getConnectionServerMode(settings: Settings): 'ghostpair' | 'cust
 }
 
 export function parseCustomConnectionSettings(url: string, stun: string): Settings {
-  const signalingUrl = url.trim().replace(/\/$/, '');
+  const signalingUrl = url.trim();
   const parsed = SettingsSchema.safeParse({ signalingUrl, stunUrls: stun.split(/[\n,]/).map(value => value.trim()).filter(Boolean) });
   if (!parsed.success) {
     const urlIssue = parsed.error.issues.find(issue => issue.path[0] === 'signalingUrl');
     if (urlIssue) throw new Error(urlIssue.code === 'custom' ? urlIssue.message : 'Enter a valid connection server URL.');
     throw new Error('Add one to five STUN servers, each starting with stun: or stuns:.');
   }
-  return parsed.data;
+  if (!validateSignalingOrigin(parsed.data.signalingUrl)) throw new Error(SIGNALING_ORIGIN_ERROR);
+  return { ...parsed.data, signalingUrl: signalingUrl.replace(/\/$/, '') };
 }

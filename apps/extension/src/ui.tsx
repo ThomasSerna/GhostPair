@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { AppState } from '@ghostpair/protocol';
+import { SIGNALING_ORIGIN_ERROR, validateSignalingOrigin, type AppState } from '@ghostpair/protocol';
 import { useLocale, useTranslation } from './language';
 import type { Message } from './messages';
 import { translateRuntimeMessage } from './runtime-messages';
@@ -53,6 +53,7 @@ export function Notifications({ state, error, onError, floating = false }: { sta
 export function formatDeviceId(value?: string) { return value ? value.match(/.{1,4}/g)?.join(' ').toUpperCase() : 'Generated when you share'; }
 
 export async function requestSessionPermissions(signalingUrl: string, clipboard: boolean, host = false): Promise<void> {
+  if (!validateSignalingOrigin(signalingUrl)) throw new Error(SIGNALING_ORIGIN_ERROR);
   const origin = new URL(signalingUrl).origin;
   const origins = host ? ['http://*/*', 'https://*/*'] : [`${origin}/*`];
   const granted = await chrome.permissions.request({ origins, ...(clipboard ? { permissions: ['clipboardRead', 'clipboardWrite'] } : {}) });

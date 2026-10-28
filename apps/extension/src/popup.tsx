@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { MIN_PASSWORD_LENGTH, PasswordSchema, type LanguagePreference, type VisualPreferences } from '@ghostpair/protocol';
+import { MIN_PASSWORD_LENGTH, PasswordSchema, SIGNALING_ORIGIN_ERROR, validateSignalingOrigin, type LanguagePreference, type VisualPreferences } from '@ghostpair/protocol';
 import { ConnectionSettings } from './connection-settings';
 import { SimulationPreferences } from './simulation-preferences';
 import { Brand, Status, Notifications, formatDeviceId, request, requestSessionPermissions, useSession } from './ui';
@@ -41,6 +41,7 @@ function Popup() {
 
   async function start() {
     if (!state || busy) return;
+    if (!validateSignalingOrigin(state.settings.signalingUrl)) { setError(SIGNALING_ORIGIN_ERROR); return; }
     if (!consent) { setError('Confirm what you want to share before continuing.'); return; }
     const parsed = PasswordSchema.safeParse(password);
     if (!parsed.success) { setError(validationMessage(parsed.error)); return; }

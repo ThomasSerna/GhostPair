@@ -1,9 +1,14 @@
 import { expect, it } from 'vitest';
 import { buildSettings, validateStoreSettings } from '../build-settings.mjs';
+import { SIGNALING_ORIGIN_ERROR } from '@ghostpair/protocol';
 
 it('keeps local defaults but rejects them for store packages', () => {
   expect(buildSettings({}).signalingUrl).toBe('http://127.0.0.1:8787');
   expect(() => validateStoreSettings(buildSettings({}))).toThrow('HTTPS');
+});
+it('rejects paths and unsafe signaling defaults in every build mode', () => {
+  for (const signalingUrl of ['https://connect.example.com/ghostpair', 'https://connect.example.com/ghostpair/', 'http://example.com', 'https://user:secret@example.com', 'https://example.com?secret=value']) expect(() => buildSettings({ VITE_SIGNALING_URL: signalingUrl })).toThrow(SIGNALING_ORIGIN_ERROR);
+  expect(buildSettings({ VITE_SIGNALING_URL: 'https://connect.example.com:8443/' }).signalingUrl).toBe('https://connect.example.com:8443/');
 });
 it('rejects non-public, credentialed and placeholder build endpoints', () => {
   for (const signalingUrl of ['http://connect.ghostpair.dev', 'https://localhost', 'https://127.0.0.1', 'https://192.168.1.2', 'https://[::1]', 'https://signal.internal', 'https://connect.example.com', 'https://connect.yourdomain.com', 'https://router.home.arpa', 'https://foo.test', 'https://name:secret@connect.ghostpair.dev', 'https://connect.ghostpair.dev/path', 'https://connect.ghostpair.dev/?secret=value']) {

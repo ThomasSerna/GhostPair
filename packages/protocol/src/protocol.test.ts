@@ -1,6 +1,6 @@
 import { createHmac, hkdfSync, pbkdf2Sync } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-import { VisualPreferencesSchema, PasswordSchema, ClientSignalMessageSchema, ControlCommandSchema, SettingsSchema, isRelaySignal, isSupportedUrl, validateSignalingUrl, extractSdpFingerprints, deriveSessionKeys, signSdpFingerprint, verifySdpFingerprint, generateSessionSalt, SessionSaltSchema, ServerSignalMessageSchema, KDF_ITERATIONS, PROTOCOL_VERSION, MIN_SUPPORTED_PROTOCOL_VERSION, isCompatibleProtocol } from './index';
+import { VisualPreferencesSchema, PasswordSchema, ClientSignalMessageSchema, ControlCommandSchema, SettingsSchema, isRelaySignal, isSupportedUrl, normalizePageUrl, validateSignalingUrl, validateSignalingOrigin, extractSdpFingerprints, deriveSessionKeys, signSdpFingerprint, verifySdpFingerprint, generateSessionSalt, SessionSaltSchema, ServerSignalMessageSchema, KDF_ITERATIONS, PROTOCOL_VERSION, MIN_SUPPORTED_PROTOCOL_VERSION, isCompatibleProtocol } from './index';
 describe('network boundaries', () => {
   it('requires an explicit boolean to enable legacy compatibility and keeps existing settings unchanged', () => {
     const settings = { signalingUrl: 'https://connect.example.com', stunUrls: ['stun:example.com:3478'] };
@@ -80,6 +80,23 @@ describe('network boundaries', () => {
       expect(SettingsSchema.parse({ ...settings, signalingUrl }).signalingUrl).toBe(signalingUrl);
     }
     expect(() => SettingsSchema.parse({ ...settings, signalingUrl: 'http://example.com' })).toThrow('Use HTTPS for signaling, or HTTP on localhost.');
+  });
+
+  it('normalizes page addresses consistently, including hosts with ports', () => {
+    for (const address of ['example.com', 'example.com:8443/path?x=1#answer', 'localhost:8787', '127.0.0.1:8787/path', '[::1]:8787/path']) {
+      expect(normalizePageUrl(` ${address} `)).toBe(`https://${address}`);
+    }
+    for (const address of ['http://localhost:8787/path', 'https://example.com:8443/path']) expect(normalizePageUrl(address)).toBe(address);
+    for (const address of ['', ' ', 'javascript:alert(1)', 'javascript:80', 'data:text/html,test', 'file:///c:/test', 'ftp://example.com', 'https://user:secret@example.com', 'user:secret@example.com', 'chromewebstore.google.com/detail/test', 'https://microsoftedge.microsoft.com/addons/detail/test', 'localhost:99999', `https://example.com/${'x'.repeat(8192)}`]) {
+      expect(() => normalizePageUrl(address), address).toThrow('Enter an HTTP or HTTPS page address.');
+    }
+  });
+
+  it('requires origins for new signaling use while retaining readable legacy settings', () => {
+    for (const signalingUrl of ['https://example.com', 'https://example.com/', 'https://example.com:8443', 'http://localhost:8787', 'http://127.0.0.1:8787/', 'http://[::1]:8787']) expect(validateSignalingOrigin(signalingUrl), signalingUrl).toBe(true);
+    for (const signalingUrl of ['https://example.com/ghostpair', 'https://example.com/ghostpair/', 'https://example.com/?token=secret', 'https://example.com/#fragment', 'https://user:secret@example.com', 'http://example.com', 'invalid']) expect(validateSignalingOrigin(signalingUrl), signalingUrl).toBe(false);
+    const settings = { signalingUrl: 'https://example.com/ghostpair', stunUrls: ['stun:example.com'] };
+    expect(SettingsSchema.parse(settings)).toEqual(settings);
   });
 
   it('extracts canonical DTLS fingerprints and rejects malformed SDP', () => {
