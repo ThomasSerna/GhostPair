@@ -36,7 +36,7 @@ The dev server binds to localhost. Vite prints the address. The site inspection 
 
 ## Publishing
 
-Edit source files in this workspace, then run `npm run build:landing`. Review and commit both source and generated `docs/index.html` / `docs/assets/landing/` files. Relative asset URLs support the GitHub Pages project path and a local static server. The existing Pages configuration can continue serving `main` / `docs`.
+Edit source files in this workspace, then run `npm run build:landing`. Review and commit both source and generated `docs/index.html` / `docs/assets/landing/` files. CI fails if the production build leaves those generated files modified, removed or untracked. Relative asset URLs support the GitHub Pages project path and a local static server. The existing Pages configuration can continue serving `main` / `docs`.
 
 The build only replaces `docs/index.html` and clears the generated `docs/assets/landing/` directory. It preserves `.nojekyll`, privacy, release notes, documentation and product preview exports. Old content-hashed assets are removed from the dedicated landing directory on each build.
 

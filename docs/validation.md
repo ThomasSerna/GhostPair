@@ -1,5 +1,19 @@
 # GhostPair validation
 
+## Repository audit fixes: October 28, 2026
+
+Workspace type checks, the production build, **282 Vitest tests across 21 files** and **9 Node CI/release tests** passed. These include fragmented transfer expiry, escaped 256 KiB clipboard text, legacy capability negotiation, signaling-origin validation, saved identities, snapshot publication and the generated-site CI check. `tests/browser/environment-check.mjs` passed build-default precedence, private-value exclusion and disposable package checks.
+
+The DOM-control probe passed in Chrome **156.0.8078.49** and Edge **156.0.4314.50**, including numeric and email editing, `maxlength`, Unicode selection, cancellation and React-controlled input. The questionnaire probe passed **40 comparisons** across both browsers. The visual probe passed in both browsers, including local clipboard events, IME and drag concurrency, non-mutation and adaptive styles. These probes use synthetic pages and a stubbed extension runtime; they do not validate video capture, actual extension permission prompts or the system clipboard.
+
+The extension frame probe passed in Chrome **156.0.8078.49** and Edge **156.0.4314.50** with local signaling, synthetic pages and disposable browser profiles, including cross-origin and nested frames and native video. The landing language check passed at desktop and mobile widths, including the Explore demo's initial message, action feedback and error in English and Spanish.
+
+The local Chrome compatibility test passed all four pairings of the actual 0.6.6 build and the updated 0.7 build, including video, clicks, Unicode input and cleanup; clipboard sharing was disabled in this test. A second landing build matched the committed generated files, and the CI generated-site guard passed.
+
+The full landing inspection passed at five viewport widths, checking navigation, focus, preview assets, video and reduced motion.
+
+Separate native-session smoke runs passed with **Chrome→Chrome**, **Edge→Edge** and **Chrome→Edge**, each rendering 30 video frames in a three-second sample. They covered independent extension IDs, long metadata on unshared tabs, page addresses with ports, root and embedded questionnaires, cancellation, toolbar state and session cleanup. An initial combined run reported the first two pairs passing but exited with no diagnostic and no result for the third; all three were then rerun individually with exit code 0. These checks use synthetic pages, local signaling and STUN, disposable browser profiles and test-only site permissions; they do not validate production services, actual permission prompts or the system clipboard.
+
 ## Mixed 0.6.6 and 0.7 sessions: October 28, 2026
 
 Workspace type checks, **243 Vitest tests**, **8 Node release tests**, and all production builds passed. Server tests cover strict legacy message validation, wrong credentials, concurrent legacy/current rooms, cross-mode rejection, shared authentication limits and competing guest checks. Legacy password hashing retains the original `scrypt` work factor (`N=131072`, `r=8`, `p=1`) and runs one hash at a time per server to bound memory; the 33 server tests also passed after this resource limit was applied.
