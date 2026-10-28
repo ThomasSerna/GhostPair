@@ -1,6 +1,6 @@
 import { createHmac, hkdfSync, pbkdf2Sync } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { PROTOCOL_VERSION, deriveSessionKeys, extractSdpFingerprints, generateSessionSalt, signSdpFingerprint, verifySdpFingerprint } from '@ghostpair/protocol';
+import { PROTOCOL_VERSION, MIN_SUPPORTED_PROTOCOL_VERSION, deriveSessionKeys, extractSdpFingerprints, generateSessionSalt, signSdpFingerprint, verifySdpFingerprint } from '@ghostpair/protocol';
 import { createPeerSession, JsonChannel, type SessionCrypto } from './peer-session';
 
 const testSalt = '0123456789abcdef0123456789abcdef';
@@ -94,11 +94,20 @@ describe('peer session lifetime', () => {
   beforeEach(() => { vi.useFakeTimers(); Socket.instances = []; Peer.instances = []; Peer.nextLocal = undefined; vi.stubGlobal('WebSocket', Socket); vi.stubGlobal('RTCPeerConnection', Peer); });
   afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); vi.unstubAllGlobals(); });
 
-  it('rejects incompatible peers explicitly without enabling a session', async () => {
-    const h = harness(), first = await h.start(); await first.greet(PROTOCOL_VERSION - 1);
-    expect(h.notify).toHaveBeenCalledWith('transport.ended', expect.objectContaining({ failed: true, reason: 'Incompatible GhostPair versions. Update both extensions.' }));
+  it.each([MIN_SUPPORTED_PROTOCOL_VERSION - 1, PROTOCOL_VERSION + 1])('rejects unsupported peer protocol %i without enabling a session', async protocol => {
+    const h = harness(), first = await h.start(); await first.greet(protocol);
+    expect(h.notify).toHaveBeenCalledWith('transport.ended', expect.objectContaining({ failed: true, reason: 'These extensions use incompatible connection protocols. Update the older extension.' }));
     expect(h.notify.mock.calls.some(([type]) => type === 'transport.connected')).toBe(false); expect(first.pc.close).toHaveBeenCalled();
     expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it.each([...new Set([MIN_SUPPORTED_PROTOCOL_VERSION, PROTOCOL_VERSION])])('connects supported peer protocol %i while advertising the oldest wire protocol', async protocol => {
+    const h = harness(), first = await h.start();
+    expect(first.control.send.mock.calls.map(([value]) => JSON.parse(value))).toContainEqual({ type: 'hello', protocol: MIN_SUPPORTED_PROTOCOL_VERSION, sessionId: id, role: 'host' });
+    expect(first.socket.send.mock.calls.map(([value]) => JSON.parse(value))).toContainEqual(expect.objectContaining({ type: 'host.open', protocol: MIN_SUPPORTED_PROTOCOL_VERSION }));
+    await first.greet(protocol); first.pc.connect(); await settled();
+    expect(h.notify).toHaveBeenCalledWith('transport.connected', { sessionId: id });
+    h.session.stop();
   });
 
   it('keeps compatibility ping replies and the background keepalive without RTT telemetry', async () => {
@@ -306,7 +315,7 @@ describe('peer session lifetime', () => {
     const keys = await testCrypto.deriveKeys('Eight-42', id, testSalt);
     expect(openMsg).toEqual({
       type: 'host.open',
-      protocol: PROTOCOL_VERSION,
+      protocol: MIN_SUPPORTED_PROTOCOL_VERSION,
       deviceId: id,
       ownerToken: 'b'.repeat(64),
       salt: testSalt,
@@ -358,7 +367,7 @@ describe('peer session lifetime', () => {
     const firstSocket = Socket.instances.at(-1)!;
     firstSocket.onopen?.();
     expect(firstSocket.send.mock.calls.map(([raw]) => JSON.parse(raw))).toEqual([
-      { type: 'guest.challenge', protocol: PROTOCOL_VERSION, deviceId: id },
+      { type: 'guest.challenge', protocol: MIN_SUPPORTED_PROTOCOL_VERSION, deviceId: id },
     ]);
     firstSocket.receive({ type: 'guest.salt', deviceId: id, salt: testSalt });
     // Stopping the session before key derivation finishes must discard the result.
@@ -379,8 +388,8 @@ describe('peer session lifetime', () => {
     await settled();
     const keys = await testCrypto.deriveKeys('Eight-42', id, testSalt);
     expect(secondSocket.send.mock.calls.map(([raw]) => JSON.parse(raw))).toEqual([
-      { type: 'guest.challenge', protocol: PROTOCOL_VERSION, deviceId: id },
-      { type: 'guest.join', protocol: PROTOCOL_VERSION, deviceId: id, password: keys.authToken },
+      { type: 'guest.challenge', protocol: MIN_SUPPORTED_PROTOCOL_VERSION, deviceId: id },
+      { type: 'guest.join', protocol: MIN_SUPPORTED_PROTOCOL_VERSION, deviceId: id, password: keys.authToken },
     ]);
     secondSocket.receive({ type: 'paired', sessionId: id, role: 'guest' });
     await settled();
@@ -399,7 +408,10 @@ describe('peer session lifetime', () => {
     h.session.stop();
   });
 
-  it('surfaces INCOMPATIBLE_PROTOCOL server errors to the user', async () => {
+  it.each([
+    'Incompatible GhostPair versions. Update both extensions.',
+    'The extension and signaling server use incompatible connection protocols. Update the extension or server.',
+  ])('surfaces old and current INCOMPATIBLE_PROTOCOL server errors: %s', async message => {
     const h = harness();
     await h.session.handle({
       type: 'session.start', role: 'guest', deviceId: id, password: 'Eight-42', clipboard: false,
@@ -407,10 +419,10 @@ describe('peer session lifetime', () => {
     });
     const socket = Socket.instances.at(-1)!;
     socket.onopen?.();
-    socket.receive({ type: 'error', code: 'INCOMPATIBLE_PROTOCOL', message: 'Incompatible GhostPair versions. Update both extensions.' });
+    socket.receive({ type: 'error', code: 'INCOMPATIBLE_PROTOCOL', message });
     expect(h.notify).toHaveBeenCalledWith('transport.ended', {
       failed: true,
-      reason: 'Incompatible GhostPair versions. Update both extensions.',
+      reason: message,
     });
   });
 });

@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { createServer as createHttpServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { isIP, type AddressInfo } from 'node:net';
 import { WebSocket, WebSocketServer, type RawData } from 'ws';
-import { ClientSignalMessageSchema, PROTOCOL_VERSION, extractSdpFingerprints, isRelaySignal, type ClientSignalMessage, type ServerSignalMessage } from '@ghostpair/protocol';
+import { ClientSignalMessageSchema, isCompatibleProtocol, extractSdpFingerprints, isRelaySignal, type ClientSignalMessage, type ServerSignalMessage } from '@ghostpair/protocol';
 import { defaultConfig, type ServerConfig } from './config.js';
 import { Devices, type DeviceStore } from './devices.js';
 import { PostgresDevices } from './postgres-devices.js';
@@ -391,10 +391,10 @@ export function createServer(overrides: Partial<ServerConfig> = {}, store?: Devi
     let input: unknown;
     try { if (binary) throw new Error('Binary signaling'); input = JSON.parse(data.toString()); }
     catch { counters.protocolErrors += 1; error(client, 'INVALID_MESSAGE', 'Invalid message.'); client.socket.close(1008, 'Invalid message'); return; }
-    // Older clients cannot parse the v6 handshake; tell them to update instead of failing validation or authentication.
+    // Pre-v6 clients use a different authentication handshake; never downgrade it.
     const opening = input !== null && typeof input === 'object' ? input as { type?: unknown; protocol?: unknown } : undefined;
-    if (opening && ['host.open', 'guest.challenge', 'guest.join'].includes(String(opening.type)) && opening.protocol !== PROTOCOL_VERSION) {
-      error(client, 'INCOMPATIBLE_PROTOCOL', 'Incompatible GhostPair versions. Update both extensions.'); return;
+    if (opening && ['host.open', 'guest.challenge', 'guest.join'].includes(String(opening.type)) && !isCompatibleProtocol(opening.protocol)) {
+      error(client, 'INCOMPATIBLE_PROTOCOL', 'The extension and signaling server use incompatible connection protocols. Update the extension or server.'); return;
     }
     const parsed = ClientSignalMessageSchema.safeParse(input);
     if (!parsed.success) {

@@ -1,6 +1,11 @@
 import { z } from 'zod';
 
 export const PROTOCOL_VERSION = 6;
+// Routine releases keep the v6 wire format; only a breaking change raises this floor.
+export const MIN_SUPPORTED_PROTOCOL_VERSION = 6;
+export function isCompatibleProtocol(protocol: unknown): protocol is number {
+  return typeof protocol === 'number' && Number.isSafeInteger(protocol) && protocol >= MIN_SUPPORTED_PROTOCOL_VERSION && protocol <= PROTOCOL_VERSION;
+}
 export const MAX_CLIPBOARD_BYTES = 256 * 1024;
 
 const id = z.string().min(1).max(128).refine(value => !value.includes('\0'), 'Invalid identifier.');

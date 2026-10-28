@@ -1,7 +1,14 @@
 import { createHmac, hkdfSync, pbkdf2Sync } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-import { VisualPreferencesSchema, PasswordSchema, ClientSignalMessageSchema, ControlCommandSchema, SettingsSchema, isRelaySignal, isSupportedUrl, validateSignalingUrl, extractSdpFingerprints, deriveSessionKeys, signSdpFingerprint, verifySdpFingerprint, generateSessionSalt, SessionSaltSchema, ServerSignalMessageSchema, KDF_ITERATIONS, PROTOCOL_VERSION } from './index';
+import { VisualPreferencesSchema, PasswordSchema, ClientSignalMessageSchema, ControlCommandSchema, SettingsSchema, isRelaySignal, isSupportedUrl, validateSignalingUrl, extractSdpFingerprints, deriveSessionKeys, signSdpFingerprint, verifySdpFingerprint, generateSessionSalt, SessionSaltSchema, ServerSignalMessageSchema, KDF_ITERATIONS, PROTOCOL_VERSION, MIN_SUPPORTED_PROTOCOL_VERSION, isCompatibleProtocol } from './index';
 describe('network boundaries', () => {
+  it('accepts the supported wire range independently of product versions without guessing future protocols', () => {
+    expect(MIN_SUPPORTED_PROTOCOL_VERSION).toBeLessThanOrEqual(PROTOCOL_VERSION);
+    for (let protocol = MIN_SUPPORTED_PROTOCOL_VERSION; protocol <= PROTOCOL_VERSION; protocol++) expect(isCompatibleProtocol(protocol)).toBe(true);
+    for (const protocol of [MIN_SUPPORTED_PROTOCOL_VERSION - 1, PROTOCOL_VERSION + 1, 6.5, '6', undefined, null, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1]) {
+      expect(isCompatibleProtocol(protocol)).toBe(false);
+    }
+  });
   it('migrates click animations on by default and preserves an explicit opt-out', () => {
     for (const saved of [{}, { notices: true, duration: 'temporary', seconds: 4 }, { text: { seconds: 10 }, other: { seconds: 3 } }]) {
       expect(VisualPreferencesSchema.parse(saved).clickAnimations).toBe(true);

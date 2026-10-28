@@ -4,7 +4,7 @@ import { join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { WebSocket } from 'ws';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { PROTOCOL_VERSION, ServerSignalMessageSchema, type ClientSignalMessage, type ServerSignalMessage } from '@ghostpair/protocol';
+import { PROTOCOL_VERSION, MIN_SUPPORTED_PROTOCOL_VERSION, ServerSignalMessageSchema, type ClientSignalMessage, type ServerSignalMessage } from '@ghostpair/protocol';
 import { createServer, type SignalingServer } from './server.js';
 import type { ServerConfig } from './config.js';
 import { Devices, type DeviceStore } from './devices.js';
@@ -494,20 +494,40 @@ it('queues burst authentications in FIFO order and drops disconnected queued cli
   expect(app.server.stats.activeRooms).toBe(2);
 });
 
-it('rejects outdated or missing handshake protocol versions with INCOMPATIBLE_PROTOCOL without closing the socket', async () => {
+it.each([...new Set([MIN_SUPPORTED_PROTOCOL_VERSION, PROTOCOL_VERSION])])('pairs supported protocol %i with the oldest supported client and forwards signaling', async protocol => {
+  const app = await start();
+  const identity = await app.register();
+  const host = await app.connect();
+  host.send(hostOpen(identity, { protocol }));
+  const ready = await host.next('host.ready');
+  const guest = await app.connect();
+  guest.send({ ...guestChallenge(identity.deviceId), protocol: MIN_SUPPORTED_PROTOCOL_VERSION });
+  expect((await guest.next('guest.salt')).salt).toBe(salt);
+  guest.send({ ...guestJoin(identity.deviceId, wrongPassword), protocol: MIN_SUPPORTED_PROTOCOL_VERSION });
+  expect((await guest.next('error')).code).toBe('AUTH_FAILED');
+  guest.send({ ...guestJoin(identity.deviceId), protocol: MIN_SUPPORTED_PROTOCOL_VERSION });
+  expect((await guest.next('paired')).sessionId).toBe(ready.sessionId);
+  await host.next('paired');
+  host.send({ type: 'signal', sessionId: ready.sessionId, payload: { type: 'offer', sdp: offerSdp } });
+  expect((await guest.next('signal')).payload).toEqual({ type: 'offer', sdp: offerSdp });
+  guest.send({ type: 'signal', sessionId: ready.sessionId, payload: { type: 'answer', sdp: answerSdp } });
+  expect((await host.next('signal')).payload).toEqual({ type: 'answer', sdp: answerSdp });
+});
+
+it('rejects unsupported or missing handshake protocol versions with INCOMPATIBLE_PROTOCOL without closing the socket', async () => {
   const app = await start({ maxProtocolErrorsPerSocket: 1 });
   const identity = await app.register();
   const peer = await app.connect();
   for (const outdated of [
     { type: 'host.open', deviceId: identity.deviceId, ownerToken: identity.ownerToken, password: 'Eight-42' },
-    { type: 'host.open', protocol: PROTOCOL_VERSION - 1, ...identity, salt, password },
-    { type: 'guest.challenge', protocol: PROTOCOL_VERSION - 1, deviceId: identity.deviceId },
+    { type: 'host.open', protocol: MIN_SUPPORTED_PROTOCOL_VERSION - 1, ...identity, salt, password },
+    { type: 'guest.challenge', protocol: MIN_SUPPORTED_PROTOCOL_VERSION - 1, deviceId: identity.deviceId },
     { type: 'guest.join', protocol: PROTOCOL_VERSION + 1, deviceId: identity.deviceId, password },
   ]) {
     peer.socket.send(JSON.stringify(outdated));
     const err = await peer.next('error');
     expect(err.code).toBe('INCOMPATIBLE_PROTOCOL');
-    expect(err.message).toBe('Incompatible GhostPair versions. Update both extensions.');
+    expect(err.message).toBe('The extension and signaling server use incompatible connection protocols. Update the extension or server.');
   }
   expect(app.server.stats.protocolErrors).toBe(0);
   peer.send(hostOpen(identity));

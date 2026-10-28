@@ -65,6 +65,8 @@ export const spanishRuntimeMessages = {
   'Grant the selected permissions before starting.': 'Concede los permisos seleccionados antes de iniciar.',
   'Identity storage is unavailable. Try again later.': 'El registro de identidades no está disponible. Inténtalo más tarde.',
   'Incompatible GhostPair versions. Update both extensions.': 'Las versiones de GhostPair no son compatibles. Actualiza ambas extensiones.',
+  'The extension and signaling server use incompatible connection protocols. Update the extension or server.': 'La extensión y el servidor de conexión usan protocolos incompatibles. Actualiza la extensión o el servidor.',
+  'These extensions use incompatible connection protocols. Update the older extension.': 'Estas extensiones usan protocolos de conexión incompatibles. Actualiza la extensión más antigua.',
   'Invalid drag destination.': 'El destino de arrastre no es válido.',
   'Invalid drag token.': 'El identificador de arrastre no es válido.',
   'Invalid dragged text.': 'El texto arrastrado no es válido.',

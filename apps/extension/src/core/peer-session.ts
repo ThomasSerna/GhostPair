@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { ControlModeSchema, ControlCommandSchema, PresentationSchema, MediaSignalSchema, SettingsSchema, ServerSignalMessageSchema, deriveSessionKeys, generateSessionSalt, isRelaySignal, signSdpFingerprint, verifySdpFingerprint, PROTOCOL_VERSION, MAX_CLIPBOARD_BYTES, type ControlCommand, type Settings, type SignalPayload, type Presentation, type MediaSignal, type SessionKeys } from '@ghostpair/protocol';
+import { ControlModeSchema, ControlCommandSchema, PresentationSchema, MediaSignalSchema, SettingsSchema, ServerSignalMessageSchema, deriveSessionKeys, generateSessionSalt, isRelaySignal, signSdpFingerprint, verifySdpFingerprint, isCompatibleProtocol, MIN_SUPPORTED_PROTOCOL_VERSION, MAX_CLIPBOARD_BYTES, type ControlCommand, type Settings, type SignalPayload, type Presentation, type MediaSignal, type SessionKeys } from '@ghostpair/protocol';
 import { MediaSession } from './media-session';
 import { ClipboardSync, type ClipboardAdapter, type ClipboardUpdate } from './clipboard';
 
@@ -199,7 +199,7 @@ async function establish() {
 
 async function receiveControl(message: z.infer<typeof PeerMessageSchema>) {
   if (message.type === 'hello') {
-    if (message.protocol !== PROTOCOL_VERSION) { fail('Incompatible GhostPair versions. Update both extensions.'); return; }
+    if (!isCompatibleProtocol(message.protocol)) { fail('These extensions use incompatible connection protocols. Update the older extension.'); return; }
     if (message.sessionId !== sessionId || message.role === role) { fail('The session identity does not match.'); return; }
     greeted = true; await establish(); return;
   }
@@ -295,7 +295,7 @@ function attachChannel(channel: RTCDataChannel, current: number) {
         if (message) await receiveControl(message);
       }).catch(() => undefined).finally(() => { --pendingControls; });
     }, () => { if (epoch === current && !ending) fail('The control connection could not send input. Start a new session.'); });
-    channel.onopen = () => { if (epoch !== current) return; sendPeer({ type: 'hello', protocol: PROTOCOL_VERSION, sessionId, role }); };
+    channel.onopen = () => { if (epoch !== current) return; sendPeer({ type: 'hello', protocol: MIN_SUPPORTED_PROTOCOL_VERSION, sessionId, role }); };
     channel.onclose = () => { if (epoch === current && !ending && role) cleanup('The other participant disconnected.', true); };
   } else if (channel.label === 'clipboard') {
     if (clipboardChannel) { channel.close(); return; }
@@ -408,11 +408,11 @@ async function start(message: Record<string, any>) {
   ws.onopen = () => {
     if (epoch !== current) return;
     if (role === 'host') {
-      ws.send(JSON.stringify({ type: 'host.open', protocol: PROTOCOL_VERSION, deviceId, ownerToken, salt: hostSalt, password: authToken }));
+      ws.send(JSON.stringify({ type: 'host.open', protocol: MIN_SUPPORTED_PROTOCOL_VERSION, deviceId, ownerToken, salt: hostSalt, password: authToken }));
       // Do not retain derived or owner credentials after dispatch.
       authToken = undefined; ownerToken = undefined; hostSalt = undefined;
     } else {
-      ws.send(JSON.stringify({ type: 'guest.challenge', protocol: PROTOCOL_VERSION, deviceId }));
+      ws.send(JSON.stringify({ type: 'guest.challenge', protocol: MIN_SUPPORTED_PROTOCOL_VERSION, deviceId }));
     }
   };
   ws.onmessage = event => {
@@ -432,7 +432,7 @@ async function start(message: Record<string, any>) {
       void sessionCrypto.deriveKeys(guestPassword, deviceId, message.salt).then(keys => {
         if (epoch !== current || ws.readyState !== WebSocket.OPEN) return;
         macKey = keys.macKey;
-        ws.send(JSON.stringify({ type: 'guest.join', protocol: PROTOCOL_VERSION, deviceId, password: keys.authToken }));
+        ws.send(JSON.stringify({ type: 'guest.join', protocol: MIN_SUPPORTED_PROTOCOL_VERSION, deviceId, password: keys.authToken }));
       }).catch(() => {
         if (epoch === current) fail('Could not prepare the connection. Start a new session.');
       });
