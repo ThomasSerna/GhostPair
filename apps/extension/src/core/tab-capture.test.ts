@@ -87,6 +87,83 @@ describe('TabCapture authorization and scoped control', () => {
     await h.capture.stop();
   });
 
+  it.each(['mode', 'preferences'])('reconciles repeated %s changes before publishing a delayed root', async change => {
+    const h = harness(), injected = Promise.withResolvers<void>(), enterInjection = Promise.withResolvers<void>();
+    const configured = Promise.withResolvers<void>(), enterConfiguration = Promise.withResolvers<void>();
+    const originalInjection = h.browser.scripting.executeScript.getMockImplementation()!;
+    const originalMessage = h.browser.tabs.sendMessage.getMockImplementation()!;
+    h.browser.scripting.executeScript.mockImplementation(async (...args) => { enterInjection.resolve(); await injected.promise; return originalInjection(...args); });
+    h.browser.tabs.sendMessage.mockImplementation(async (...args) => {
+      if (args[1].operation === 'configure') { enterConfiguration.resolve(); await configured.promise; }
+      return originalMessage(...args);
+    });
+    const sharing = h.share(); await enterInjection.promise;
+    const initial = h.browser.scripting.executeScript.mock.calls[0]![0].args[3];
+    const first = { ...initial, mode: change === 'mode' ? 'live' : initial.mode, revision: change === 'mode' ? 1 : initial.revision, preferences: { ...initial.preferences, showInteractions: false } };
+    await h.capture.configure(first); injected.resolve(); await enterConfiguration.promise;
+    const latest = { ...first, revision: change === 'mode' ? 2 : first.revision, preferences: { ...first.preferences, clickAnimations: false } };
+    await h.capture.configure(latest);
+    await h.capture.setLanguage(pageMessages('es'));
+    expect(h.current()).toBeUndefined(); configured.resolve(); await sharing;
+    const updates = h.browser.tabs.sendMessage.mock.calls.filter(([, message]) => message.operation === 'configure');
+    expect(updates.map(([, message]) => message.configuration)).toEqual([first, latest]);
+    expect(updates.at(-1)![2]).toEqual({ documentId: 'document-one' });
+    expect(h.browser.tabs.sendMessage.mock.calls.filter(([, message]) => ['configure', 'localize'].includes(message.operation)).map(([, message]) => message.operation)).toEqual(['configure', 'configure', 'localize']);
+    expect(h.current()?.documentId).toBe('document-one');
+    await h.capture.execute({ type: 'text', controlRevision: latest.revision, ...h.target(), text: 'Current configuration' });
+    expect(h.commands()).toHaveLength(1); await h.capture.stop();
+  });
+
+  it.each(['navigation', 'stop'])('cannot publish a root configured after %s', async cancellation => {
+    const h = harness(), injected = Promise.withResolvers<void>(), entered = Promise.withResolvers<void>();
+    const configuration = Promise.withResolvers<any>(), configuring = Promise.withResolvers<void>();
+    const original = h.browser.scripting.executeScript.getMockImplementation()!;
+    h.browser.scripting.executeScript.mockImplementation(async (...args) => { entered.resolve(); await injected.promise; return original(...args); });
+    const originalMessage = h.browser.tabs.sendMessage.getMockImplementation()!;
+    h.browser.tabs.sendMessage.mockImplementation(async (...args) => {
+      if (args[1].operation === 'configure') { configuring.resolve(); return configuration.promise; }
+      return originalMessage(...args);
+    });
+    const sharing = h.share(); await entered.promise;
+    const initial = h.browser.scripting.executeScript.mock.calls[0]![0].args[3];
+    await h.capture.configure({ ...initial, mode: 'live', revision: 1 });
+    injected.resolve(); await configuring.promise;
+    if (cancellation === 'stop') await h.capture.stop();
+    else h.browser.webNavigation.onBeforeNavigate.emit({ tabId: 12, frameId: 0 });
+    configuration.resolve({ ok: true }); await sharing;
+    expect(h.current()).toBeUndefined(); expect(h.hooks.error).not.toHaveBeenCalled();
+    const [captureId, generation] = h.browser.scripting.executeScript.mock.calls[0]![0].args;
+    expect(h.browser.tabs.sendMessage).toHaveBeenCalledWith(12, { target: 'ghostpair.dom', captureId, generation, operation: 'dispose' }, { documentId: 'document-one' });
+    await h.capture.stop();
+  });
+
+  it('reports a rejected root configuration without publishing control', async () => {
+    const h = harness(), injected = Promise.withResolvers<void>(), entered = Promise.withResolvers<void>();
+    const original = h.browser.scripting.executeScript.getMockImplementation()!;
+    h.browser.scripting.executeScript.mockImplementation(async (...args) => { entered.resolve(); await injected.promise; return original(...args); });
+    const sharing = h.share(); await entered.promise;
+    const initial = h.browser.scripting.executeScript.mock.calls[0]![0].args[3];
+    await h.capture.configure({ ...initial, mode: 'live', revision: 1 });
+    h.browser.tabs.sendMessage.mockResolvedValue({ ok: false });
+    injected.resolve(); await sharing;
+    expect(h.current()).toBeUndefined();
+    expect(h.hooks.error).toHaveBeenCalledWith(expect.stringContaining('Could not configure'));
+    await h.capture.stop();
+  });
+
+  it('keeps a delayed root usable when only its language update fails', async () => {
+    const h = harness(), injected = Promise.withResolvers<void>(), entered = Promise.withResolvers<void>();
+    const original = h.browser.scripting.executeScript.getMockImplementation()!;
+    h.browser.scripting.executeScript.mockImplementation(async (...args) => { entered.resolve(); await injected.promise; return original(...args); });
+    const sharing = h.share(); await entered.promise;
+    await h.capture.setLanguage(pageMessages('es'));
+    h.browser.tabs.sendMessage.mockResolvedValue({ ok: false });
+    injected.resolve(); await sharing;
+    expect(h.current()?.documentId).toBe('document-one');
+    expect(h.hooks.error).toHaveBeenCalledWith('Could not update page controls. Try again.');
+    await h.capture.stop();
+  });
+
   it('accepts visibility changes only from the current authorized top document', async () => {
     const h = harness(); await h.share();
     const message = { ...h.target(), controlRevision: 0 };
@@ -308,13 +385,17 @@ describe('TabCapture authorization and scoped control', () => {
     expect(h.hooks.release).toHaveBeenCalledExactlyOnceWith(captureId); expect(h.browser.scripting.executeScript).not.toHaveBeenCalled(); expect(h.current()).toBeUndefined();
   });
 
-  it('cannot publish an injection result that completes after navigation or Stop', async () => {
+  it.each(['navigation', 'stop'])('disposes an injection that completes after %s without publishing it', async cancellation => {
     const h = harness(); await h.capture.start(4); const injected = Promise.withResolvers<any[]>(); h.browser.scripting.executeScript.mockReturnValueOnce(injected.promise);
     const authorization = h.capture.authorize(12); await settled();
-    h.browser.tabs.onUpdated.emit(12, { status: 'loading' }, h.tabs.get(12)); await h.capture.stop();
+    const [captureId, generation] = h.browser.scripting.executeScript.mock.calls[0]![0].args;
+    if (cancellation === 'stop') await h.capture.stop();
+    else h.browser.webNavigation.onBeforeNavigate.emit({ tabId: 12, frameId: 0 });
     injected.resolve([{ documentId: 'old-document', result: h.geometry }]); await authorization;
     expect(h.hooks.state.mock.calls.every(([, , , presentation]) => !presentation)).toBe(true);
-    expect(h.current()).toBeUndefined(); expect(h.hooks.release).toHaveBeenCalledOnce();
+    expect(h.current()).toBeUndefined();
+    expect(h.browser.tabs.sendMessage).toHaveBeenLastCalledWith(12, { target: 'ghostpair.dom', captureId, generation, operation: 'dispose' }, { documentId: 'old-document' });
+    await h.capture.stop(); expect(h.hooks.release).toHaveBeenCalledOnce();
   });
 
   it('rechecks a tab that leaves the shared window during capture acquisition', async () => {

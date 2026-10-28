@@ -15,6 +15,8 @@ export class FrameControl {
   private failures = new Set<string>();
   private blocked = new Set<number>();
   private revision = 0;
+  // Releasing input for a mode change does not invalidate a pending installation.
+  private frameRevision = 0;
   private queue: Promise<void> = Promise.resolve();
   private syncing?: Promise<void>;
   private pointer?: Owner;
@@ -76,7 +78,7 @@ export class FrameControl {
     if (p && root && this.configuration.preferences.notices) void this.message(p, root, 'visual.notice', { kind: activity.kind }).catch(() => undefined);
   }
 
-  constructor(private usable: (presentation: Presentation) => boolean) {
+  constructor(private usable: (presentation: Presentation) => boolean, private error: (message: string) => void = () => {}) {
     chrome.webNavigation.onBeforeNavigate.addListener(event => {
       if (event.tabId !== this.presentation?.tabId || event.frameId === 0) return;
       this.blocked.add(event.frameId); this.retire(event.frameId);
@@ -96,15 +98,17 @@ export class FrameControl {
     this.presentation = presentation; this.blocked.clear(); this.failures.clear();
     this.frames.set(presentation.documentId, { frameId: 0, documentId: presentation.documentId, parentFrameId: -1 });
     if (previous && previous.generation !== presentation.generation) {
-      await Promise.all([...this.frames.values()].filter(frame => frame.frameId !== 0).map(async frame => {
+      const revision = this.frameRevision;
+      const children = [...this.frames.values()].filter(frame => frame.frameId !== 0);
+      for (const frame of children) this.frames.delete(frame.documentId);
+      await Promise.all(children.map(async frame => {
         try {
-          const messages = this.messages;
-          await chrome.scripting.executeScript({ target: { tabId: presentation.tabId, documentIds: [frame.documentId] }, world: 'ISOLATED', func: installDomControl, args: [presentation.captureId, presentation.generation, false, this.configuration, messages] });
-          if (this.messages !== messages) await this.message(presentation, frame, 'localize', { messages: this.messages });
+          if (await this.install(presentation, frame, revision)) this.frames.set(frame.documentId, frame);
         }
-        catch { this.frames.delete(frame.documentId); }
+        catch { if (this.presentation === presentation) this.failures.add(frame.documentId); }
       }));
     }
+    if (this.presentation !== presentation) return;
     await this.sync();
   }
 
@@ -163,7 +167,7 @@ export class FrameControl {
   }
 
   private retire(frameId: number) {
-    ++this.revision;
+    ++this.revision; ++this.frameRevision;
     const removed = new Set([frameId]);
     for (let previous = -1; previous !== removed.size;) {
       previous = removed.size;
@@ -192,6 +196,37 @@ export class FrameControl {
     return reply;
   }
 
+  private async install(p: Presentation, frame: Frame, revision: number, injectImmediately = false): Promise<boolean> {
+    let configuration = this.configuration, messages = this.messages;
+    const result = (await chrome.scripting.executeScript({ target: { tabId: p.tabId, documentIds: [frame.documentId] }, world: 'ISOLATED', injectImmediately, func: installDomControl, args: [p.captureId, p.generation, false, configuration, messages] }))[0];
+    const current = () => this.presentation === p && this.frameRevision === revision && !this.blocked.has(frame.frameId);
+    if (!current()) { await this.message(p, frame, 'dispose').catch(() => undefined); return false; }
+    if (result?.documentId !== frame.documentId) return false;
+    try {
+      while (configuration !== this.configuration || messages !== this.messages) {
+        while (configuration !== this.configuration) {
+          configuration = this.configuration;
+          const reply = await this.message(p, frame, 'configure', { configuration });
+          if (!current()) { await this.message(p, frame, 'dispose').catch(() => undefined); return false; }
+          if (!reply?.ok) throw new Error('Could not configure the shared page. Try again.');
+        }
+        if (messages !== this.messages) {
+          messages = this.messages;
+          const reply = await this.message(p, frame, 'localize', { messages }).catch(() => undefined);
+          if (!current()) { await this.message(p, frame, 'dispose').catch(() => undefined); return false; }
+          if (!reply?.ok) this.error('Could not update page controls. Try again.');
+        }
+      }
+      return true;
+    } catch (error) {
+      if (current()) {
+        this.error(error instanceof Error ? error.message : 'Could not configure the shared page. Try again.');
+        await this.message(p, frame, 'dispose').catch(() => undefined);
+      }
+      throw error;
+    }
+  }
+
   private sync(): Promise<void> {
     if (this.syncing) return this.syncing.then(() => this.sync());
     const work = this.syncNow();
@@ -199,12 +234,13 @@ export class FrameControl {
     return work.finally(() => { if (this.syncing === work) this.syncing = undefined; });
   }
   private async syncNow() {
-    const p = this.presentation, revision = this.revision;
+    const p = this.presentation, requestedRevision = this.frameRevision;
     if (!p) return;
     const all = await chrome.webNavigation.getAllFrames({ tabId: p.tabId });
-    if (this.presentation !== p || !all?.some(frame => frame.frameId === 0 && frame.documentId === p.documentId)) return;
+    if (this.presentation !== p || this.frameRevision !== requestedRevision || !all?.some(frame => frame.frameId === 0 && frame.documentId === p.documentId)) return;
     const live = new Map(all.filter(frame => frame.documentLifecycle === 'active').map(frame => [frame.documentId, frame]));
     for (const frame of this.frames.values()) if (!live.has(frame.documentId)) this.retire(frame.frameId);
+    const revision = this.frameRevision;
     const belongs = (frame: chrome.webNavigation.GetAllFrameResultDetails): boolean => {
       const seen = new Set<number>();
       let current = frame;
@@ -222,14 +258,7 @@ export class FrameControl {
       const related = /^(about:(blank|srcdoc)|blob:)/.test(frame.url);
       if (!isSupportedUrl(frame.url) && !related) { this.failures.add(frame.documentId); return; }
       try {
-        const messages = this.messages;
-        const result = (await chrome.scripting.executeScript({ target: { tabId: p.tabId, documentIds: [frame.documentId] }, world: 'ISOLATED', injectImmediately: true, func: installDomControl, args: [p.captureId, p.generation, false, this.configuration, messages] }))[0];
-        if (this.presentation !== p || this.revision !== revision || this.blocked.has(frame.frameId)) {
-          await this.message(p, frame, 'dispose').catch(() => undefined); return;
-        }
-        if (result?.documentId !== frame.documentId) return;
-        this.frames.set(frame.documentId, frame); this.failures.delete(frame.documentId);
-        if (this.messages !== messages) await this.message(p, frame, 'localize', { messages: this.messages });
+        if (await this.install(p, frame, revision, true)) { this.frames.set(frame.documentId, frame); this.failures.delete(frame.documentId); }
       } catch {
         if (this.presentation === p) this.failures.add(frame.documentId);
       }

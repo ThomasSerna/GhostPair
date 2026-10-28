@@ -29,7 +29,7 @@ export class TabCapture {
   private presentation?: Presentation;
   private timer?: ReturnType<typeof setTimeout>;
   private serial: Promise<void> = Promise.resolve();
-  private frameControl = new FrameControl(p => this.presentation === p && this.windowId !== undefined && this.activeTabId === p.tabId && this.sources.get(p.tabId) === p.captureId && !this.paused && this.control && !this.configuring);
+  private frameControl = new FrameControl(p => this.presentation === p && this.windowId !== undefined && this.activeTabId === p.tabId && this.sources.get(p.tabId) === p.captureId && !this.paused && this.control && !this.configuring, message => this.hooks.error(message));
 
   constructor(private hooks: Hooks) {
     chrome.webNavigation.onBeforeNavigate.addListener(info => {
@@ -158,18 +158,39 @@ export class TabCapture {
     if (this.presentation?.tabId === active.id) { this.publish(); return; }
     if (active.status === 'loading') { this.publish(); return; }
     const generation = this.generation;
+    let documentId: string | undefined;
+    const dispose = async () => {
+      if (documentId) await chrome.tabs.sendMessage(active.id!, { target: 'ghostpair.dom', captureId, generation, operation: 'dispose' }, { documentId }).catch(() => undefined);
+    };
     try {
-      const messages = this.messages;
-      const injection = (await chrome.scripting.executeScript({ target: { tabId: active.id, frameIds: [0] }, world: 'ISOLATED', func: installDomControl, args: [captureId, generation, true, this.configuration, messages] }))[0];
-      if (epoch !== this.epoch || generation !== this.generation || !injection?.documentId || !injection.result || this.sources.get(active.id) !== captureId) return;
-      const now = await chrome.tabs.get(active.id);
-      if (epoch !== this.epoch || generation !== this.generation || !now.active || now.windowId !== windowId || now.url !== active.url || now.status === 'loading') return;
+      let configuration = this.configuration, messages = this.messages;
+      const injection = (await chrome.scripting.executeScript({ target: { tabId: active.id, frameIds: [0] }, world: 'ISOLATED', func: installDomControl, args: [captureId, generation, true, configuration, messages] }))[0];
+      documentId = injection?.documentId;
+      if (epoch !== this.epoch || generation !== this.generation || !documentId || !injection?.result || this.sources.get(active.id) !== captureId) { await dispose(); return; }
+      const current = () => epoch === this.epoch && generation === this.generation && this.sources.get(active.id!) === captureId;
+      const message = (operation: string, fields: object) => chrome.tabs.sendMessage(active.id!, { target: 'ghostpair.dom', captureId, generation, controlRevision: this.configuration.revision, operation, ...fields }, { documentId: injection.documentId });
+      do {
+        while (configuration !== this.configuration) {
+          configuration = this.configuration;
+          const reply = await message('configure', { configuration });
+          if (!current()) { await dispose(); return; }
+          if (!reply?.ok) throw new Error('Could not configure the shared page. Try again.');
+        }
+        if (messages !== this.messages) {
+          messages = this.messages;
+          const reply = await message('localize', { messages }).catch(() => undefined);
+          if (!current()) { await dispose(); return; }
+          if (!reply?.ok) this.hooks.error('Could not update page controls. Try again.');
+        }
+        const now = await chrome.tabs.get(active.id);
+        if (!current() || !now.active || now.windowId !== windowId || now.url !== active.url || now.status === 'loading') { await dispose(); return; }
+      } while (configuration !== this.configuration || messages !== this.messages);
       this.presentation = PresentationSchema.parse({ ...injection.result, captureId, tabId: active.id, documentId: injection.documentId, generation });
       const presentation = this.presentation;
       // A slow child must not delay publication of the already captured top document.
       void this.frameControl.bind(presentation).catch(() => { if (this.presentation === presentation) this.hooks.error('Embedded page discovery is unavailable. Check the extension navigation permission.'); });
-      if (this.messages !== messages) await this.frameControl.setLanguage(this.messages).catch(error => this.hooks.error(error.message));
     } catch (error) {
+      await dispose();
       if (epoch !== this.epoch || generation !== this.generation) return;
       this.presentation = undefined;
       const tab = this.tabs.find(t => t.id === active.id); if (tab) tab.captureState = 'unavailable';

@@ -28,12 +28,13 @@ function harness() {
   const scripting = { executeScript: vi.fn(async (args: any) => [{ documentId: args.target.documentIds[0], result: {} }]) };
   vi.stubGlobal('chrome', { webNavigation: navigation, tabs: { sendMessage }, scripting });
   let usable = true;
-  const control = new FrameControl(() => usable);
+  const error = vi.fn();
+  const control = new FrameControl(() => usable, error);
   const input = (type = 'pointer', extras: object = {}): any => type === 'pointer' ? { ...p, controlRevision: 0, type, event: 'down', x: 450, y: 175, button: 'left', buttons: 1, modifiers: 0, clickCount: 1, ...extras } : { ...p, controlRevision: 0, type, text: 'hello', ...extras };
   const key = (event: 'down' | 'up', extras: object = {}): Extract<ControlCommand, { type: 'key' }> => ({ ...p, type: 'key', controlRevision: 0, event, key: 'Shift', code: 'ShiftLeft', keyCode: 16, modifiers: 8, repeat: false, ...extras });
   const live = { mode: 'live' as const, revision: 0, preferences: { notices: false, clickAnimations: true, showInteractions: true, showHostPanel: true, text: { duration: 'persistent' as const, seconds: 10 }, other: { duration: 'persistent' as const, seconds: 3 }, accentColor: '#7871e8' } };
   void control.configure(live);
-  return { control, topology, frame, routes, indices, operations, committed, sendMessage, scripting, navigation, input, key, disable: () => { usable = false; } };
+  return { control, topology, frame, routes, indices, operations, committed, sendMessage, scripting, navigation, input, key, error, disable: () => { usable = false; } };
 }
 afterEach(() => vi.unstubAllGlobals());
 
@@ -79,6 +80,104 @@ it('applies the latest language after a delayed child injection', async () => {
   gate.resolve(); await binding;
   expect(h.operations.filter(entry => entry.message.operation === 'localize').map(entry => entry.id).sort()).toEqual(['a', 'b', 'nested', 'root']);
   expect(h.operations.every(entry => entry.message.operation !== 'localize' || entry.message.messages === messages)).toBe(true);
+  await h.control.clear();
+});
+
+it.each(['discovery', 'rebind'])('reconciles repeated configuration changes during child %s', async path => {
+  const h = harness();
+  if (path === 'rebind') await h.control.bind(p);
+  const next = path === 'rebind' ? { ...p, generation: p.generation + 1 } : p;
+  const entered = Promise.withResolvers<void>(), injected = Promise.withResolvers<void>();
+  const configuring = Promise.withResolvers<void>(), configured = Promise.withResolvers<void>();
+  const originalInjection = h.scripting.executeScript.getMockImplementation()!;
+  const originalMessage = h.sendMessage.getMockImplementation()!;
+  h.scripting.executeScript.mockImplementation(async (...args) => {
+    if (args[0].target.documentIds[0] === 'a') { entered.resolve(); await injected.promise; }
+    return originalInjection(...args);
+  });
+  h.sendMessage.mockImplementation(async (...args) => {
+    if (args[2].documentId === 'a' && args[1].operation === 'configure') { configuring.resolve(); await configured.promise; }
+    return originalMessage(...args);
+  });
+  const binding = h.control.bind(next); await entered.promise;
+  const initial = h.scripting.executeScript.mock.calls.at(-1)![0].args[3];
+  const first = { ...initial, mode: 'visual' as const, revision: 1, preferences: { ...initial.preferences, showInteractions: false } };
+  await h.control.configure(first); injected.resolve(); await configuring.promise;
+  const latest = { ...first, revision: 2, preferences: { ...first.preferences, clickAnimations: false } };
+  await h.control.configure(latest); await h.control.setLanguage(pageMessages('es')); configured.resolve(); await binding;
+  const updates = h.operations.filter(entry => entry.id === 'a' && entry.message.operation === 'configure');
+  expect(updates.slice(-2).map(entry => entry.message.configuration)).toEqual([first, latest]);
+  expect(h.operations.filter(entry => entry.id === 'a' && ['configure', 'localize'].includes(entry.message.operation)).map(entry => entry.message.operation)).toEqual(['configure', 'configure', 'localize']);
+  expect(h.operations.some(entry => entry.id === 'a' && entry.message.operation === 'dispose' && entry.message.generation === next.generation)).toBe(false);
+  h.routes.set('root', { index: 0, x: 0.5, y: 0.5 });
+  await h.control.execute({ ...h.input(), generation: next.generation, controlRevision: 2 });
+  expect(h.committed.at(-1)?.id).toBe('a'); expect(h.error).not.toHaveBeenCalled();
+  await h.control.clear();
+});
+
+it.each(['navigation', 'clear'])('does not register a child whose configuration finishes after %s', async cancellation => {
+  const h = harness(), entered = Promise.withResolvers<void>(), injected = Promise.withResolvers<void>();
+  const configuring = Promise.withResolvers<void>(), configured = Promise.withResolvers<void>();
+  const originalInjection = h.scripting.executeScript.getMockImplementation()!;
+  const originalMessage = h.sendMessage.getMockImplementation()!;
+  h.scripting.executeScript.mockImplementation(async (...args) => {
+    if (args[0].target.documentIds[0] === 'a') { entered.resolve(); await injected.promise; }
+    return originalInjection(...args);
+  });
+  h.sendMessage.mockImplementation(async (...args) => {
+    if (args[2].documentId === 'a' && args[1].operation === 'configure') { configuring.resolve(); await configured.promise; }
+    return originalMessage(...args);
+  });
+  const binding = h.control.bind(p); await entered.promise;
+  const initial = h.scripting.executeScript.mock.calls.at(-1)![0].args[3];
+  await h.control.configure({ ...initial, preferences: { ...initial.preferences, showInteractions: false } });
+  injected.resolve(); await configuring.promise;
+  if (cancellation === 'clear') await h.control.clear();
+  else h.navigation.onBeforeNavigate.emit({ tabId: p.tabId, frameId: 1 });
+  configured.resolve(); await binding;
+  expect(h.operations.some(entry => entry.id === 'a' && entry.message.operation === 'dispose')).toBe(true);
+  expect(h.error).not.toHaveBeenCalled();
+  h.routes.set('root', { index: 0, x: 0.5, y: 0.5 });
+  await expect(h.control.execute(h.input())).rejects.toThrow('changed');
+  await h.control.clear();
+});
+
+it('reports a rejected child configuration and keeps its controller unavailable', async () => {
+  const h = harness(), entered = Promise.withResolvers<void>(), injected = Promise.withResolvers<void>();
+  const originalInjection = h.scripting.executeScript.getMockImplementation()!;
+  const originalMessage = h.sendMessage.getMockImplementation()!;
+  h.scripting.executeScript.mockImplementation(async (...args) => {
+    if (args[0].target.documentIds[0] === 'a') { entered.resolve(); await injected.promise; }
+    return originalInjection(...args);
+  });
+  const binding = h.control.bind(p); await entered.promise;
+  const initial = h.scripting.executeScript.mock.calls.at(-1)![0].args[3];
+  await h.control.configure({ ...initial, preferences: { ...initial.preferences, showInteractions: false } });
+  h.sendMessage.mockImplementation(async (...args) => args[2].documentId === 'a' && args[1].operation === 'configure' ? { ok: false } : originalMessage(...args));
+  injected.resolve(); await binding;
+  expect(h.error).toHaveBeenCalledWith('Could not configure the shared page. Try again.');
+  expect(h.operations.some(entry => entry.id === 'a' && entry.message.operation === 'dispose')).toBe(true);
+  h.routes.set('root', { index: 0, x: 0.5, y: 0.5 });
+  await expect(h.control.execute(h.input())).rejects.toThrow('Site access');
+  h.routes.clear(); await h.control.execute(h.input()); expect(h.committed.at(-1)?.id).toBe('root');
+  await h.control.clear();
+});
+
+it('keeps a delayed child usable when only its language update fails', async () => {
+  const h = harness(), entered = Promise.withResolvers<void>(), injected = Promise.withResolvers<void>();
+  const originalInjection = h.scripting.executeScript.getMockImplementation()!;
+  const originalMessage = h.sendMessage.getMockImplementation()!;
+  h.scripting.executeScript.mockImplementation(async (...args) => {
+    if (args[0].target.documentIds[0] === 'a') { entered.resolve(); await injected.promise; }
+    return originalInjection(...args);
+  });
+  const binding = h.control.bind(p); await entered.promise;
+  await h.control.setLanguage(pageMessages('es'));
+  h.sendMessage.mockImplementation(async (...args) => args[2].documentId === 'a' && args[1].operation === 'localize' ? { ok: false } : originalMessage(...args));
+  injected.resolve(); await binding;
+  expect(h.error).toHaveBeenCalledWith('Could not update page controls. Try again.');
+  h.routes.set('root', { index: 0, x: 0.5, y: 0.5 });
+  await h.control.execute(h.input()); expect(h.committed.at(-1)?.id).toBe('a');
   await h.control.clear();
 });
 
