@@ -3,6 +3,7 @@ import { createServer } from 'node:http';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { chromium } from 'playwright';
+import { build } from 'esbuild';
 import { installDomControl } from '../../apps/extension/src/core/dom-control.ts';
 import { artifactRoot, browsers } from './helpers.mjs';
 
@@ -35,6 +36,17 @@ await new Promise(done => fixture.listen(0, '127.0.0.1', done));
 const captureId = 'synthetic-capture';
 const results = [];
 const controlSource = `(${installDomControl.toString()})`;
+const reactFixture = (await build({ stdin: { contents: `
+  import React from 'react';
+  import { createRoot } from 'react-dom/client';
+  function Field() {
+    const [value, setValue] = React.useState('');
+    return React.createElement('input', { id: 'react-number', type: 'number', value,
+      onChange: event => { globalThis.reactChanges.push(event.target.value); setValue(event.target.value); } });
+  }
+  globalThis.reactChanges = [];
+  createRoot(document.getElementById('react-root')).render(React.createElement(Field));
+`, resolveDir: resolve('.') }, bundle: true, write: false, platform: 'browser', format: 'iife' })).outputFiles[0].text;
 
 async function send(page, command, { generation = 1, operation = 'command', sender = { id: 'synthetic-extension' }, targetCaptureId = captureId } = {}) {
   if (command) command = { ...command, controlRevision: 0 };
@@ -63,7 +75,8 @@ async function click(page, selector, options) {
 }
 
 async function key(page, value, options) {
-  for (const event of ['down', 'up']) await execute(page, { type: 'key', tabId: 1, generation: 1, event, key: value, code: value, keyCode: 0, modifiers: 0, repeat: false }, options);
+  const { modifiers = 0, ...routing } = options ?? {};
+  for (const event of ['down', 'up']) await execute(page, { type: 'key', tabId: 1, generation: 1, event, key: value, code: value, keyCode: 0, modifiers, repeat: false }, routing);
 }
 
 try {
@@ -101,7 +114,7 @@ try {
       assert.equal(await page.locator('#controlled').inputValue(), 'Remote á漢🙂', 'Unicode text reaches the field');
       assert.deepEqual(await page.evaluate(() => ({ customSetterCalls: probe.customSetterCalls, inputEvents: probe.inputEvents })), {
         customSetterCalls: 0, inputEvents: [{ value: 'Remote á漢🙂', inputType: 'insertText', data: 'Remote á漢🙂' }],
-      }, 'native setter bypasses the controlled-input wrapper and emits input');
+      }, 'native editing bypasses the controlled-input wrapper and emits input once');
       await key(page, 'Backspace');
       assert.equal(await page.locator('#controlled').inputValue(), 'Remote á漢', 'Backspace removes an entire supplementary Unicode code point');
 
@@ -117,6 +130,83 @@ try {
       assert.equal(await page.locator('#editable').textContent(), 'Editable á漢🙂', 'basic contenteditable insertion works');
       await key(page, 'Backspace');
       assert.equal(await page.locator('#editable').textContent(), 'Editable á漢', 'basic contenteditable deletion works');
+
+      await page.evaluate(() => {
+        const inputs = document.createElement('div');
+        inputs.innerHTML = '<input id="editing"><input id="destination"><div id="react-root"></div>';
+        document.body.append(inputs);
+      });
+      const editing = page.locator('#editing');
+      for (const { type, value, text, shortcut, keys = [], maxLength } of [
+        { type: 'number', value: '', text: '-1' },
+        { type: 'number', value: '', text: '1.2' },
+        { type: 'email', value: 'old@example.com', text: 'new@example.com', shortcut: true },
+        { type: 'email', value: 'old@example.com', shortcut: true, keys: ['Backspace'] },
+        { type: 'number', value: '123', shortcut: true, keys: ['Delete'] },
+        { type: 'text', value: '', text: 'abc', maxLength: 2 },
+      ]) {
+        const states = [];
+        for (const native of [true, false]) {
+          await editing.evaluate((field, setup) => { field.type = setup.type; field.maxLength = setup.maxLength ?? 524288; field.value = setup.value; field.focus({ preventScroll: true }); }, { type, value, maxLength });
+          if (shortcut) { if (native) await page.keyboard.press('Control+a'); else await key(page, 'a', { modifiers: 2 }); }
+          for (const character of text ?? '') {
+            if (native) await page.keyboard.insertText(character);
+            else await execute(page, { type: 'text', text: character });
+          }
+          for (const value of keys) { if (native) await page.keyboard.press(value); else await key(page, value); }
+          states.push(await editing.inputValue());
+        }
+        assert.equal(states[1], states[0], `${type}/${text ?? keys.join(',')}: native editing parity`);
+      }
+
+      for (const setup of [
+        { start: 2, end: 4, direction: 'forward', keys: ['ArrowLeft'] },
+        { start: 2, end: 4, direction: 'backward', keys: ['ArrowRight'] },
+        { start: 2, end: 4, direction: 'forward', keys: ['Shift+ArrowLeft', 'Shift+ArrowLeft', 'Shift+ArrowLeft'] },
+        { start: 2, end: 4, direction: 'backward', keys: ['Shift+ArrowRight', 'Shift+ArrowRight', 'Shift+ArrowRight'] },
+        { value: 'a🙂bcdef', start: 3, end: 3, direction: 'forward', keys: ['ArrowLeft', 'Shift+ArrowRight', 'Shift+End', 'Shift+Home'] },
+      ]) {
+        const states = [];
+        for (const native of [true, false]) {
+          await editing.evaluate((field, setup) => { field.type = 'text'; field.value = setup.value ?? 'abcdef'; field.focus({ preventScroll: true }); field.setSelectionRange(setup.start, setup.end, setup.direction); }, setup);
+          const selections = [];
+          for (const value of setup.keys) {
+            if (native) await page.keyboard.press(value);
+            else await key(page, value.replace('Shift+', ''), { modifiers: value.startsWith('Shift+') ? 8 : 0 });
+            selections.push(await editing.evaluate(field => [field.selectionStart, field.selectionEnd, field.selectionDirection]));
+          }
+          states.push(selections);
+        }
+        assert.deepEqual(states[1], states[0], `${setup.keys.join(',')}/${setup.direction}: native selection parity`);
+      }
+
+      for (const action of ['cancel', 'focus', 'remove', 'readonly', 'disable']) {
+        await page.evaluate(action => {
+          const field = document.getElementById('editing');
+          field.value = 'unchanged'; field.readOnly = false; field.disabled = false; field.focus({ preventScroll: true });
+          globalThis.editingEvents = [];
+          field.oninput = event => editingEvents.push(event.type);
+          field.onbeforeinput = event => {
+            editingEvents.push(event.type);
+            if (action === 'cancel') event.preventDefault();
+            if (action === 'focus') document.getElementById('destination').focus({ preventScroll: true });
+            if (action === 'remove') field.remove();
+            if (action === 'readonly') field.readOnly = true;
+            if (action === 'disable') field.disabled = true;
+          };
+          globalThis.editingField = field;
+        }, action);
+        const reply = await send(page, { type: 'text', text: 'forbidden' });
+        assert.equal(reply.ok, action === 'cancel', `${action}: mutation is canceled or explicitly rejected`);
+        assert.deepEqual(await page.evaluate(() => ({ value: editingField.value, events: editingEvents, destination: document.getElementById('destination').value })), { value: 'unchanged', events: ['beforeinput'], destination: '' }, `${action}: beforeinput cannot redirect or authorize an invalid edit`);
+        await page.evaluate(() => { editingField.onbeforeinput = null; editingField.oninput = null; editingField.readOnly = false; editingField.disabled = false; if (!editingField.isConnected) document.body.append(editingField); });
+      }
+
+      await page.addScriptTag({ content: reactFixture });
+      await page.locator('#react-number').waitFor({ state: 'attached' });
+      await page.locator('#react-number').evaluate(field => field.focus({ preventScroll: true }));
+      for (const text of '-1') await execute(page, { type: 'text', text });
+      assert.deepEqual(await page.evaluate(() => ({ value: document.getElementById('react-number').value, changes: reactChanges })), { value: '-1', changes: ['-1'] }, 'React controlled inputs receive native changes and preserve a partial number');
 
       const nested = await point(page, '#scroller');
       await execute(page, { type: 'wheel', ...nested, deltaX: 35, deltaY: 80, modifiers: 0 });
@@ -159,7 +249,7 @@ try {
       assert.equal(await page.evaluate(() => runtimeProbe.sent.length), beforeDisposedResize, 'disposal removes geometry listeners');
       assert.deepEqual(errors, [], 'no uncaught fixture errors');
 
-      const result = { browser: name, version: browser.version(), click: true, checkbox: true, unicode: true, nativeSetterAndInput: true, textareaEditing: true, contenteditable: true, nestedScroll: true, iframeRoute: true, staleGenerationRejected: true, senderAndCaptureIsolation: true, generationRelease: true, disposal: true, runtime: 'stubbed; no extension or media permission validation', clipboard: 'never accessed' };
+      const result = { browser: name, version: browser.version(), click: true, checkbox: true, unicode: true, nativeEditingAndInput: true, nativeSelection: true, cancelableEditing: true, reactControlledInput: true, textareaEditing: true, contenteditable: true, nestedScroll: true, iframeRoute: true, staleGenerationRejected: true, senderAndCaptureIsolation: true, generationRelease: true, disposal: true, runtime: 'stubbed; no extension or media permission validation', clipboard: 'never accessed' };
       results.push(result);
       console.log(JSON.stringify(result));
     } finally { await browser.close(); }

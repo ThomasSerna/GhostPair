@@ -1015,19 +1015,16 @@ export function installDomControl(captureId: string, generation: number, root = 
     }
     return false;
   }
-  function insert(text: string, inputType = 'insertText', start?: number, end?: number) {
+  function insert(text: string, inputType = 'insertText') {
     const element = focused();
     if (!(element instanceof HTMLElement)) throw new Error('Focus a text field before typing.');
     if (editable(element)) {
       if (disabled(element) || element.readOnly) throw new Error('This text field cannot be edited.');
-      const from = start ?? element.selectionStart ?? element.value.length;
-      const to = end ?? element.selectionEnd ?? from;
-      if (!element.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, composed: true, cancelable: true, data: text, inputType }))) return;
-      const value = element.value.slice(0, from) + text + element.value.slice(to);
-      const prototype = element instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
-      Object.getOwnPropertyDescriptor(prototype, 'value')!.set!.call(element, value);
-      try { element.setSelectionRange(from + text.length, from + text.length); } catch { /* number/email inputs have no selection API */ }
-      element.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true, data: text, inputType }));
+      // execCommand preserves native selection and partial numbers but does not emit beforeinput.
+      if (!element.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, composed: true, cancelable: true, data: inputType === 'insertText' ? text : null, inputType }))) return;
+      if (!element.isConnected || focused() !== element || !editable(element) || disabled(element) || element.readOnly) throw new Error('This text field cannot be edited.');
+      const operation = inputType === 'deleteContentBackward' ? 'delete' : inputType === 'deleteContentForward' ? 'forwardDelete' : inputType === 'insertLineBreak' ? 'insertLineBreak' : 'insertText';
+      if (!document.execCommand(operation, false, text)) throw new Error('This editor does not support basic text insertion.');
       return;
     }
     if (element.isContentEditable) {
@@ -1123,9 +1120,7 @@ export function installDomControl(captureId: string, generation: number, root = 
       const start = element.selectionStart ?? element.value.length, end = element.selectionEnd ?? start;
       if ((fields.ctrlKey || fields.metaKey) && command.key.toLowerCase() === 'a') { element.select(); return; }
       if (command.key === 'Backspace' || command.key === 'Delete') {
-        const before = Array.from(element.value.slice(0, start)).at(-1)?.length ?? 0;
-        const after = Array.from(element.value.slice(end))[0]?.length ?? 0;
-        insert('', command.key === 'Backspace' ? 'deleteContentBackward' : 'deleteContentForward', start === end && command.key === 'Backspace' ? start - before : start, start === end && command.key === 'Delete' ? end + after : end); return;
+        insert('', command.key === 'Backspace' ? 'deleteContentBackward' : 'deleteContentForward'); return;
       }
       if (command.key === 'Enter') {
         if (element instanceof HTMLTextAreaElement) insert('\n', 'insertLineBreak');
@@ -1133,8 +1128,15 @@ export function installDomControl(captureId: string, generation: number, root = 
         return;
       }
       if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(command.key)) {
-        const position = command.key === 'Home' ? 0 : command.key === 'End' ? element.value.length : command.key === 'ArrowLeft' ? Math.max(0, start - (Array.from(element.value.slice(0, start)).at(-1)?.length ?? 0)) : Math.min(element.value.length, end + (Array.from(element.value.slice(end))[0]?.length ?? 0));
-        try { element.setSelectionRange(fields.shiftKey ? Math.min(start, position) : position, fields.shiftKey ? Math.max(end, position) : position); } catch { /* unsupported field */ }
+        const backward = element.selectionDirection === 'backward';
+        const anchor = backward ? end : start, caret = backward ? start : end;
+        let position: number;
+        if (command.key === 'Home') position = 0;
+        else if (command.key === 'End') position = element.value.length;
+        else if (!fields.shiftKey && start !== end) position = command.key === 'ArrowLeft' ? start : end;
+        else if (command.key === 'ArrowLeft') position = Math.max(0, caret - (Array.from(element.value.slice(0, caret)).at(-1)?.length ?? 0));
+        else position = Math.min(element.value.length, caret + (Array.from(element.value.slice(caret))[0]?.length ?? 0));
+        try { element.setSelectionRange(fields.shiftKey ? Math.min(anchor, position) : position, fields.shiftKey ? Math.max(anchor, position) : position, fields.shiftKey && position < anchor ? 'backward' : 'forward'); } catch { /* unsupported field */ }
       }
     } else if (element instanceof HTMLElement && element.isContentEditable) {
       if (command.key === 'Enter') document.execCommand('insertLineBreak');
