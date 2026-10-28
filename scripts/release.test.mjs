@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -14,6 +14,31 @@ test('CI required rejects every result except success', async () => {
     const child = spawnSync(process.execPath, ['-e', code], { env: { ...process.env, VERIFY_RESULT: result }, windowsHide: true });
     assert.equal(child.status, result === 'success' ? 0 : 1, result);
   }
+});
+
+test('CI requires committed generated website changes, including new and deleted files', async t => {
+  const workflow = await readFile(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8');
+  const code = workflow.match(/name: Require committed website build\s+run: node --input-type=module -e "([^\n]+)"/)[1];
+  const directory = await mkdtemp(join(tmpdir(), 'ghostpair-site-ci-'));
+  t.after(async () => { assert.ok(directory.startsWith(join(tmpdir(), 'ghostpair-site-ci-'))); await rm(directory, { recursive: true, force: true }); });
+  const git = (...args) => {
+    const child = spawnSync('git', ['-c', 'core.autocrlf=false', ...args], { cwd: directory, windowsHide: true, encoding: 'utf8' });
+    assert.equal(child.status, 0, child.stderr);
+  };
+  const check = () => spawnSync(process.execPath, ['--input-type=module', '-e', code], { cwd: directory, windowsHide: true, encoding: 'utf8' });
+  await mkdir(join(directory, 'docs/assets/landing'), { recursive: true });
+  await writeFile(join(directory, 'docs/index.html'), 'website\n');
+  await writeFile(join(directory, 'docs/assets/landing/old.js'), 'asset\n');
+  git('init'); git('add', '.'); git('-c', 'user.name=GhostPair test', '-c', 'user.email=test@example.com', '-c', 'commit.gpgsign=false', 'commit', '--no-verify', '-m', 'fixture');
+  assert.equal(check().status, 0);
+  await writeFile(join(directory, 'docs/index.html'), 'changed\n');
+  assert.equal(check().status, 1); git('restore', 'docs/index.html');
+  await rm(join(directory, 'docs/assets/landing/old.js'));
+  assert.equal(check().status, 1); git('restore', 'docs/assets/landing/old.js');
+  await writeFile(join(directory, 'docs/assets/landing/new.js'), 'new\n');
+  assert.equal(check().status, 1); await rm(join(directory, 'docs/assets/landing/new.js'));
+  await writeFile(join(directory, 'docs/validation.md'), 'unrelated documentation\n');
+  assert.equal(check().status, 0);
 });
 
 test('release publication is versioned, bound to its commit and safe to retry', async t => {
