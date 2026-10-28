@@ -12,7 +12,7 @@ function screenUrl(url, view, hash = '') {
   return target.href;
 }
 
-async function noOverflow(page, label) {
+export async function noOverflow(page, label) {
   const dimensions = await page.evaluate(() => ({ page: document.documentElement.scrollWidth, viewport: innerWidth }));
   assert.ok(dimensions.page <= dimensions.viewport, `${label}: horizontal overflow (${dimensions.page}px > ${dimensions.viewport}px)`);
 }

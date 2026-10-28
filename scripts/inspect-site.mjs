@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { gzipSync } from 'node:zlib';
 import { createServer } from 'vite';
 import { launchHeadlessBrowser } from '../tests/browser/helpers.mjs';
-import { inspectWebsitePages } from './inspect-website-pages.mjs';
+import { inspectWebsitePages, noOverflow } from './inspect-website-pages.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const docs = resolve(root, 'docs');
@@ -40,11 +40,6 @@ const server = await createServer({ configFile: false, root: docs, base, plugins
   },
 }], server: { host: '127.0.0.1', port: 0 } });
 let browser;
-
-async function noOverflow(page, label) {
-  const dimensions = await page.evaluate(() => ({ page: document.documentElement.scrollWidth, viewport: innerWidth }));
-  assert.ok(dimensions.page <= dimensions.viewport, `${label}: horizontal overflow (${dimensions.page}px > ${dimensions.viewport}px)`);
-}
 
 async function scrollToTop(page) {
   // An initial hash jump can keep native scroll anchoring active while the

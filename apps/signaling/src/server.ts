@@ -40,7 +40,6 @@ interface Room {
   paired: boolean;
   timer: NodeJS.Timeout;
   hostFingerprints?: string[];
-  guestFingerprints?: string[];
   offerSent: boolean;
   answerSent: boolean;
   hostIceCount: number;
@@ -488,7 +487,6 @@ export function createServer(overrides: Partial<ServerConfig> = {}, store?: Devi
         error(client, 'FORBIDDEN', 'This signal is not allowed.'); return;
       }
       room.answerSent = true;
-      room.guestFingerprints = fingerprints;
     } else {
       const count = client.role === 'host' ? ++room.hostIceCount : ++room.guestIceCount;
       if (count > config.maxIceCandidatesPerPeer) {
