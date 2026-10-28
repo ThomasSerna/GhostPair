@@ -16,13 +16,29 @@ try {
    assert.equal(await page.getByLabel('Idioma',{exact:true}).inputValue(),'auto');
    assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth), `${view} overflow at ${width}`);
    if(view==='explore') {
+    const feedback=page.getByTestId('demo-message');
+    assert.equal(await feedback.textContent(),'Los cambios del invitado aparecen como vistas previas de 0,5 segundos. Nada sale de esta página.');
     if(width<=700) await page.getByRole('button',{name:'Anfitrión',exact:true}).click();
     await page.getByTestId('interaction-mode').selectOption('full');
+    assert.equal(await feedback.textContent(),'Control total: los cambios del invitado modifican la página.');
     if(width<=700) await page.getByRole('button',{name:'Invitado',exact:true}).click();
     await page.getByTestId('guest-notes').fill('Mi texto < & original');
+    assert.equal(await feedback.textContent(),'La página cambió para ambas personas.');
     await page.getByLabel('Idioma',{exact:true}).selectOption('en');
     assert.equal(await page.getByTestId('guest-notes').inputValue(),'Mi texto < & original');
     assert.equal(await page.getByTestId('interaction-mode').inputValue(),'full');
+    assert.equal(await feedback.textContent(),'The page changed for both people.');
+    if(width===1440) {
+     for(let approved=1;approved<5;approved++) {
+      await page.getByTestId('host-new-tab').click();await page.getByTestId('share-active-tab').click();
+     }
+     await page.getByTestId('host-new-tab').click();await page.getByTestId('share-active-tab').click();
+     assert.equal(await feedback.getAttribute('role'),'alert');
+     assert.equal(await feedback.textContent(),'Five tabs are already approved. Stop sharing a tab to make room.');
+     await page.getByLabel('Language',{exact:true}).selectOption('es');
+     assert.equal(await feedback.textContent(),'Ya hay cinco pestañas autorizadas. Deja de compartir una para hacer espacio.');
+     await page.getByLabel('Idioma',{exact:true}).selectOption('en');
+    }
    } else await page.getByLabel('Idioma',{exact:true}).selectOption('en');
    await page.waitForFunction(()=>document.documentElement.lang==='en');
    await page.reload();await page.getByLabel('Language',{exact:true}).waitFor();assert.equal(await page.getByLabel('Language',{exact:true}).inputValue(),'en');
