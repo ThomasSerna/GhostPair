@@ -18,7 +18,7 @@ test('CI required rejects every result except success', async () => {
 
 test('CI requires committed generated website changes, including new and deleted files', async t => {
   const workflow = await readFile(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8');
-  const code = workflow.match(/name: Require committed website build\s+run: node --input-type=module -e "([^\n]+)"/)[1];
+  const code = workflow.match(/name: Require committed website build\s+run: \|\s+node --input-type=module -e "([^\n]+)"/)[1];
   const directory = await mkdtemp(join(tmpdir(), 'ghostpair-site-ci-'));
   t.after(async () => { assert.ok(directory.startsWith(join(tmpdir(), 'ghostpair-site-ci-'))); await rm(directory, { recursive: true, force: true }); });
   const git = (...args) => {

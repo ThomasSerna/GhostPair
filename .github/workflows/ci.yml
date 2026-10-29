@@ -38,7 +38,8 @@ jobs:
       - name: Install landing test browser
         run: npx playwright install --with-deps chromium
       - name: Require committed website build
-        run: node --input-type=module -e "import { execFileSync } from 'node:child_process'; const changes = execFileSync('git', ['status', '--porcelain', '--untracked-files=all', '--', 'docs/index.html', 'docs/assets/landing/'], { encoding: 'utf8' }); if (changes.trim()) { console.error('Commit the generated website build before pushing.\n' + changes); process.exit(1); }"
+        run: |
+          node --input-type=module -e "import { execFileSync } from 'node:child_process'; const changes = execFileSync('git', ['status', '--porcelain', '--untracked-files=all', '--', 'docs/index.html', 'docs/assets/landing/'], { encoding: 'utf8' }); if (changes.trim()) { console.error('Commit the generated website build before pushing.\n' + changes); process.exit(1); }"
       - name: Check production landing
         run: npm run test:landing -- --check-only
       - name: Check website languages
